@@ -1,0 +1,24 @@
+## Phase 1: Core Feature Parity
+* **Automated Background Syncing:** Implement a background thread polling the Audible API. Queue new ASINs to the download worker automatically.
+* **Chapter Splitting:** Parse the extracted chapters data and execute ffmpeg with -ss and -to arguments to split large audiobooks into individual audio files.
+* **Metadata Export:** Utilize the built-in csv module to parse library.json and output a standard spreadsheet of the user library.
+* **Static Web Generation:** Inject library variables into an HTML template string and save it locally to allow users to view their library in a web browser.
+
+## Phase 2: Playback and Media Enhancements
+* **Playback Memory:** Write the current timestamp and active chapter index to library.json when stopping playback, and read from it when loading a file.
+* **Speed Control:** Add UI dropdowns for variable playback speeds by modifying the ffplay subprocess array with the -af atempo=X parameter.
+* **Volume Control:** Add a Tkinter Scale widget and pass its value to the ffplay -volume parameter.
+* **Cover Art Extraction:** Use ffmpeg to extract the cover art from downloaded files or fetch it via the Audible API, displaying it in the active file frame.
+
+## Phase 3: Accessibility and UI Modernization
+* **Search and Filter:** Add a text entry field above the treeviews. Filter the active items based on title, author, or ASIN matches.
+* **Modern Theming:** Integrate sv_ttk to replace the default Tkinter styling with a modern flat design.
+* **Theme Toggle:** Add a functional toggle in the settings tab to switch between light and dark modes.
+* **Queue Management:** Add granular controls to pause, resume, or cancel active downloads in the queue worker thread.
+* **System Tray Integration:** Implement pystray to allow the application to minimize to the taskbar tray while audio plays in the background.
+
+## Phase 4: Community and Gamification
+* **Achievement System:** Create a stats.json tracker that increments specific variables based on user actions. Trigger a borderless Tkinter Toplevel window popup when thresholds are met.
+* **Hidden Interactions:** Bind key sequences to the main root window to trigger hidden functions or text-based interactions in the log window.
+* **Donation Link:** Add a standard button using the webbrowser module to open a donation page.
+* **Open Source Deployment:** Create a comprehensive README, a requirements.txt file, and a GitHub repository to host the code and accept community contributions.
