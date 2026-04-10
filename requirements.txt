@@ -1,4 +1,6 @@
 audible
 requests
-rsa
 Pillow
+rsa
+pycaw
+comtypes
