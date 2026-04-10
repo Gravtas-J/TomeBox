@@ -171,7 +171,11 @@ class AAXManagerApp:
     def load_local_db(self):
         if os.path.exists(self.local_db_path):
             with open(self.local_db_path, "r") as f:
-                return json.load(f)
+                raw_db = json.load(f)
+                
+            # Dictionary comprehension to keep only files that actually exist
+            cleaned_db = {path: data for path, data in raw_db.items() if os.path.exists(path)}
+            return cleaned_db
         return {}
 
     def save_local_db(self):
@@ -380,17 +384,42 @@ class AAXManagerApp:
         threading.Thread(target=self.download_queue_worker, args=(items_to_download, save_dir), daemon=True).start()
 
     def build_library_components(self, parent):
-        lib_frame = tk.LabelFrame(parent, text="Unified Library", padx=10, pady=5)
-        lib_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        # 1. The Main Splitter
+        self.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        self.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # NEW: Search and Filter Bar
+        # 2. The Top Pane: Library List
+        lib_frame = tk.LabelFrame(self.main_paned, text="Unified Library", padx=10, pady=5)
+        self.main_paned.add(lib_frame, weight=1)
+
+        # 3. The Bottom Pane: Download Queue (Created, but NOT added to the screen yet)
+        self.queue_frame = tk.LabelFrame(self.main_paned, text="Active Downloads", padx=10, pady=5)
+        queue_controls = tk.Frame(self.queue_frame)
+        queue_controls.pack(fill="x", pady=(0, 5))
+        tk.Button(queue_controls, text="Cancel All Downloads", fg="red", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
+
+        self.queue_canvas = tk.Canvas(self.queue_frame, height=120)
+        self.queue_canvas = tk.Canvas(self.queue_frame, height=120)
+        queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
+        self.queue_inner = tk.Frame(self.queue_canvas)
+
+        self.queue_inner.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
+        self.queue_canvas.create_window((0, 0), window=self.queue_inner, anchor="nw")
+        self.queue_canvas.configure(yscrollcommand=queue_scroll.set)
+
+        self.queue_canvas.pack(side="left", fill="both", expand=True)
+        queue_scroll.pack(side="right", fill="y")
+
+        # 4. Dictionary to track active download states
+        self.active_downloads = {}
+
+        # 5. Search and Filter Bar
         filter_frame = tk.Frame(lib_frame)
         filter_frame.pack(fill="x", pady=(0, 5))
 
         tk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
         
         self.search_var = tk.StringVar()
-        # Triggers the refresh method every time a character is typed or deleted
         self.search_var.trace_add("write", lambda *args: self.refresh_library_ui()) 
         search_entry = ttk.Entry(filter_frame, textvariable=self.search_var, width=35)
         search_entry.pack(side=tk.LEFT, padx=(0, 20))
@@ -400,10 +429,15 @@ class AAXManagerApp:
         self.filter_var = tk.StringVar(value="All")
         filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
         filter_combo.pack(side=tk.LEFT)
-        # Triggers the refresh method when a new dropdown option is selected
         filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
 
-        # Existing Treeview Setup
+        # Download All Button
+        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
+        self.dl_all_btn.pack(side=tk.RIGHT, padx=(20, 5))
+        # Toggle Queue Button
+        self.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=self.toggle_queue_visibility)
+        self.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
+        # 6. Existing Treeview Setup
         tree_frame = tk.Frame(lib_frame)
         tree_frame.pack(fill="both", expand=True, pady=5)
 
@@ -416,7 +450,6 @@ class AAXManagerApp:
         for col in self.library_tree["columns"]:
             self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
             
-        # Adjusted widths to accommodate the new column
         self.library_tree.column("Title", width=250)
         self.library_tree.column("Author", width=120)
         self.library_tree.column("Series", width=120)
@@ -427,6 +460,7 @@ class AAXManagerApp:
         
         self.library_tree.bind("<Double-1>", self.master_play)
 
+        # 7. Action Buttons
         btn_frame = tk.Frame(lib_frame)
         btn_frame.pack(fill="x", pady=2)
         tk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
@@ -453,6 +487,134 @@ class AAXManagerApp:
         ttk.Progressbar(dl_prog_frame, variable=self.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
 
         self.refresh_library_ui()
+
+    def toggle_queue_visibility(self):
+        current_panes = self.main_paned.panes()
+        queue_str = str(self.queue_frame)
+        
+        if queue_str in current_panes:
+            self.main_paned.forget(self.queue_frame)
+        else:
+            self.main_paned.add(self.queue_frame, weight=0)
+
+    def cancel_all_downloads(self):
+        if not getattr(self, 'active_downloads', None):
+            return
+
+        if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):
+            for asin, data in self.active_downloads.items():
+                current_status = data["status_var"].get()
+                if not data["cancel_flag"] and current_status not in ["Complete", "Failed", "Canceled"]:
+                    data["cancel_flag"] = True
+                    data["status_var"].set("Canceling...")
+            
+            self.write_log("User initiated Cancel All Downloads.")
+            
+            # NEW: Clear the global download UI when canceling
+            self.dl_status_var.set("Downloads Canceled")
+            self.dl_progress_var.set(0)
+            self.root.after(3000, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(3000, lambda: self.toggle_queue_drawer(False))
+
+    def toggle_queue_drawer(self, show=True):
+        current_panes = self.main_paned.panes()
+        queue_str = str(self.queue_frame)
+        
+        if show and queue_str not in current_panes:
+            self.main_paned.add(self.queue_frame, weight=0)
+        elif not show and queue_str in current_panes:
+            self.main_paned.forget(self.queue_frame)
+
+    def add_queue_ui_row(self, asin, title):
+        row_frame = tk.Frame(self.queue_inner)
+        row_frame.pack(fill="x", pady=2, padx=5)
+
+        title_lbl = tk.Label(row_frame, text=title[:40] + ("..." if len(title) > 40 else ""), width=35, anchor="w")
+        title_lbl.pack(side=tk.LEFT, padx=(0, 10))
+
+        prog_var = tk.DoubleVar()
+        prog_bar = ttk.Progressbar(row_frame, variable=prog_var, maximum=100, length=200)
+        prog_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 10))
+
+        status_var = tk.StringVar(value="Waiting...")
+        status_lbl = tk.Label(row_frame, textvariable=status_var, width=15, anchor="w", fg="gray")
+        status_lbl.pack(side=tk.LEFT, padx=(0, 10))
+
+        # The Cancel Button sets a specific flag in our dictionary that the download thread will look for
+        cancel_btn = tk.Button(row_frame, text=" ✕ ", fg="red", command=lambda a=asin: self.cancel_download(a))
+        cancel_btn.pack(side=tk.RIGHT)
+
+        # Store these references so the download thread can update them
+        self.active_downloads[asin] = {
+            "frame": row_frame,
+            "prog_var": prog_var,
+            "status_var": status_var,
+            "cancel_flag": False
+        }
+        
+    def cancel_download(self, asin):
+        if asin in self.active_downloads:
+            self.active_downloads[asin]["cancel_flag"] = True
+            self.active_downloads[asin]["status_var"].set("Canceling...")
+
+    def start_download_all(self):
+        local_titles = {data["title"] for path, data in self.local_library.items()}
+        missing_items = [item for item in getattr(self, 'cloud_items', []) if item.get("title") not in local_titles]
+
+        if not missing_items:
+            messagebox.showinfo("Up to Date", "Your local library already has all cloud items downloaded.")
+            return
+
+        if messagebox.askyesno("Download All", f"Found {len(missing_items)} missing audiobooks.\n\nDo you want to batch download them all now? This may take a while depending on your internet connection."):
+            self.dl_all_btn.config(state=tk.DISABLED)
+            threading.Thread(target=self.download_all_worker, args=(missing_items,), daemon=True).start()
+
+    def download_all_worker(self, missing_items):
+        total = len(missing_items)
+        
+        save_dir = getattr(self, 'default_download_dir', "")
+        if not save_dir:
+            save_dir = getattr(self, 'base_dir', os.getcwd())
+
+        # 1. Open the UI Drawer
+        self.root.after(0, lambda: self.toggle_queue_drawer(True))
+        
+        # 2. Build all the UI rows immediately so you can see the queue
+        for item in missing_items:
+            asin = item.get("asin")
+            title = item.get("title", "Unknown")
+            self.root.after(0, self.add_queue_ui_row, asin, title)
+        
+        # 3. Process the downloads
+        for idx, item in enumerate(missing_items):
+            title = item.get("title", "Unknown")
+            asin = item.get("asin")
+            
+            # If the user clicked the "X" cancel button before we got to this book, skip it
+            if asin in self.active_downloads and self.active_downloads[asin]["cancel_flag"]:
+                self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
+                continue
+            
+            self.root.after(0, lambda i=idx+1, t=total, name=title: self.dl_status_var.set(f"Batch Downloading ({i}/{t}): {name}..."))
+            
+            if asin in self.active_downloads:
+                self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Starting..."))
+            
+            try:
+                self.download_worker(asin, title, save_dir, is_queue=True)
+            except Exception as e:
+                self.write_log(f"Failed to batch download {title}: {e}")
+                if asin in self.active_downloads:
+                    self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
+                
+        self.root.after(0, lambda: self.dl_status_var.set("Batch Download Complete"))
+        self.root.after(0, lambda: self.dl_progress_var.set(0))
+        self.root.after(0, self.refresh_library_ui)
+        self.root.after(0, lambda: self.dl_all_btn.config(state=tk.NORMAL))
+        
+        # Close the drawer automatically 5 seconds after everything finishes
+        self.root.after(5000, lambda: self.toggle_queue_drawer(False))
+        self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def refresh_library_ui(self, *args):
         # Clear the current treeview
@@ -524,7 +686,7 @@ class AAXManagerApp:
 
         item = self.library_tree.item(selected)
         title = item['values'][0]
-        asin = item['values'][3]
+        asin = item['values'][4]
 
         # Check if we have it locally
         local_path = None
@@ -962,7 +1124,9 @@ class AAXManagerApp:
 
         self.write_log(f"Starting download process for ASIN: {asin}")
         threading.Thread(target=self.download_worker, args=(asin, title, save_dir), daemon=True).start()
+
     def download_worker(self, asin, title, save_dir, is_queue=False, post_action=None):
+        filepath = None 
         try:
             self.root.after(0, lambda: self.dl_status_var.set(f"Downloading: {title}"))
             self.root.after(0, lambda: self.dl_progress_var.set(0))
@@ -1041,6 +1205,11 @@ class AAXManagerApp:
                 last_percent = 0
                 
                 while True:
+                    # NEW: Check if the user clicked the cancel button
+                    if is_queue and asin in self.active_downloads:
+                        if self.active_downloads[asin]["cancel_flag"]:
+                            raise Exception("Download canceled by user.")
+
                     chunk = response.read(32768)
                     if not chunk: break
                     out_file.write(chunk)
@@ -1048,12 +1217,23 @@ class AAXManagerApp:
                     if total_size > 0:
                         downloaded += len(chunk)
                         percent_float = (downloaded / total_size) * 100
+                        
+                        # Update the main global bar
                         self.root.after(0, self.dl_progress_var.set, percent_float)
+                        
+                        # NEW: Update the specific bar in the Queue Drawer
+                        if is_queue and asin in self.active_downloads:
+                            self.root.after(0, self.active_downloads[asin]["prog_var"].set, percent_float)
+                            self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{int(percent_float)}%")
                         
                         percent_int = int(percent_float)
                         if percent_int >= last_percent + 10:
                             self.write_log(f"Download Progress: {percent_int}%")
                             last_percent = percent_int
+            
+            # Mark the queue item as complete when finished
+            if is_queue and asin in self.active_downloads:
+                self.root.after(0, self.active_downloads[asin]["status_var"].set, "Complete")
             
             self.write_log(f"Download complete: {safe_title}.aaxc")
             
@@ -1079,10 +1259,22 @@ class AAXManagerApp:
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            self.write_log(f"DOWNLOAD ERROR:\n{error_trace}")
-            error_msg = str(e) 
+            error_msg = str(e)
+            
+            # NEW: Clean up partial files if the user canceled
+            if "canceled by user" in error_msg.lower() and filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    self.write_log(f"Cleaned up partial file: {filepath}")
+                except OSError as cleanup_error:
+                    self.write_log(f"Failed to clean up partial file: {cleanup_error}")
+            else:
+                # Only log the full error trace if it was a genuine crash, not a normal cancel
+                self.write_log(f"DOWNLOAD ERROR:\n{error_trace}")
+
             if not is_queue:
                 self.root.after(0, lambda err=error_msg: messagebox.showerror("Download Error", f"Failed to download.\n\n{err}\n\nCheck log for details."))
+                
         finally:
             if not is_queue:
                 self.root.after(0, lambda: self.dl_status_var.set("Idle"))
@@ -1096,6 +1288,8 @@ class AAXManagerApp:
                 "asin": asin  # NEW: Save ASIN for metadata fetching
             }
         self.save_local_db()
+        self.root.after(0, self.refresh_library_ui)
+        
     def seek_audio(self, offset):
         if not self.file_path or not self.chapters:
             return
