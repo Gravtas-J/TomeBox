@@ -1145,37 +1145,17 @@ class AAXManagerApp:
             return False, str(e)
 
     def start_convert_thread(self):
-        if not self.chapters:
-            messagebox.showinfo("No Chapters Found", "This file does not contain chapter markers. Defaulting to single file conversion.")
-            split_choice = False
-        else:
-            split_choice = messagebox.askyesnocancel(
-                "Conversion Options",
-                "Do you want to split this audiobook into individual chapters?\n\n"
-                "Yes = Split into multiple files (Export only)\n"
-                "No = Keep as a single .m4b file\n"
-                "Cancel = Abort"
-            )
-
-        if split_choice is None:
+        output_file = filedialog.asksaveasfilename(
+            defaultextension=".m4b", 
+            filetypes=[("M4B Audiobook", "*.m4b")], 
+            initialfile=os.path.basename(self.file_path).replace(".aaxc", ".m4b").replace(".aax", ".m4b")
+        )
+        if not output_file: 
             return
 
-        if split_choice:
-            output_dir = filedialog.askdirectory(title=f"Select Folder to Extract Chapters For: {os.path.basename(self.file_path)}")
-            if not output_dir: 
-                return
-            self.status_label.config(text="Splitting into chapters... Please wait.", fg="orange")
-            threading.Thread(target=self.split_worker, args=(self.file_path, output_dir), daemon=True).start()
-        else:
-            output_file = filedialog.asksaveasfilename(
-                defaultextension=".m4b", 
-                filetypes=[("M4B Audiobook", "*.m4b")], 
-                initialfile=os.path.basename(self.file_path).replace(".aaxc", ".m4b").replace(".aax", ".m4b")
-            )
-            if not output_file: 
-                return
-            self.status_label.config(text="Converting to .m4b... Please wait.", fg="orange")
-            threading.Thread(target=self.convert_worker, args=(self.file_path, output_file), daemon=True).start()
+        # Removed the convert_btn reference here
+        self.status_label.config(text="Converting to .m4b... Please wait.", fg="orange")
+        threading.Thread(target=self.convert_worker, args=(self.file_path, output_file), daemon=True).start()
 
     def convert_worker(self, input_path, output_path):
         cmd = ["ffmpeg", "-y"]
@@ -1204,41 +1184,6 @@ class AAXManagerApp:
             self.root.after(0, lambda: messagebox.showerror("Conversion Failed", str(e)))
         finally:
             # Removed the convert_btn reference here as well
-            self.root.after(0, lambda: self.status_label.config(text=f"Ready: {os.path.basename(input_path)}", fg="green"))
-
-    def split_worker(self, input_path, output_dir):
-        try:
-            base_flags = []
-            if input_path.endswith(".aax") or input_path.endswith(".aaxc"):
-                base_flags = self.get_drm_flags(input_path)
-
-            total_chaps = len(self.chapters)
-            
-            for idx, chapter in enumerate(self.chapters):
-                # Update the playback progress bar to show splitting progress
-                self.root.after(0, lambda p=(idx / total_chaps) * 100: self.progress_var.set(p))
-                
-                chap_title = chapter.get("tags", {}).get("title", f"Chapter {idx + 1}")
-                safe_chap_title = "".join([c for c in chap_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
-                
-                out_name = f"{idx + 1:03d} - {safe_chap_title}.m4b"
-                out_path = os.path.join(output_dir, out_name)
-
-                start = chapter.get("start_time", 0)
-                end = chapter.get("end_time", 0)
-
-                cmd = ["ffmpeg", "-y"]
-                cmd.extend(base_flags)
-                cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", out_path])
-                
-                subprocess.run(cmd, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-
-            self.root.after(0, lambda: self.progress_var.set(0))
-            self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook successfully split into {total_chaps} files.\n\nFiles were saved to your selected directory and intentionally omitted from the main library list to prevent clutter."))
-            
-        except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Split Failed", str(e)))
-        finally:
             self.root.after(0, lambda: self.status_label.config(text=f"Ready: {os.path.basename(input_path)}", fg="green"))
 
     def extract_chapters(self, filepath):

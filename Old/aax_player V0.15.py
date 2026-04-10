@@ -1001,21 +1001,6 @@ class AAXManagerApp:
         speed_menu.config(width=4)
         speed_menu.pack(side=tk.LEFT, padx=10)
 
-        # NEW: Volume Control Slider
-        self.volume_var = tk.DoubleVar(value=100.0)
-        vol_frame = tk.Frame(controls_frame)
-        vol_frame.pack(side=tk.LEFT, padx=5)
-        tk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
-        self.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.volume_var, length=80)
-        self.vol_slider.pack(side=tk.LEFT)
-        self.vol_slider.bind("<ButtonRelease-1>", self.on_volume_change)
-
-    def on_volume_change(self, event=None):
-        if self.is_playing:
-            self.pause_audio()
-            self.is_paused = False
-            self.resume_playback()
-
     def on_speed_change(self, selected_speed):
         if self.is_playing:
             self.pause_audio()
@@ -1196,13 +1181,9 @@ class AAXManagerApp:
         actual_start_time = base_start_time + self.current_play_time
         remaining_duration = self.chapter_duration - self.current_play_time
         
-        # Format the volume as an integer for ffplay
-        vol_int = int(self.volume_var.get())
-        
         cmd = [
             "ffplay", "-nodisp", "-autoexit", "-loglevel", "error", 
-            "-ss", str(actual_start_time), "-t", str(remaining_duration),
-            "-volume", str(vol_int) # NEW: Apply the volume limit
+            "-ss", str(actual_start_time), "-t", str(remaining_duration)
         ]
         
         # Extract the float value from the speed string
