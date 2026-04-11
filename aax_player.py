@@ -16,13 +16,18 @@ try:
 except ImportError:
     messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow")
     exit()
-
+import pystray
+from pystray import MenuItem as item
+import sys
+import socket
 class AAXManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("TomeBox")
         self.root.geometry("1150x780")
 
+        self.enforce_single_instance()
+        
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.local_db_path = os.path.join(self.base_dir, "library.json")
         self.last_db_mtime = 0
@@ -42,6 +47,7 @@ class AAXManagerApp:
         self.cloud_items = [] 
         
         self.settings = self.load_settings()
+        self.minimize_to_tray_var = tk.BooleanVar(value=self.settings.get("minimize_to_tray", True))
         self.default_download_dir = self.settings.get("download_dir", "")
         self.cloud_cache_path = os.path.join(self.base_dir, "cloud_cache.json")
         
@@ -71,12 +77,96 @@ class AAXManagerApp:
             self.write_log(f"Could not load app icon: {e}")
 
         self.setup_ui()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
+        self.setup_tray_icon()
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
 
         threading.Thread(target=self.db_monitor_worker, daemon=True).start()
     
+    def enforce_single_instance(self):
+        self.lock_port = 43128 # Unique port just for TomeBox
+        self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
+        try:
+            # Try to claim the port
+            self.lock_socket.bind(('127.0.0.1', self.lock_port))
+            self.lock_socket.listen(1)
+            
+            # Success! We are the first instance. Start listening for wake requests.
+            threading.Thread(target=self.instance_listener_worker, daemon=True).start()
+            
+        except socket.error:
+            # Port is already in use! Another TomeBox is running.
+            self.write_log("Another instance detected. Sending wake signal...")
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(('127.0.0.1', self.lock_port))
+                s.sendall(b"WAKEUP")
+                s.close()
+            except Exception:
+                pass
+            
+            # Kill this duplicate instance immediately
+            sys.exit(0)
+
+    def instance_listener_worker(self):
+        while True:
+            try:
+                conn, addr = self.lock_socket.accept()
+                data = conn.recv(1024)
+                if data == b"WAKEUP":
+                    self.write_log("Wake signal received. Bringing window to front.")
+                    self.root.after(0, self.bring_to_front)
+                conn.close()
+            except Exception as e:
+                if self.debug_mode.get():
+                    self.write_log(f"Socket listener error: {e}")
+                break
+
+    def bring_to_front(self):
+        # 1. Un-hide it if it was minimized to the system tray
+        self.root.deiconify()
+        
+        # 2. Lift it above other windows
+        self.root.lift()
+        
+        # 3. Force it to the absolute top, then release the lock so the user can click other things again
+        self.root.attributes('-topmost', True)
+        self.root.after_idle(self.root.attributes, '-topmost', False)
+
+    def setup_tray_icon(self):
+        try:
+            icon_path = os.path.join(self.base_dir, "tomebox.png")
+            if not os.path.exists(icon_path):
+                return
+                
+            image = Image.open(icon_path)
+            
+            menu = pystray.Menu(
+                item('Show TomeBox', self.show_window_from_tray, default=True),
+                item('Quit', self.quit_from_tray)
+            )
+            
+            self.tray_icon = pystray.Icon("TomeBox", image, "TomeBox", menu)
+            
+            # Run the tray icon loop in a background thread so it doesn't block Tkinter
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        except Exception as e:
+            self.write_log(f"Failed to initialize system tray: {e}")
+
+    def hide_window_to_tray(self):
+        # Withdraw hides the window from the taskbar and screen
+        self.root.withdraw()
+        
+    def show_window_from_tray(self, icon, item):
+        # Must be passed back to the main Tkinter thread using .after
+        self.root.after(0, self.root.deiconify)
+        
+    def quit_from_tray(self, icon, item):
+        icon.stop()
+        self.root.after(0, self.on_closing)
+
     def add_new_profile(self):
         new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
         if new_name and new_name not in self.profiles_list:
@@ -201,6 +291,13 @@ class AAXManagerApp:
         self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
         self.file_menu.add_separator()
 
+        self.file_menu.add_checkbutton(
+            label="Minimize to Tray on Close", 
+            variable=self.minimize_to_tray_var, 
+            command=self.save_tray_setting
+        )
+        self.file_menu.add_separator()
+
         # Appearance Sub-Menu
         self.appearance_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
         self.file_menu.add_cascade(label="Appearance", menu=self.appearance_menu)
@@ -244,6 +341,18 @@ class AAXManagerApp:
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.on_closing)
 
+    def save_tray_setting(self):
+        self.settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
+        self.save_settings()
+
+
+    def handle_window_close(self):
+        if self.minimize_to_tray_var.get():
+            self.hide_window_to_tray()
+        else:
+            if hasattr(self, 'tray_icon') and self.tray_icon:
+                self.tray_icon.stop()
+            self.on_closing()
 
     def silent_sync_worker(self):
         if not getattr(self, 'auth_object', None):
@@ -677,7 +786,7 @@ class AAXManagerApp:
                 repaint_combobox_dropdowns(child)
                 
         repaint_combobox_dropdowns(self.root)
-        
+
         style.configure("TEntry", fieldbackground=colors["entry"], foreground=colors["fg"])
         
         style.configure("Treeview", background=colors["entry"], foreground=colors["fg"], fieldbackground=colors["entry"], bordercolor=colors["border"])
