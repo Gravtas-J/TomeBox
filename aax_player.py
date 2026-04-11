@@ -10,7 +10,7 @@ import requests
 import io
 from PIL import Image, ImageTk
 import csv
-
+import sv_ttk
 try:
     import audible
 except ImportError:
@@ -25,6 +25,7 @@ class AAXManagerApp:
 
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.local_db_path = os.path.join(self.base_dir, "library.json")
+        self.last_db_mtime = 0
         self.auth_save_path = os.path.join(self.base_dir, "my_audible_auth.json")
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
         self.settings_path = os.path.join(self.base_dir, "settings.json")
@@ -51,30 +52,154 @@ class AAXManagerApp:
         self.dl_progress_var = tk.DoubleVar()
         self.dl_status_var = tk.StringVar(value="Idle")
 
+        self.root.after(100, self.check_dependencies)
+
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
+
+        threading.Thread(target=self.db_monitor_worker, daemon=True).start()
     
+    def check_dependencies(self):
+        import shutil
+        import webbrowser
+        
+        ffmpeg_installed = shutil.which("ffmpeg") is not None
+        ffplay_installed = shutil.which("ffplay") is not None
+        
+        if not ffmpeg_installed or not ffplay_installed:
+            self.write_log("WARNING: FFmpeg or FFplay not found in system PATH.")
+            
+            msg = (
+                "FFmpeg is missing from your system.\n\n"
+                "TomeBox requires FFmpeg to play, convert, and split audiobooks. "
+                "Without it, you will only be able to download files.\n\n"
+                "Would you like to open the official FFmpeg download page now?"
+            )
+            
+            # askyesno returns True if they click Yes, False if No
+            user_wants_link = messagebox.askyesno("Missing Dependency: FFmpeg", msg)
+            
+            if user_wants_link:
+                self.write_log("Opening FFmpeg download page in browser...")
+                webbrowser.open("https://ffmpeg.org/download.html")
+
     def run_background_sync(self):
         threading.Thread(target=self.silent_sync_worker, daemon=True).start()
         # Schedule the next check in 15 minutes (900000 milliseconds)
         self.root.after(900000, self.run_background_sync)
     
-    def build_menu_bar(self):
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
+    def db_monitor_worker(self):
+        import time
+        import os
+        import json
         
-        export_menu = tk.Menu(file_menu, tearoff=0)
-        file_menu.add_cascade(label="Export Library", menu=export_menu)
-        export_menu.add_command(label="Export to CSV", command=self.export_csv_worker)
-        export_menu.add_command(label="Export to HTML Page", command=self.export_html_worker)
+        while True:
+            ui_needs_refresh = False
+            
+            # 1. Check if any actual audio files were deleted from the hard drive
+            # We copy the keys() to a list so we can safely delete from the dictionary during the loop
+            missing_paths = [path for path in list(self.local_library.keys()) if not os.path.exists(path)]
+            
+            if missing_paths:
+                for path in missing_paths:
+                    del self.local_library[path]
+                    
+                self.write_log(f"Detected {len(missing_paths)} deleted files. Updating library...")
+                
+                # Save the cleaned DB without triggering the JSON file monitor below
+                with open(self.local_db_path, "w") as f:
+                    json.dump(self.local_library, f, indent=4)
+                
+                if os.path.exists(self.local_db_path):
+                    self.last_db_mtime = os.path.getmtime(self.local_db_path)
+                    
+                ui_needs_refresh = True
 
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.on_closing)
+            # 2. Check if the library.json file was edited externally
+            if os.path.exists(self.local_db_path):
+                try:
+                    current_mtime = os.path.getmtime(self.local_db_path)
+                    
+                    if self.last_db_mtime == 0:
+                        self.last_db_mtime = current_mtime
+                    elif current_mtime > self.last_db_mtime:
+                        self.write_log("External DB change detected. Syncing local library...")
+                        self.last_db_mtime = current_mtime
+                        self.local_library = self.load_local_db()
+                        ui_needs_refresh = True
+                except Exception as e:
+                    self.write_log(f"DB Monitor Error: {e}")
+            
+            # Redraw the screen if either of the above checks triggered a change
+            if ui_needs_refresh:
+                self.root.after(0, self.refresh_library_ui)
+                
+            time.sleep(2)
+
+    def build_menu_bar(self):
+        # 1. Strip out any native OS menu
+        self.root.config(menu="")
+
+        # 2. Build the fake menu bar frame at the very top of the app
+        self.menu_frame = ttk.Frame(self.root)
+        self.menu_frame.pack(side=tk.TOP, fill="x")
+
+        # 3. Create the 'File' button
+        self.file_menubutton = ttk.Menubutton(self.menu_frame, text="File")
+        self.file_menubutton.pack(side=tk.LEFT, padx=5, pady=2)
+
+        # 4. Attach a standard tk.Menu to the button (dropdowns CAN be colored!)
+        self.file_menu = tk.Menu(self.file_menubutton, tearoff=0, relief="flat")
+        self.file_menubutton.config(menu=self.file_menu)
+        
+        self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
+        self.file_menu.add_separator()
+
+        # Appearance Sub-Menu
+        self.appearance_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
+        self.file_menu.add_cascade(label="Appearance", menu=self.appearance_menu)
+        
+        if not hasattr(self, 'ui_mode_var'):
+            self.ui_mode_var = tk.StringVar(value=self.settings.get("ui_mode", "modern"))
+            
+        self.appearance_menu.add_radiobutton(label="Classic Engine (ttk)", variable=self.ui_mode_var, value="classic", command=self.on_ui_mode_change)
+        self.appearance_menu.add_radiobutton(label="Modern Engine (sv_ttk)", variable=self.ui_mode_var, value="modern", command=self.on_ui_mode_change)
+
+        self.appearance_menu.add_separator()
+
+        # Classic Palettes Sub-Menu
+        self.palette_menu = tk.Menu(self.appearance_menu, tearoff=0, relief="flat")
+        self.appearance_menu.add_cascade(label="Classic Engine Palettes", menu=self.palette_menu)
+        
+        self.palette_var = tk.StringVar(value=self.settings.get("classic_palette", "light"))
+        
+        self.palette_menu.add_radiobutton(label="Light Default", variable=self.palette_var, value="light", command=lambda: self.apply_classic_palette("light"))
+        self.palette_menu.add_radiobutton(label="Dark Charcoal", variable=self.palette_var, value="dark", command=lambda: self.apply_classic_palette("dark"))
+        self.palette_menu.add_radiobutton(label="Terminal Green", variable=self.palette_var, value="terminal", command=lambda: self.apply_classic_palette("terminal"))
+        self.palette_menu.add_separator()
+        self.palette_menu.add_radiobutton(label="Solarized Dark", variable=self.palette_var, value="solarized_dark", command=lambda: self.apply_classic_palette("solarized_dark"))
+        self.palette_menu.add_radiobutton(label="Solarized Light", variable=self.palette_var, value="solarized_light", command=lambda: self.apply_classic_palette("solarized_light"))
+        self.palette_menu.add_separator()
+        self.palette_menu.add_radiobutton(label="Dracula", variable=self.palette_var, value="dracula", command=lambda: self.apply_classic_palette("dracula"))
+        self.palette_menu.add_radiobutton(label="Nordic Slate", variable=self.palette_var, value="nord", command=lambda: self.apply_classic_palette("nord"))
+        self.palette_menu.add_radiobutton(label="Cyberpunk", variable=self.palette_var, value="cyberpunk", command=lambda: self.apply_classic_palette("cyberpunk"))
+
+        self.appearance_menu.add_separator()
+        self.appearance_menu.add_command(label="Toggle Light / Dark Mode", command=self.toggle_custom_colors)
+
+        self.file_menu.add_separator()
+
+        # Export Sub-Menu
+        self.export_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
+        self.file_menu.add_cascade(label="Export Library", menu=self.export_menu)
+        self.export_menu.add_command(label="Export to CSV", command=self.export_csv_worker)
+        self.export_menu.add_command(label="Export to HTML Page", command=self.export_html_worker)
+
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Exit", command=self.on_closing)
+
 
     def silent_sync_worker(self):
         if not getattr(self, 'auth_object', None):
@@ -181,6 +306,8 @@ class AAXManagerApp:
     def save_local_db(self):
         with open(self.local_db_path, "w") as f:
             json.dump(self.local_library, f, indent=4)
+        # Update the tracker so the monitor ignores this specific change
+        self.last_db_mtime = os.path.getmtime(self.local_db_path)
     
     def load_cloud_cache(self):
         if os.path.exists(self.cloud_cache_path):
@@ -204,7 +331,8 @@ class AAXManagerApp:
             self.default_download_dir = directory
             self.settings["download_dir"] = directory
             self.save_settings()
-            self.lbl_download_dir.config(text=directory)
+            # Let the user know it was saved since the visual label is gone
+            messagebox.showinfo("Folder Saved", f"Default download folder updated to:\n{directory}")
 
     def download_title_prompt(self):
         selected = self.cloud_tree.focus()
@@ -327,40 +455,188 @@ class AAXManagerApp:
     def build_auth_components(self, parent):
         self.locale = tk.StringVar(value="us")
 
-        auth_frame = tk.LabelFrame(parent, text="Audible Authentication", padx=10, pady=10)
+        auth_frame = ttk.LabelFrame(parent, text="Audible Authentication", padding=10)
         auth_frame.pack(fill="x", padx=5, pady=5)
 
-        reg_frame = tk.Frame(auth_frame)
+        reg_frame = ttk.Frame(auth_frame)
         reg_frame.pack(fill="x", pady=5)
-        tk.Label(reg_frame, text="Region:").pack(side=tk.LEFT, padx=5)
-        tk.OptionMenu(reg_frame, self.locale, *["us", "uk", "au", "ca", "de", "fr", "jp"]).pack(side=tk.LEFT)
+        ttk.Label(reg_frame, text="Region:").pack(side=tk.LEFT, padx=5)
+        
+        # Upgraded to Combobox
+        reg_combo = ttk.Combobox(reg_frame, textvariable=self.locale, values=["us", "uk", "au", "ca", "de", "fr", "jp"], state="readonly", width=5)
+        reg_combo.pack(side=tk.LEFT)
 
-        btn_frame = tk.Frame(auth_frame)
+        btn_frame = ttk.Frame(auth_frame)
         btn_frame.pack(fill="x", pady=5)
-        self.browser_login_btn = tk.Button(btn_frame, text="Browser Login", command=self.start_browser_login_thread)
+        self.browser_login_btn = ttk.Button(btn_frame, text="Browser Login", command=self.start_browser_login_thread)
         self.browser_login_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-        self.auth_file_btn = tk.Button(btn_frame, text="Load .json", command=self.load_auth_file_prompt)
+        self.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=self.load_auth_file_prompt)
         self.auth_file_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
-        tk.Checkbutton(auth_frame, text="Enable API Debug Output", variable=self.debug_mode).pack(anchor="w", pady=5)
+        # ttk.Checkbutton(auth_frame, text="Enable API Debug Output", variable=self.debug_mode).pack(anchor="w", pady=5)
 
-        bytes_frame = tk.LabelFrame(parent, text="Decryption Bytes", padx=10, pady=5)
+        # # NEW: Appearance Settings
+        # appearance_frame = ttk.LabelFrame(parent, text="Appearance", padding=10)
+        # appearance_frame.pack(fill="x", padx=5, pady=5)
+        
+        # # UI Engine Selector
+        # self.ui_mode_var = tk.StringVar(value=self.settings.get("ui_mode", "modern"))
+        # ttk.Label(appearance_frame, text="UI Engine:").pack(anchor="w", pady=(0, 2))
+        # ui_combo = ttk.Combobox(appearance_frame, textvariable=self.ui_mode_var, values=["classic", "modern"], state="readonly")
+        # ui_combo.pack(fill="x", pady=(0, 10))
+        # ui_combo.bind("<<ComboboxSelected>>", self.on_ui_mode_change)
+        
+        # # sv_ttk has a built-in toggle_theme command we can use directly
+        # self.theme_btn = ttk.Button(appearance_frame, text="Toggle Light / Dark Mode", command=self.toggle_custom_colors)
+        # self.theme_btn.pack(fill="x", pady=2)
+
+        bytes_frame = ttk.LabelFrame(parent, text="Decryption Bytes", padding=10)
         bytes_frame.pack(fill="x", padx=5, pady=5)
-        tk.Entry(bytes_frame, textvariable=self.auth_bytes, justify="center").pack(fill="x", pady=5)
+        ttk.Entry(bytes_frame, textvariable=self.auth_bytes, justify="center").pack(fill="x", pady=5)
 
-        # NEW: Cover Art and Metadata Frame
-        self.cover_frame = tk.Frame(parent)
+        self.cover_frame = ttk.Frame(parent)
         self.cover_frame.pack(fill="x", padx=5, pady=10)
         
-        self.cover_label = tk.Label(self.cover_frame, text="No Cover Art")
+        self.cover_label = ttk.Label(self.cover_frame, text="No Cover Art")
         self.cover_label.pack(pady=5)
         
-        self.author_label = tk.Label(self.cover_frame, text="", fg="gray", font=("Arial", 10, "italic"))
+        self.author_label = ttk.Label(self.cover_frame, text="", font=("Segoe UI", 10, "italic"))
         self.author_label.pack(pady=2)
         
-        self.current_cover_photo = None # Prevents Python from garbage-collecting the image
+        self.current_cover_photo = None
 
+    def toggle_custom_colors(self):
+        # NEW: Safeguard against hijacking classic mode
+        if self.settings.get("ui_mode", "modern") == "classic":
+            messagebox.showinfo(
+                "Engine Restriction", 
+                "Light / Dark mode toggling is a feature of the Modern Engine (sv_ttk).\n\n"
+                "To use this feature, please select the Modern Engine from the Appearance menu and restart TomeBox."
+            )
+            return
 
+        import sv_ttk
+        
+        # sv_ttk.get_theme() returns either "dark" or "light"
+        current_theme = sv_ttk.get_theme()
+        
+        if current_theme == "dark":
+            sv_ttk.set_theme("light")
+            bg_color = "#f3f3f3" # Standard light gray background
+        else:
+            sv_ttk.set_theme("dark")
+            bg_color = "#1c1c1c" # Standard dark gray background
+            
+        # Update the standard tk elements that sv_ttk misses
+        if hasattr(self, 'queue_canvas'):
+            self.queue_canvas.config(bg=bg_color)
+            self.queue_inner.config(bg=bg_color)
+            
+            # Update any active download rows in the queue
+            for data in getattr(self, 'active_downloads', {}).values():
+                if "frame" in data:
+                    data["frame"].config(bg=bg_color)
+
+    def apply_classic_palette(self, palette_name):
+        style = ttk.Style()
+        style.theme_use("clam")
+        
+        # Expanded Theme Roster
+        palettes = {
+            "light": {"bg": "#f0f0f0", "fg": "#000000", "entry": "#ffffff", "select": "#0078D7", "btn": "#e1e1e1", "border": "#cccccc"},
+            "dark": {"bg": "#2b2b2b", "fg": "#e0e0e0", "entry": "#1e1e1e", "select": "#4a90e2", "btn": "#3c3c3c", "border": "#555555"},
+            "terminal": {"bg": "#0c0c0c", "fg": "#00ff00", "entry": "#000000", "select": "#005500", "btn": "#1a1a1a", "border": "#004400"},
+            "solarized_dark": {"bg": "#002b36", "fg": "#839496", "entry": "#073642", "select": "#cb4b16", "btn": "#073642", "border": "#586e75"},
+            "solarized_light": {"bg": "#fdf6e3", "fg": "#657b83", "entry": "#eee8d5", "select": "#268bd2", "btn": "#eee8d5", "border": "#93a1a1"},
+            "dracula": {"bg": "#282a36", "fg": "#f8f8f2", "entry": "#44475a", "select": "#bd93f9", "btn": "#44475a", "border": "#6272a4"},
+            "cyberpunk": {"bg": "#0a0a2a", "fg": "#00ffcc", "entry": "#161638", "select": "#ff00ff", "btn": "#20204a", "border": "#00ffff"},
+            "nord": {"bg": "#2e3440", "fg": "#d8dee9", "entry": "#3b4252", "select": "#5e81ac", "btn": "#434c5e", "border": "#4c566a"}
+        }
+        
+        colors = palettes.get(palette_name, palettes["light"])
+        
+        self.root.configure(bg=colors["bg"])
+        
+        def paint_structural_frames(widget):
+            if type(widget) in (tk.Frame, tk.Tk):
+                try:
+                    widget.configure(bg=colors["bg"])
+                except tk.TclError:
+                    pass
+            for child in widget.winfo_children():
+                paint_structural_frames(child)
+                
+        paint_structural_frames(self.root)
+        
+        style.configure(".", background=colors["bg"], foreground=colors["fg"], bordercolor=colors["border"], lightcolor=colors["bg"], darkcolor=colors["bg"])
+        style.configure("TFrame", background=colors["bg"])
+        
+        style.configure("TButton", background=colors["btn"], borderwidth=1, bordercolor=colors["border"])
+        style.map("TButton", background=[("active", colors["select"])])
+        
+        # --- NEW MENU BAR STYLES ---
+        # Make the top bar button blend into the background
+        style.configure("TMenubutton", background=colors["bg"], foreground=colors["fg"], borderwidth=0, arrowcolor=colors["bg"])
+        style.map("TMenubutton", background=[("active", colors["select"])], foreground=[("active", "#ffffff")])
+        
+        # Manually paint the legacy tk.Menu dropdowns
+        if hasattr(self, 'file_menu'):
+            menu_list = [self.file_menu, self.appearance_menu, self.palette_menu, self.export_menu]
+            for m in menu_list:
+                m.config(
+                    bg=colors["entry"], 
+                    fg=colors["fg"], 
+                    activebackground=colors["select"], 
+                    activeforeground="#ffffff",
+                    activeborderwidth=0,
+                    borderwidth=1
+                )
+
+        style.configure("TCombobox", fieldbackground=colors["entry"], background=colors["btn"], arrowcolor=colors["fg"], foreground=colors["fg"])
+        style.map("TCombobox", 
+                  fieldbackground=[("readonly", colors["entry"])], 
+                  selectbackground=[("readonly", colors["select"])], 
+                  selectforeground=[("readonly", "#ffffff")])
+                  
+        self.root.option_add('*TCombobox*Listbox.background', colors["entry"])
+        self.root.option_add('*TCombobox*Listbox.foreground', colors["fg"])
+        self.root.option_add('*TCombobox*Listbox.selectBackground', colors["select"])
+        self.root.option_add('*TCombobox*Listbox.selectForeground', "#ffffff")
+        
+        style.configure("TEntry", fieldbackground=colors["entry"], foreground=colors["fg"])
+        
+        style.configure("Treeview", background=colors["entry"], foreground=colors["fg"], fieldbackground=colors["entry"], bordercolor=colors["border"])
+        style.map("Treeview", background=[("selected", colors["select"])], foreground=[("selected", "#ffffff")])
+        
+        style.configure("Treeview.Heading", background=colors["btn"], foreground=colors["fg"], bordercolor=colors["border"])
+        style.map("Treeview.Heading", background=[("active", colors["select"])], foreground=[("active", "#ffffff")])
+        
+        style.configure("TLabelframe", bordercolor=colors["border"])
+        style.configure("TLabelframe.Label", background=colors["bg"], foreground=colors["fg"])
+        
+        style.configure("TProgressbar", background=colors["select"], troughcolor=colors["entry"], bordercolor=colors["border"])
+        
+        style.configure("Vertical.TScrollbar", background=colors["btn"], troughcolor=colors["bg"], arrowcolor=colors["fg"], bordercolor=colors["border"])
+        style.configure("Horizontal.TScrollbar", background=colors["btn"], troughcolor=colors["bg"], arrowcolor=colors["fg"], bordercolor=colors["border"])
+        
+        style.configure("Sash", background=colors["border"], sashthickness=4)
+        
+        if hasattr(self, 'queue_canvas'):
+            self.queue_canvas.config(bg=colors["bg"], highlightthickness=0)
+            self.queue_inner.config(bg=colors["bg"])
+            for data in getattr(self, 'active_downloads', {}).values():
+                if "frame" in data:
+                    data["frame"].config(bg=colors["bg"])
+                    
+        self.settings["classic_palette"] = palette_name
+        self.save_settings()
+
+    def on_ui_mode_change(self, *args):
+        new_mode = self.ui_mode_var.get()
+        self.settings["ui_mode"] = new_mode
+        self.save_settings()
+            
+        messagebox.showinfo("Restart Required", f"UI engine set to '{new_mode}'.\n\nPlease restart TomeBox to apply the changes.")
 
     def download_all_prompt(self):
         save_dir = getattr(self, 'default_download_dir', '')
@@ -384,24 +660,24 @@ class AAXManagerApp:
         threading.Thread(target=self.download_queue_worker, args=(items_to_download, save_dir), daemon=True).start()
 
     def build_library_components(self, parent):
-        # 1. The Main Splitter
         self.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
         self.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # 2. The Top Pane: Library List
-        lib_frame = tk.LabelFrame(self.main_paned, text="Unified Library", padx=10, pady=5)
+        lib_frame = ttk.LabelFrame(self.main_paned, text="", padding=10)
         self.main_paned.add(lib_frame, weight=1)
 
-        # 3. The Bottom Pane: Download Queue (Created, but NOT added to the screen yet)
-        self.queue_frame = tk.LabelFrame(self.main_paned, text="Active Downloads", padx=10, pady=5)
-        queue_controls = tk.Frame(self.queue_frame)
+        self.queue_frame = ttk.LabelFrame(self.main_paned, text="Active Downloads", padding=10)
+        
+        queue_controls = ttk.Frame(self.queue_frame)
         queue_controls.pack(fill="x", pady=(0, 5))
-        tk.Button(queue_controls, text="Cancel All Downloads", fg="red", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
+        ttk.Button(queue_controls, text="Cancel All Downloads", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
 
-        self.queue_canvas = tk.Canvas(self.queue_frame, height=120)
-        self.queue_canvas = tk.Canvas(self.queue_frame, height=120)
+        # sv_ttk background color applied to the canvas
+        self.queue_canvas = tk.Canvas(self.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
         queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
-        self.queue_inner = tk.Frame(self.queue_canvas)
+        
+        # sv_ttk background color applied to the inner frame
+        self.queue_inner = tk.Frame(self.queue_canvas, bg="#1c1c1c")
 
         self.queue_inner.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
         self.queue_canvas.create_window((0, 0), window=self.queue_inner, anchor="nw")
@@ -410,35 +686,32 @@ class AAXManagerApp:
         self.queue_canvas.pack(side="left", fill="both", expand=True)
         queue_scroll.pack(side="right", fill="y")
 
-        # 4. Dictionary to track active download states
         self.active_downloads = {}
 
-        # 5. Search and Filter Bar
-        filter_frame = tk.Frame(lib_frame)
+        filter_frame = ttk.Frame(lib_frame)
         filter_frame.pack(fill="x", pady=(0, 5))
 
-        tk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
         
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *args: self.refresh_library_ui()) 
         search_entry = ttk.Entry(filter_frame, textvariable=self.search_var, width=35)
         search_entry.pack(side=tk.LEFT, padx=(0, 20))
 
-        tk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
         
         self.filter_var = tk.StringVar(value="All")
         filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
         filter_combo.pack(side=tk.LEFT)
         filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
 
-        # Download All Button
-        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
-        self.dl_all_btn.pack(side=tk.RIGHT, padx=(20, 5))
-        # Toggle Queue Button
         self.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=self.toggle_queue_visibility)
         self.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
-        # 6. Existing Treeview Setup
-        tree_frame = tk.Frame(lib_frame)
+
+        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
+        self.dl_all_btn.pack(side=tk.RIGHT, padx=(5, 5))
+
+        tree_frame = ttk.Frame(lib_frame)
         tree_frame.pack(fill="both", expand=True, pady=5)
 
         scroll = ttk.Scrollbar(tree_frame)
@@ -460,30 +733,29 @@ class AAXManagerApp:
         
         self.library_tree.bind("<Double-1>", self.master_play)
 
-        # 7. Action Buttons
-        btn_frame = tk.Frame(lib_frame)
+        btn_frame = ttk.Frame(lib_frame)
         btn_frame.pack(fill="x", pady=2)
-        tk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
         
-        local_btn_frame = tk.Frame(lib_frame)
+        local_btn_frame = ttk.Frame(lib_frame)
         local_btn_frame.pack(fill="x", pady=2)
-        tk.Button(local_btn_frame, text="Add Local File", command=self.add_local_file).pack(side=tk.LEFT, padx=5)
-        tk.Button(local_btn_frame, text="Remove from List", command=self.remove_local_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(local_btn_frame, text="Add Local File", command=self.add_local_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(local_btn_frame, text="Remove from List", command=self.remove_local_file).pack(side=tk.LEFT, padx=5)
 
-        dir_frame = tk.Frame(lib_frame)
-        dir_frame.pack(fill="x", pady=5)
-        tk.Button(dir_frame, text="Set Download Folder", command=self.set_download_folder).pack(side=tk.LEFT, padx=5)
-        self.lbl_download_dir = tk.Label(dir_frame, text=getattr(self, 'default_download_dir', '') or "No default folder set", fg="gray")
-        self.lbl_download_dir.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        # dir_frame = ttk.Frame(lib_frame)
+        # dir_frame.pack(fill="x", pady=5)
+        # ttk.Button(dir_frame, text="Set Download Folder", command=self.set_download_folder).pack(side=tk.LEFT, padx=5)
+        # self.lbl_download_dir = ttk.Label(dir_frame, text=getattr(self, 'default_download_dir', '') or "No default folder set")
+        # self.lbl_download_dir.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
 
-        dl_prog_frame = tk.Frame(lib_frame)
+        dl_prog_frame = ttk.Frame(lib_frame)
         dl_prog_frame.pack(fill="x", padx=5)
         
         self.dl_status_var = tk.StringVar(value="Idle")
         self.dl_progress_var = tk.DoubleVar()
-        tk.Label(dl_prog_frame, textvariable=self.dl_status_var).pack(side=tk.TOP, anchor="w")
+        ttk.Label(dl_prog_frame, textvariable=self.dl_status_var).pack(side=tk.TOP, anchor="w")
         ttk.Progressbar(dl_prog_frame, variable=self.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
 
         self.refresh_library_ui()
@@ -526,10 +798,11 @@ class AAXManagerApp:
             self.main_paned.forget(self.queue_frame)
 
     def add_queue_ui_row(self, asin, title):
-        row_frame = tk.Frame(self.queue_inner)
+        # We use a standard tk.Frame here to accept the sv_ttk background color
+        row_frame = tk.Frame(self.queue_inner, bg="#1c1c1c")
         row_frame.pack(fill="x", pady=2, padx=5)
 
-        title_lbl = tk.Label(row_frame, text=title[:40] + ("..." if len(title) > 40 else ""), width=35, anchor="w")
+        title_lbl = ttk.Label(row_frame, text=title[:40] + ("..." if len(title) > 40 else ""), width=35, anchor="w")
         title_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
         prog_var = tk.DoubleVar()
@@ -537,14 +810,12 @@ class AAXManagerApp:
         prog_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 10))
 
         status_var = tk.StringVar(value="Waiting...")
-        status_lbl = tk.Label(row_frame, textvariable=status_var, width=15, anchor="w", fg="gray")
+        status_lbl = ttk.Label(row_frame, textvariable=status_var, width=15, anchor="w")
         status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
-        # The Cancel Button sets a specific flag in our dictionary that the download thread will look for
-        cancel_btn = tk.Button(row_frame, text=" ✕ ", fg="red", command=lambda a=asin: self.cancel_download(a))
+        cancel_btn = ttk.Button(row_frame, text="✕", command=lambda a=asin: self.cancel_download(a))
         cancel_btn.pack(side=tk.RIGHT)
 
-        # Store these references so the download thread can update them
         self.active_downloads[asin] = {
             "frame": row_frame,
             "prog_var": prog_var,
@@ -753,7 +1024,7 @@ class AAXManagerApp:
 
         # Main vertical container
         main_vbox = tk.Frame(self.root)
-        main_vbox.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        main_vbox.pack(fill="both", expand=True, padx=10, pady=10)
         main_vbox.rowconfigure(0, weight=1)
         main_vbox.columnconfigure(0, weight=1)
 
@@ -1202,10 +1473,10 @@ class AAXManagerApp:
             with urllib.request.urlopen(req) as response, open(filepath, 'wb') as out_file:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
-                last_percent = 0
+                last_log_percent = 0
+                last_ui_percent = -1 # Track this so we don't spam the UI
                 
                 while True:
-                    # NEW: Check if the user clicked the cancel button
                     if is_queue and asin in self.active_downloads:
                         if self.active_downloads[asin]["cancel_flag"]:
                             raise Exception("Download canceled by user.")
@@ -1217,21 +1488,23 @@ class AAXManagerApp:
                     if total_size > 0:
                         downloaded += len(chunk)
                         percent_float = (downloaded / total_size) * 100
-                        
-                        # Update the main global bar
-                        self.root.after(0, self.dl_progress_var.set, percent_float)
-                        
-                        # NEW: Update the specific bar in the Queue Drawer
-                        if is_queue and asin in self.active_downloads:
-                            self.root.after(0, self.active_downloads[asin]["prog_var"].set, percent_float)
-                            self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{int(percent_float)}%")
-                        
                         percent_int = int(percent_float)
-                        if percent_int >= last_percent + 10:
+                        
+                        # Only push updates to the UI if the integer percentage has actually changed
+                        if percent_int > last_ui_percent:
+                            self.root.after(0, self.dl_progress_var.set, percent_float)
+                            
+                            if is_queue and asin in self.active_downloads:
+                                self.root.after(0, self.active_downloads[asin]["prog_var"].set, percent_float)
+                                self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{percent_int}%")
+                                
+                            last_ui_percent = percent_int
+                        
+                        # Log updates every 10%
+                        if percent_int >= last_log_percent + 10:
                             self.write_log(f"Download Progress: {percent_int}%")
-                            last_percent = percent_int
+                            last_log_percent = percent_int
             
-            # Mark the queue item as complete when finished
             if is_queue and asin in self.active_downloads:
                 self.root.after(0, self.active_downloads[asin]["status_var"].set, "Complete")
             
@@ -1385,7 +1658,7 @@ class AAXManagerApp:
             self.load_specific_file(filepath)
 
     def build_player_components(self, parent):
-        play_frame = tk.LabelFrame(parent, text="Playback", padx=10, pady=5)
+        play_frame = ttk.LabelFrame(parent, text="Playback", padding=10)
         play_frame.pack(fill="x", expand=True, padx=5, pady=5)
 
         self.is_playing = False
@@ -1393,45 +1666,42 @@ class AAXManagerApp:
         self.chapter_duration = 0
         self.current_play_time = 0
 
-        self.status_label = tk.Label(play_frame, text="No file loaded", fg="gray")
-        self.status_label.pack(side=tk.TOP, pady=(0, 5))
-
-        top_row = tk.Frame(play_frame)
+        top_row = ttk.Frame(play_frame)
         top_row.pack(fill="x", pady=2)
         
-        self.info_label = tk.Label(top_row, text="", fg="blue", justify="left")
+        self.info_label = ttk.Label(top_row, text="", justify="left")
         self.info_label.pack(side=tk.LEFT, padx=5)
         
-        self.time_label = tk.Label(top_row, text="00:00 / 00:00", fg="gray")
+        self.time_label = ttk.Label(top_row, text="00:00 / 00:00")
         self.time_label.pack(side=tk.RIGHT, padx=5)
 
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(play_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill="x", padx=5, pady=5)
 
-        controls_frame = tk.Frame(play_frame)
+        controls_frame = ttk.Frame(play_frame)
         controls_frame.pack(pady=5)
 
-        tk.Button(controls_frame, text="<< Prev Chapter", width=12, command=self.prev_chapter).pack(side=tk.LEFT, padx=5)
-        tk.Button(controls_frame, text="-30s", width=5, command=lambda: self.seek_audio(-30)).pack(side=tk.LEFT, padx=2)
-        tk.Button(controls_frame, text="Play", width=8, command=self.master_play).pack(side=tk.LEFT, padx=2)
-        tk.Button(controls_frame, text="Pause", width=8, command=self.pause_audio).pack(side=tk.LEFT, padx=2)
-        tk.Button(controls_frame, text="Stop", width=8, command=self.stop_audio).pack(side=tk.LEFT, padx=2)
-        tk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
-        tk.Button(controls_frame, text="Next Chapter >>", width=12, command=self.next_chapter).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls_frame, text="<< Prev Chapter", width=14, command=self.prev_chapter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="-30s", width=5, command=lambda: self.seek_audio(-30)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Play", width=8, command=self.master_play).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Pause", width=8, command=self.pause_audio).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Stop", width=8, command=self.stop_audio).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Next Chapter >>", width=14, command=self.next_chapter).pack(side=tk.LEFT, padx=2)
 
-        # Speed Control Dropdown
         self.playback_speed = tk.StringVar(value="1.0x")
         speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
-        speed_menu = tk.OptionMenu(controls_frame, self.playback_speed, *speed_options, command=self.on_speed_change)
-        speed_menu.config(width=4)
+        
+        # Upgraded to Combobox
+        speed_menu = ttk.Combobox(controls_frame, textvariable=self.playback_speed, values=speed_options, state="readonly", width=5)
+        speed_menu.bind("<<ComboboxSelected>>", self.on_speed_change)
         speed_menu.pack(side=tk.LEFT, padx=10)
 
-        # NEW: Volume Control Slider
         self.volume_var = tk.DoubleVar(value=100.0)
-        vol_frame = tk.Frame(controls_frame)
+        vol_frame = ttk.Frame(controls_frame)
         vol_frame.pack(side=tk.LEFT, padx=5)
-        tk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
+        ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
         self.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.volume_var, command=self.on_volume_change, length=80)
         self.vol_slider.pack(side=tk.LEFT)
 
@@ -1498,18 +1768,21 @@ class AAXManagerApp:
         self.file_path = filepath
         is_encrypted = filepath.endswith(".aax") or filepath.endswith(".aaxc")
         
-        self.status_label.config(text="Analyzing...", fg="orange")
+        
+        self.dl_status_var.set("Analyzing...")
         self.root.update()
         
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
-                self.status_label.config(text="Verification Failed", fg="red")
+                
+                self.dl_status_var.set("Verification Failed")
                 messagebox.showerror("Audio Processing Error", f"Failed to process the file. Reason:\n\n{error_msg}")
                 self.file_path = ""
                 return
 
-        self.status_label.config(text=f"Ready: {os.path.basename(self.file_path)}", fg="green")
+        
+        self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
         self.chapters = self.extract_chapters(self.file_path)
         
         if self.chapters:
@@ -1568,7 +1841,8 @@ class AAXManagerApp:
             output_dir = filedialog.askdirectory(title=f"Select Folder to Extract Chapters For: {os.path.basename(self.file_path)}")
             if not output_dir: 
                 return
-            self.status_label.config(text="Splitting into chapters... Please wait.", fg="orange")
+            # CHANGED
+            self.dl_status_var.set("Splitting into chapters... Please wait.")
             threading.Thread(target=self.split_worker, args=(self.file_path, output_dir), daemon=True).start()
         else:
             output_file = filedialog.asksaveasfilename(
@@ -1578,17 +1852,68 @@ class AAXManagerApp:
             )
             if not output_file: 
                 return
-            self.status_label.config(text="Converting to .m4b... Please wait.", fg="orange")
+            # CHANGED
+            self.dl_status_var.set("Converting to .m4b... Please wait.")
             threading.Thread(target=self.convert_worker, args=(self.file_path, output_file), daemon=True).start()
 
     def convert_worker(self, input_path, output_path):
+        total_duration = 0
+        # 1. Try to get duration from memory first
+        if hasattr(self, 'chapters') and self.chapters:
+            total_duration = float(self.chapters[-1].get("end_time", 0))
+            
+        # 2. Fallback to probing the file directly
+        if total_duration == 0:
+            try:
+                probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
+                res = subprocess.run(probe_cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                total_duration = float(res.stdout.strip())
+            except Exception:
+                total_duration = 0
+
+        # Build the conversion command
         cmd = ["ffmpeg", "-y"]
         if input_path.endswith(".aax") or input_path.endswith(".aaxc"):
             cmd.extend(self.get_drm_flags(input_path))
-        cmd.extend(["-i", input_path, "-c", "copy", output_path])
+            
+        # Explicitly ask for machine-readable progress on the main output pipe
+        cmd.extend(["-i", input_path, "-c", "copy", "-progress", "pipe:1", output_path])
         
         try:
-            subprocess.run(cmd, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, # THE FIX: Throw all the diagnostic spam into a black hole so it never freezes
+                universal_newlines=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            last_percent = -1
+
+            # Read the clean, uninterrupted progress stream
+            for line in process.stdout:
+                line = line.strip()
+                if line.startswith("out_time_us=") and total_duration > 0:
+                    try:
+                        val = line.split("=")[1]
+                        if val != "N/A":
+                            out_time_us = int(val)
+                            # Ignore negative timestamps that sometimes happen at the start
+                            if out_time_us > 0:
+                                current_time_sec = out_time_us / 1000000.0
+                                percent = int((current_time_sec / total_duration) * 100)
+                                
+                                # Throttle the UI to only update on whole numbers
+                                if percent > last_percent and percent <= 100:
+                                    self.root.after(0, self.dl_progress_var.set, percent)
+                                    last_percent = percent
+                    except ValueError:
+                        pass
+
+            process.wait()
+            
+            if process.returncode != 0:
+                raise Exception(f"FFmpeg process failed with exit code {process.returncode}.")
             
             original_data = self.local_library.get(input_path, {})
             title = original_data.get("title", os.path.basename(output_path))
@@ -1604,11 +1929,14 @@ class AAXManagerApp:
             
             self.root.after(0, lambda: messagebox.showinfo("Success", "File converted."))
             self.root.after(0, self.refresh_library_ui)
+            
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Conversion Failed", str(e)))
+            self.write_log(f"Conversion Error: {e}")
+            self.root.after(0, lambda err=str(e): messagebox.showerror("Conversion Failed", err))
         finally:
-            # Removed the convert_btn reference here as well
-            self.root.after(0, lambda: self.status_label.config(text=f"Ready: {os.path.basename(input_path)}", fg="green"))
+            self.root.after(0, lambda: self.dl_status_var.set(f"Ready: {os.path.basename(input_path)}"))
+            self.root.after(0, lambda: self.dl_progress_var.set(0))
+
 
     def split_worker(self, input_path, output_dir):
         try:
@@ -1626,7 +1954,8 @@ class AAXManagerApp:
             os.makedirs(target_dir, exist_ok=True)
             
             for idx, chapter in enumerate(self.chapters):
-                self.root.after(0, lambda p=(idx / total_chaps) * 100: self.progress_var.set(p))
+                # CHANGED: Now pushes progress to the global download progress bar
+                self.root.after(0, lambda p=((idx + 1) / total_chaps) * 100: self.dl_progress_var.set(p))
                 
                 chap_title = chapter.get("tags", {}).get("title", f"Chapter {idx + 1}")
                 safe_chap_title = "".join([c for c in chap_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
@@ -1643,13 +1972,14 @@ class AAXManagerApp:
                 
                 subprocess.run(cmd, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
-            self.root.after(0, lambda: self.progress_var.set(0))
+            self.root.after(0, lambda: self.dl_progress_var.set(0))
             self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook successfully split into {total_chaps} files.\n\nFiles were saved to:\n{target_dir}"))
             
         except Exception as e:
             self.root.after(0, lambda: messagebox.showerror("Split Failed", str(e)))
         finally:
-            self.root.after(0, lambda: self.status_label.config(text=f"Ready: {os.path.basename(input_path)}", fg="green"))
+            self.root.after(0, lambda: self.dl_status_var.set(f"Ready: {os.path.basename(input_path)}"))
+            self.root.after(0, lambda: self.dl_progress_var.set(0))
 
     def extract_chapters(self, filepath):
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", filepath]
@@ -1828,4 +2158,15 @@ class AAXManagerApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = AAXManagerApp(root)
+    
+    current_engine = app.settings.get("ui_mode", "modern")
+    
+    if current_engine == "modern":
+        import sv_ttk
+        sv_ttk.set_theme("dark") 
+    else:
+        # Load the custom classic palette if in classic mode
+        saved_palette = app.settings.get("classic_palette", "light")
+        app.apply_classic_palette(saved_palette)
+        
     root.mainloop()
