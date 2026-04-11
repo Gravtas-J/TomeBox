@@ -33,6 +33,8 @@ class AAXManagerApp:
         self.last_db_mtime = 0
         self.auth_save_path = os.path.join(self.base_dir, "my_audible_auth.json")
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
+        self.covers_dir = os.path.join(self.base_dir, "covers")
+        os.makedirs(self.covers_dir, exist_ok=True)
         self.settings_path = os.path.join(self.base_dir, "settings.json")
         self.settings = self.load_settings()
         
@@ -58,6 +60,7 @@ class AAXManagerApp:
 
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
+        self.locale = tk.StringVar(value="us")
         self.chapters = []
         self.current_chapter_idx = 0
         self.player_process = None
@@ -166,6 +169,11 @@ class AAXManagerApp:
     def quit_from_tray(self, icon, item):
         icon.stop()
         self.root.after(0, self.on_closing)
+
+    def open_support_link(self):
+        import webbrowser
+        self.write_log("Opening Buy Me a Coffee link...")
+        webbrowser.open("https://buymeacoffee.com/ProblematicSyntax")
 
     def add_new_profile(self):
         new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
@@ -289,6 +297,7 @@ class AAXManagerApp:
         self.file_menubutton.config(menu=self.file_menu)
         
         self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
+        self.file_menu.add_command(label="Authentication & Profiles", command=self.open_auth_window)
         self.file_menu.add_separator()
 
         self.file_menu.add_checkbutton(
@@ -341,10 +350,360 @@ class AAXManagerApp:
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.on_closing)
 
+        self.help_menubutton = ttk.Menubutton(self.menu_frame, text="Donate")
+        self.help_menubutton.pack(side=tk.LEFT, padx=5, pady=2)
+
+        self.help_menu = tk.Menu(self.help_menubutton, tearoff=0, relief="flat")
+        self.help_menubutton.config(menu=self.help_menu)
+        
+        self.help_menu.add_command(label="Support the Developer ☕", command=self.open_support_link)
+    def build_info_components(self, parent):
+        self.cover_frame = ttk.Frame(parent)
+        self.cover_frame.pack(fill="x", padx=5, pady=10)
+        
+        self.cover_label = ttk.Label(self.cover_frame, text="No Cover Art")
+        self.cover_label.pack(pady=5)
+        
+        self.author_label = ttk.Label(self.cover_frame, text="", font=("Segoe UI", 10, "italic"))
+        self.author_label.pack(pady=2)
+        
+        self.current_cover_photo = None
+
+    def open_auth_window(self):
+        # Prevent opening multiple auth windows
+        if hasattr(self, 'auth_window') and self.auth_window.winfo_exists():
+            self.auth_window.lift()
+            self.auth_window.focus_set()
+            return
+
+        self.auth_window = tk.Toplevel(self.root)
+        self.auth_window.title("Authentication & Profiles")
+        self.auth_window.geometry("380x320")
+        self.auth_window.resizable(False, False)
+        self.auth_window.transient(self.root) # Keeps it on top of the main window
+        
+        # Apply current theme background
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        self.auth_window.configure(bg=bg_color)
+        
+        main_frame = ttk.Frame(self.auth_window, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        auth_frame = ttk.LabelFrame(main_frame, text="Audible Authentication", padding=10)
+        auth_frame.pack(fill="x", pady=5)
+
+        reg_frame = ttk.Frame(auth_frame)
+        reg_frame.pack(fill="x", pady=5)
+        ttk.Label(reg_frame, text="Region:").pack(side=tk.LEFT, padx=5)
+        
+        reg_combo = ttk.Combobox(reg_frame, textvariable=self.locale, values=["us", "uk", "au", "ca", "de", "fr", "jp"], state="readonly", width=5)
+        reg_combo.pack(side=tk.LEFT)
+
+        btn_frame = ttk.Frame(auth_frame)
+        btn_frame.pack(fill="x", pady=5)
+        self.browser_login_btn = ttk.Button(btn_frame, text="Browser Login", command=self.start_browser_login_thread)
+        self.browser_login_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+        self.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=self.load_auth_file_prompt)
+        self.auth_file_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+
+        profile_frame = ttk.Frame(auth_frame)
+        profile_frame.pack(fill="x", pady=5)
+        
+        ttk.Label(profile_frame, text="Profile:").pack(side=tk.LEFT, padx=5)
+        
+        self.profiles_list = getattr(self, 'profiles_list', self.settings.get("profiles", ["Main"]))
+        self.profile_combo = ttk.Combobox(profile_frame, values=self.profiles_list, state="readonly", width=15)
+        self.profile_combo.set(self.active_profile)
+        self.profile_combo.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(profile_frame, text="New", width=5, command=self.add_new_profile).pack(side=tk.LEFT)
+        self.profile_combo.bind("<<ComboboxSelected>>", self.switch_profile)
+
+        bytes_frame = ttk.LabelFrame(main_frame, text="Decryption Bytes", padding=10)
+        bytes_frame.pack(fill="x", pady=10)
+        ttk.Entry(bytes_frame, textvariable=self.auth_bytes, justify="center").pack(fill="x", pady=5)
+        
+        ttk.Button(main_frame, text="Close", command=self.auth_window.destroy).pack(pady=(10, 0))
+
+    def build_library_components(self, parent):
+        self.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        self.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
+
+        lib_frame = ttk.LabelFrame(self.main_paned, text="", padding=10)
+        self.main_paned.add(lib_frame, weight=1)
+
+        self.queue_frame = ttk.LabelFrame(self.main_paned, text="Active Downloads", padding=10)
+        
+        queue_controls = ttk.Frame(self.queue_frame)
+        queue_controls.pack(fill="x", pady=(0, 5))
+        ttk.Button(queue_controls, text="Cancel All Downloads", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
+
+        # sv_ttk background color applied to the canvas
+        self.queue_canvas = tk.Canvas(self.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
+        queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
+        
+        # sv_ttk background color applied to the inner frame
+        self.queue_inner = tk.Frame(self.queue_canvas, bg="#1c1c1c")
+
+        self.queue_inner.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
+        self.queue_canvas.create_window((0, 0), window=self.queue_inner, anchor="nw")
+        self.queue_canvas.configure(yscrollcommand=queue_scroll.set)
+
+        self.queue_canvas.pack(side="left", fill="both", expand=True)
+        queue_scroll.pack(side="right", fill="y")
+
+        self.active_downloads = {}
+
+        filter_frame = ttk.Frame(lib_frame)
+        filter_frame.pack(fill="x", pady=(0, 5))
+
+        ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", lambda *args: self.refresh_library_ui()) 
+        search_entry = ttk.Entry(filter_frame, textvariable=self.search_var, width=35)
+        search_entry.pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.filter_var = tk.StringVar(value="All")
+        filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
+        filter_combo.pack(side=tk.LEFT)
+        filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
+
+        ttk.Label(filter_frame, text="Shelf:").pack(side=tk.LEFT, padx=(10, 5))
+        self.shelf_filter_var = tk.StringVar(value="All Shelves")
+        self.shelf_combo = ttk.Combobox(filter_frame, textvariable=self.shelf_filter_var, state="readonly", width=15)
+        self.shelf_combo.pack(side=tk.LEFT)
+        self.shelf_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
+
+        self.view_btn = ttk.Button(filter_frame, text="Grid View", command=self.toggle_library_view)
+        self.view_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=self.toggle_queue_visibility)
+        self.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
+        self.dl_all_btn.pack(side=tk.RIGHT, padx=(5, 5))
+
+        tree_frame = ttk.Frame(lib_frame)
+        tree_frame.pack(fill="both", expand=True, pady=5)
+
+        scroll = ttk.Scrollbar(tree_frame)
+        scroll.pack(side=tk.RIGHT, fill="y")
+
+        self.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status"), show="headings", yscrollcommand=scroll.set)
+        scroll.config(command=self.library_tree.yview)
+
+        
+        self.current_view_mode = "list"
+        self.grid_images_ref = [] # Prevents Python garbage collection from deleting the images
+        
+        
+        self.grid_canvas = tk.Canvas(tree_frame, bg="#1c1c1c", highlightthickness=0)
+        self.grid_inner = tk.Frame(self.grid_canvas, bg="#1c1c1c")
+        self.grid_window_id = self.grid_canvas.create_window((0, 0), window=self.grid_inner, anchor="nw")
+        
+        
+        self.grid_canvas.configure(yscrollcommand=scroll.set)
+        self.grid_inner.bind("<Configure>", lambda e: self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all")))
+        
+        
+        self.grid_canvas.bind("<Configure>", self.on_canvas_resize)
+        self.root.bind_all("<MouseWheel>", self._on_grid_scroll)  # Windows / Mac
+        self.root.bind_all("<Button-4>", self._on_grid_scroll)    # Linux Scroll Up
+        self.root.bind_all("<Button-5>", self._on_grid_scroll)    # Linux Scroll Down
+        for col in self.library_tree["columns"]:
+            self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
+            
+        self.library_tree.column("Title", width=250)
+        self.library_tree.column("Author", width=120)
+        self.library_tree.column("Series", width=120)
+        self.library_tree.column("Duration", width=70)
+        self.library_tree.column("ASIN", width=90)
+        self.library_tree.column("Status", width=110)
+        self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        
+        self.library_tree.bind("<Double-1>", self.master_play)
+
+        btn_frame = ttk.Frame(lib_frame)
+        btn_frame.pack(fill="x", pady=2)
+        ttk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Manage Shelves", command=self.manage_shelves_prompt).pack(side=tk.LEFT, padx=5)
+
+        local_btn_frame = ttk.Frame(lib_frame)
+        local_btn_frame.pack(fill="x", pady=2)
+        ttk.Button(local_btn_frame, text="Add Local File", command=self.add_local_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(local_btn_frame, text="Remove from List", command=self.remove_local_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(local_btn_frame, text="Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape")).pack(side=tk.LEFT, padx=5)
+
+        dl_prog_frame = ttk.Frame(lib_frame)
+        dl_prog_frame.pack(fill="x", padx=5)
+        
+        self.dl_status_var = tk.StringVar(value="Idle")
+        self.dl_progress_var = tk.DoubleVar()
+        ttk.Label(dl_prog_frame, textvariable=self.dl_status_var).pack(side=tk.TOP, anchor="w")
+        ttk.Progressbar(dl_prog_frame, variable=self.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
+
+        self.refresh_library_ui()
+
+    def build_player_components(self, parent):
+        play_frame = ttk.LabelFrame(parent, text="Playback", padding=10)
+        play_frame.pack(fill="x", expand=True, padx=5, pady=5)
+
+        self.is_playing = False
+        self.is_paused = False
+        self.chapter_duration = 0
+        self.current_play_time = 0
+
+        top_row = ttk.Frame(play_frame)
+        top_row.pack(fill="x", pady=2)
+        
+        self.info_label = ttk.Label(top_row, text="", justify="left")
+        self.info_label.pack(side=tk.LEFT, padx=5)
+        
+        self.time_label = ttk.Label(top_row, text="00:00 / 00:00")
+        self.time_label.pack(side=tk.RIGHT, padx=5)
+
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(play_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill="x", padx=5, pady=5)
+
+        controls_frame = ttk.Frame(play_frame)
+        controls_frame.pack(pady=5)
+
+        ttk.Button(controls_frame, text="<< Prev Chapter", width=14, command=self.prev_chapter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="-30s", width=5, command=lambda: self.seek_audio(-30)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Play", width=8, command=self.master_play).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Pause", width=8, command=self.pause_audio).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="Next Chapter >>", width=14, command=self.next_chapter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls_frame, text="🔖 Bookmark", width=12, command=self.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
+
+        self.playback_speed = tk.StringVar(value="1.0x")
+        speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
+        
+        # Upgraded to Combobox
+        speed_menu = ttk.Combobox(controls_frame, textvariable=self.playback_speed, values=speed_options, state="readonly", width=5)
+        speed_menu.bind("<<ComboboxSelected>>", self.on_speed_change)
+        speed_menu.pack(side=tk.LEFT, padx=10)
+
+        self.volume_var = tk.DoubleVar(value=100.0)
+        vol_frame = ttk.Frame(controls_frame)
+        vol_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
+        self.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.volume_var, command=self.on_volume_change, length=80)
+        self.vol_slider.pack(side=tk.LEFT)
+
+        timer_frame = ttk.Frame(controls_frame)
+        timer_frame.pack(side=tk.LEFT, padx=15)
+        
+        self.timer_btn = ttk.Button(timer_frame, text="Sleep: Off", command=self.open_sleep_menu, width=16)
+        self.timer_btn.pack(side=tk.LEFT)
+        
+        self.timer_countdown_var = tk.StringVar(value="")
+        ttk.Label(timer_frame, textvariable=self.timer_countdown_var, width=5).pack(side=tk.LEFT)
+
+        self.voice_boost_var = tk.BooleanVar(value=False)
+        self.skip_silence_var = tk.BooleanVar(value=False)
+        
+        filters_frame = ttk.Frame(play_frame)
+        filters_frame.pack(fill="x", pady=(5, 0))
+        
+        ttk.Label(filters_frame, text="Filters:").pack(side=tk.LEFT, padx=(5, 10))
+        
+        ttk.Checkbutton(
+            filters_frame, text="Voice Boost (Compressor)", 
+            variable=self.voice_boost_var, command=self.on_filter_change
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Checkbutton(
+            filters_frame, text="Skip Silence", 
+            variable=self.skip_silence_var, command=self.on_filter_change
+        ).pack(side=tk.LEFT, padx=5)
+
+    def build_bookmarks_components(self, parent):
+        self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
+        # Use expand=True so it takes up the remaining vertical space in the side panel
+        self.bm_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        scroll = ttk.Scrollbar(self.bm_frame)
+        scroll.pack(side=tk.RIGHT, fill="y")
+
+        self.bm_tree = ttk.Treeview(self.bm_frame, columns=("Time", "Note"), show="headings", yscrollcommand=scroll.set, height=5)
+        self.bm_tree.heading("Time", text="Time")
+        self.bm_tree.heading("Note", text="Note")
+        
+        self.bm_tree.column("Time", width=140, anchor="w", stretch=False)
+        self.bm_tree.column("Note", width=150, anchor="w")
+        self.bm_tree.pack(fill="both", expand=True)
+
+        scroll.config(command=self.bm_tree.yview)
+
+        # Double click to jump to the bookmark
+        self.bm_tree.bind("<Double-1>", self.jump_to_bookmark)
+        
+        btn_frame = ttk.Frame(self.bm_frame)
+        btn_frame.pack(fill="x", pady=(5, 0))
+        ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
+
+    def manage_shelves_prompt(self):
+        # Grab the selected item based on the active view
+        if getattr(self, 'current_view_mode', 'list') == "list":
+            selected = self.library_tree.focus()
+            if not selected:
+                messagebox.showwarning("Selection Required", "Please select an audiobook to tag.")
+                return
+            item = self.library_tree.item(selected)
+        else:
+            if not hasattr(self, '_selected_grid_item') or not self._selected_grid_item:
+                messagebox.showwarning("Selection Required", "Please select an audiobook to tag.")
+                return
+            item = self._selected_grid_item
+
+        title = item['values'][0]
+        asin = item['values'][4]
+
+        if not asin or asin == "Unknown":
+            messagebox.showerror("Error", "Cannot tag an orphaned file without an ASIN. Please scrape its metadata first.")
+            return
+
+        # Ensure the global shelf database exists
+        if "shelves_db" not in self.settings:
+            self.settings["shelves_db"] = {}
+
+        # Load existing tags
+        current_shelves = self.settings["shelves_db"].get(asin, [])
+        current_shelves_str = ", ".join(current_shelves)
+
+        # Prompt user
+        new_shelves_str = simpledialog.askstring(
+            "Manage Shelves", 
+            f"Enter custom shelves for:\n{title}\n\n(Separate multiple tags with commas)", 
+            initialvalue=current_shelves_str
+        )
+
+        if new_shelves_str is not None:
+            # Clean up spacing and save
+            tags = [t.strip() for t in new_shelves_str.split(",") if t.strip()]
+            self.settings["shelves_db"][asin] = tags
+            self.save_settings()
+            
+            self.refresh_library_ui()
+
     def save_tray_setting(self):
         self.settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
         self.save_settings()
 
+    def on_filter_change(self):
+        # Restart the player seamlessly if it's currently playing
+        if getattr(self, 'is_playing', False):
+            self.pause_audio()
+            self.is_paused = False
+            self.resume_playback()
 
     def handle_window_close(self):
         if self.minimize_to_tray_var.get():
@@ -393,16 +752,41 @@ class AAXManagerApp:
         title = local_data.get("title", "")
         asin = local_data.get("asin")
         
-        # If ASIN isn't saved locally, try matching the title to the cloud data
-        if not asin:
-            for item in getattr(self, 'cloud_items', []):
-                if item.get("title") == title:
-                    asin = item.get("asin")
-                    break
+        # 1. Resolve ASIN and Authors from the existing cloud cache
+        authors = ""
+        for item in getattr(self, 'cloud_items', []):
+            if item.get("title") == title or item.get("asin") == asin:
+                asin = item.get("asin")
+                raw_authors = item.get("authors", [])
+                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                break
         
-        if not asin or not self.auth_object:
+        if not asin:
             self.root.after(0, lambda: self.cover_label.config(image="", text="Metadata Unavailable"))
-            self.root.after(0, lambda: self.author_label.config(text=""))
+            self.root.after(0, lambda: self.author_label.config(text=authors))
+            return
+
+        cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+
+        # 2. Check Local Disk Cache First
+        if os.path.exists(cover_path):
+            try:
+                img = Image.open(cover_path)
+                img.thumbnail((250, 250))
+                photo = ImageTk.PhotoImage(img)
+                
+                def update_ui_local():
+                    self.current_cover_photo = photo
+                    self.cover_label.config(image=photo, text="")
+                    self.author_label.config(text=authors)
+                
+                self.root.after(0, update_ui_local)
+                return  # Exit early, no API calls needed!
+            except Exception as e:
+                self.write_log(f"Failed to load local cover cache, falling back to API: {e}")
+
+        # 3. Fallback to Audible API if not cached
+        if not getattr(self, 'auth_object', None):
             return
             
         try:
@@ -410,24 +794,30 @@ class AAXManagerApp:
             resp = client.get(f"1.0/catalog/products/{asin}", response_groups="media,product_attrs")
             product = resp.get("product", {})
             
-            raw_authors = product.get("authors", [])
-            authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+            if not authors:
+                raw_authors = product.get("authors", [])
+                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
             
             images = product.get("product_images", {})
-            image_url = images.get("500") or images.get("252") # Grab 500px resolution if available
+            image_url = images.get("500") or images.get("252")
             
             if image_url:
                 img_data = requests.get(image_url).content
+                
+                # Save it locally for next time
+                with open(cover_path, "wb") as f:
+                    f.write(img_data)
+                    
                 img = Image.open(io.BytesIO(img_data))
-                img.thumbnail((250, 250)) # Resize to fit the UI panel
+                img.thumbnail((250, 250))
                 photo = ImageTk.PhotoImage(img)
                 
-                def update_ui():
+                def update_ui_api():
                     self.current_cover_photo = photo
                     self.cover_label.config(image=photo, text="")
                     self.author_label.config(text=authors)
                 
-                self.root.after(0, update_ui)
+                self.root.after(0, update_ui_api)
             else:
                 self.root.after(0, lambda: self.cover_label.config(image="", text="No Cover Art Found"))
                 self.root.after(0, lambda: self.author_label.config(text=authors))
@@ -605,71 +995,7 @@ class AAXManagerApp:
         self.save_local_db()
         self.root.after(0, self.refresh_local_ui)
 
-    def build_auth_components(self, parent):
-        self.locale = tk.StringVar(value="us")
-
-        auth_frame = ttk.LabelFrame(parent, text="Audible Authentication", padding=10)
-        auth_frame.pack(fill="x", padx=5, pady=5)
-
-        reg_frame = ttk.Frame(auth_frame)
-        reg_frame.pack(fill="x", pady=5)
-        ttk.Label(reg_frame, text="Region:").pack(side=tk.LEFT, padx=5)
-        
-        # Upgraded to Combobox
-        reg_combo = ttk.Combobox(reg_frame, textvariable=self.locale, values=["us", "uk", "au", "ca", "de", "fr", "jp"], state="readonly", width=5)
-        reg_combo.pack(side=tk.LEFT)
-
-        btn_frame = ttk.Frame(auth_frame)
-        btn_frame.pack(fill="x", pady=5)
-        self.browser_login_btn = ttk.Button(btn_frame, text="Browser Login", command=self.start_browser_login_thread)
-        self.browser_login_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-        self.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=self.load_auth_file_prompt)
-        self.auth_file_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-
-        profile_frame = ttk.Frame(auth_frame)
-        profile_frame.pack(fill="x", pady=5)
-        
-        ttk.Label(profile_frame, text="Profile:").pack(side=tk.LEFT, padx=5)
-        
-        self.profiles_list = self.settings.get("profiles", ["Main"])
-        self.profile_combo = ttk.Combobox(profile_frame, values=self.profiles_list, state="readonly", width=15)
-        self.profile_combo.set(self.active_profile)
-        self.profile_combo.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(profile_frame, text="New", width=5, command=self.add_new_profile).pack(side=tk.LEFT)
-        
-        self.profile_combo.bind("<<ComboboxSelected>>", self.switch_profile)
-        # ttk.Checkbutton(auth_frame, text="Enable API Debug Output", variable=self.debug_mode).pack(anchor="w", pady=5)
-
-        # # NEW: Appearance Settings
-        # appearance_frame = ttk.LabelFrame(parent, text="Appearance", padding=10)
-        # appearance_frame.pack(fill="x", padx=5, pady=5)
-        
-        # # UI Engine Selector
-        # self.ui_mode_var = tk.StringVar(value=self.settings.get("ui_mode", "modern"))
-        # ttk.Label(appearance_frame, text="UI Engine:").pack(anchor="w", pady=(0, 2))
-        # ui_combo = ttk.Combobox(appearance_frame, textvariable=self.ui_mode_var, values=["classic", "modern"], state="readonly")
-        # ui_combo.pack(fill="x", pady=(0, 10))
-        # ui_combo.bind("<<ComboboxSelected>>", self.on_ui_mode_change)
-        
-        # # sv_ttk has a built-in toggle_theme command we can use directly
-        # self.theme_btn = ttk.Button(appearance_frame, text="Toggle Light / Dark Mode", command=self.toggle_custom_colors)
-        # self.theme_btn.pack(fill="x", pady=2)
-
-        bytes_frame = ttk.LabelFrame(parent, text="Decryption Bytes", padding=10)
-        bytes_frame.pack(fill="x", padx=5, pady=5)
-        ttk.Entry(bytes_frame, textvariable=self.auth_bytes, justify="center").pack(fill="x", pady=5)
-
-        self.cover_frame = ttk.Frame(parent)
-        self.cover_frame.pack(fill="x", padx=5, pady=10)
-        
-        self.cover_label = ttk.Label(self.cover_frame, text="No Cover Art")
-        self.cover_label.pack(pady=5)
-        
-        self.author_label = ttk.Label(self.cover_frame, text="", font=("Segoe UI", 10, "italic"))
-        self.author_label.pack(pady=2)
-        
-        self.current_cover_photo = None
+    
 
     def toggle_custom_colors(self):
         # NEW: Safeguard against hijacking classic mode
@@ -747,7 +1073,7 @@ class AAXManagerApp:
         
         # Manually paint the legacy tk.Menu dropdowns
         if hasattr(self, 'file_menu'):
-            menu_list = [self.file_menu, self.appearance_menu, self.palette_menu, self.export_menu]
+            menu_list = [self.file_menu, self.appearance_menu, self.palette_menu, self.export_menu, self.help_menu]
             for m in menu_list:
                 m.config(
                     bg=colors["entry"], 
@@ -843,106 +1169,146 @@ class AAXManagerApp:
 
         threading.Thread(target=self.download_queue_worker, args=(items_to_download, save_dir), daemon=True).start()
 
-    def build_library_components(self, parent):
-        self.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
-        self.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
+    
 
-        lib_frame = ttk.LabelFrame(self.main_paned, text="", padding=10)
-        self.main_paned.add(lib_frame, weight=1)
+    def toggle_library_view(self):
+        # Hunt down the existing vertical scrollbar in the UI
+        scroll_bar = None
+        for child in self.library_tree.master.winfo_children():
+            if isinstance(child, ttk.Scrollbar) and str(child.cget("orient")) == "vertical":
+                scroll_bar = child
+                break
 
-        self.queue_frame = ttk.LabelFrame(self.main_paned, text="Active Downloads", padding=10)
-        
-        queue_controls = ttk.Frame(self.queue_frame)
-        queue_controls.pack(fill="x", pady=(0, 5))
-        ttk.Button(queue_controls, text="Cancel All Downloads", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
-
-        # sv_ttk background color applied to the canvas
-        self.queue_canvas = tk.Canvas(self.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
-        queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
-        
-        # sv_ttk background color applied to the inner frame
-        self.queue_inner = tk.Frame(self.queue_canvas, bg="#1c1c1c")
-
-        self.queue_inner.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
-        self.queue_canvas.create_window((0, 0), window=self.queue_inner, anchor="nw")
-        self.queue_canvas.configure(yscrollcommand=queue_scroll.set)
-
-        self.queue_canvas.pack(side="left", fill="both", expand=True)
-        queue_scroll.pack(side="right", fill="y")
-
-        self.active_downloads = {}
-
-        filter_frame = ttk.Frame(lib_frame)
-        filter_frame.pack(fill="x", pady=(0, 5))
-
-        ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *args: self.refresh_library_ui()) 
-        search_entry = ttk.Entry(filter_frame, textvariable=self.search_var, width=35)
-        search_entry.pack(side=tk.LEFT, padx=(0, 20))
-
-        ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.filter_var = tk.StringVar(value="All")
-        filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
-        filter_combo.pack(side=tk.LEFT)
-        filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
-
-        self.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=self.toggle_queue_visibility)
-        self.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
-
-        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
-        self.dl_all_btn.pack(side=tk.RIGHT, padx=(5, 5))
-
-        tree_frame = ttk.Frame(lib_frame)
-        tree_frame.pack(fill="both", expand=True, pady=5)
-
-        scroll = ttk.Scrollbar(tree_frame)
-        scroll.pack(side=tk.RIGHT, fill="y")
-
-        self.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status"), show="headings", yscrollcommand=scroll.set)
-        scroll.config(command=self.library_tree.yview)
-
-        for col in self.library_tree["columns"]:
-            self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
+        if self.current_view_mode == "list":
+            self.current_view_mode = "grid"
+            self.view_btn.config(text="List View")
+            self.library_tree.pack_forget()
+            self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
             
-        self.library_tree.column("Title", width=250)
-        self.library_tree.column("Author", width=120)
-        self.library_tree.column("Series", width=120)
-        self.library_tree.column("Duration", width=70)
-        self.library_tree.column("ASIN", width=90)
-        self.library_tree.column("Status", width=110)
-        self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        self.library_tree.bind("<Double-1>", self.master_play)
-
-        btn_frame = ttk.Frame(lib_frame)
-        btn_frame.pack(fill="x", pady=2)
-        ttk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
-        
-        local_btn_frame = ttk.Frame(lib_frame)
-        local_btn_frame.pack(fill="x", pady=2)
-        ttk.Button(local_btn_frame, text="Add Local File", command=self.add_local_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(local_btn_frame, text="Remove from List", command=self.remove_local_file).pack(side=tk.LEFT, padx=5)
-
-        # dir_frame = ttk.Frame(lib_frame)
-        # dir_frame.pack(fill="x", pady=5)
-        # ttk.Button(dir_frame, text="Set Download Folder", command=self.set_download_folder).pack(side=tk.LEFT, padx=5)
-        # self.lbl_download_dir = ttk.Label(dir_frame, text=getattr(self, 'default_download_dir', '') or "No default folder set")
-        # self.lbl_download_dir.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
-
-        dl_prog_frame = ttk.Frame(lib_frame)
-        dl_prog_frame.pack(fill="x", padx=5)
-        
-        self.dl_status_var = tk.StringVar(value="Idle")
-        self.dl_progress_var = tk.DoubleVar()
-        ttk.Label(dl_prog_frame, textvariable=self.dl_status_var).pack(side=tk.TOP, anchor="w")
-        ttk.Progressbar(dl_prog_frame, variable=self.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
-
+            # HOT-SWAP: Connect scrollbar to Canvas
+            if scroll_bar:
+                scroll_bar.config(command=self.grid_canvas.yview)
+                self.grid_canvas.config(yscrollcommand=scroll_bar.set)
+        else:
+            self.current_view_mode = "list"
+            self.view_btn.config(text="Grid View")
+            self.grid_canvas.pack_forget()
+            self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            
+            # HOT-SWAP: Connect scrollbar back to Treeview
+            if scroll_bar:
+                scroll_bar.config(command=self.library_tree.yview)
+                self.library_tree.config(yscrollcommand=scroll_bar.set)
+            
         self.refresh_library_ui()
+
+    def on_canvas_resize(self, event):
+        # Force the inner frame to exactly match the canvas width. 
+        # This completely disables the horizontal panning glitch.
+        if hasattr(self, 'grid_window_id'):
+            self.grid_canvas.itemconfig(self.grid_window_id, width=event.width)
+        if getattr(self, '_last_canvas_width', None) == event.width:
+            return
+        self._last_canvas_width = event.width
+        # Throttle the redraw so it doesn't crash while actively dragging the window edge
+        if hasattr(self, '_resize_timer'):
+            self.root.after_cancel(self._resize_timer)
+        self._resize_timer = self.root.after(200, self.draw_grid_view)
+
+    def draw_grid_view(self):
+        if getattr(self, 'current_view_mode', 'list') != "grid": return
+        
+        # Clear the current grid
+        for widget in self.grid_inner.winfo_children():
+            widget.destroy()
+
+        # Initialize a RAM cache for images to fix the load lag
+        if not hasattr(self, 'cover_cache'):
+            self.cover_cache = {}
+
+        # Dynamically fetch the app's current theme colors
+        style = ttk.Style()
+        default_bg = style.lookup("TFrame", "background") or "#f0f0f0"
+        default_fg = style.lookup("TLabel", "foreground") or "#000000"
+        select_bg = "#4a90e2" # Bright blue for the outer border
+
+        self.grid_canvas.config(bg=default_bg)
+        self.grid_inner.config(bg=default_bg)
+        
+        canvas_width = self.grid_canvas.winfo_width()
+        cols = max(1, canvas_width // 190)
+        
+        # Perfectly center the active columns
+        for i in range(20): 
+            self.grid_inner.columnconfigure(i, weight=0)
+        for i in range(cols):
+            self.grid_inner.columnconfigure(i, weight=1)
+        
+        for idx, row_data in enumerate(getattr(self, '_current_filtered_data', [])):
+            title, authors, series_str, duration_str, asin, status = row_data
+            
+            # --- THE MATTE FRAME TRICK ---
+            # 1. The Outer Frame (Handles the highlight color)
+            outer_card = tk.Frame(self.grid_inner, bg=default_bg)
+            outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
+            
+            # 2. The Inner Card (Holds the content, stays locked at 170x240)
+            card = tk.Frame(outer_card, bg=default_bg, width=170, height=240, bd=0, highlightthickness=0)
+            card.pack_propagate(False) 
+            # The 2px padding creates the "border" effect when outer_card changes color
+            card.pack(padx=2, pady=2) 
+            # -----------------------------
+            
+            # Load from RAM Cache first to eliminate disk/CPU bottleneck
+            img_obj = None
+            if asin in self.cover_cache:
+                img_obj = self.cover_cache[asin]
+            else:
+                cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+                if os.path.exists(cover_path):
+                    try:
+                        img = Image.open(cover_path)
+                        img.thumbnail((150, 150))
+                        img_obj = ImageTk.PhotoImage(img)
+                        self.cover_cache[asin] = img_obj # Save it to RAM for next time
+                    except: pass
+                
+            img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0)
+            img_label.pack(pady=(5, 0))
+            
+            display_title = title[:45] + "..." if len(title) > 45 else title
+            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=default_fg, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
+            text_label.pack(pady=(5, 0))
+            
+            def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
+                # Deselect ONLY the previously selected outer card
+                if hasattr(self, '_last_selected_card_frame') and self._last_selected_card_frame.winfo_exists():
+                    self._last_selected_card_frame.config(bg=default_bg)
+                
+                # Highlight the NEW selected outer card
+                oc.config(bg=select_bg)
+                
+                # Save this outer card so we know to deselect it next time
+                self._last_selected_card_frame = oc 
+                self._selected_grid_item = {'values': [t, "", "", "", a, s]}
+                
+            def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
+                on_card_click(e, oc, t, a, s)
+                self.master_play()
+
+            # Bind clicks to everything so it triggers no matter where you click
+            outer_card.bind("<Button-1>", on_card_click)
+            outer_card.bind("<Double-1>", on_card_double_click)
+            card.bind("<Button-1>", on_card_click)
+            card.bind("<Double-1>", on_card_double_click)
+            img_label.bind("<Button-1>", on_card_click)
+            img_label.bind("<Double-1>", on_card_double_click)
+            text_label.bind("<Button-1>", on_card_click)
+            text_label.bind("<Double-1>", on_card_double_click)
+            
+        # Force Tkinter to recalculate heights and lock the vertical scroll region
+        self.grid_inner.update_idletasks()
+        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
     def toggle_queue_visibility(self):
         current_panes = self.main_paned.panes()
@@ -1078,10 +1444,15 @@ class AAXManagerApp:
 
         search_query = self.search_var.get().lower()
         current_filter = self.filter_var.get()
+        current_shelf = getattr(self, 'shelf_filter_var', tk.StringVar(value="All Shelves")).get()
 
         local_titles = {data["title"]: data for path, data in self.local_library.items()}
         cloud_titles = []
         rows_to_insert = []
+        
+        # --- NEW: Database to dynamically track all used tags ---
+        all_unique_shelves = set()
+        shelves_db = self.settings.get("shelves_db", {})
 
         # 1. Compile Cloud Data
         for item in getattr(self, 'cloud_items', []):
@@ -1108,13 +1479,40 @@ class AAXManagerApp:
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             
             rows_to_insert.append((title, authors, series_str, duration_str, asin, status))
+            
+            # Record any tags attached to this book
+            all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 2. Compile Orphaned Local Data (Files not found in the cloud cache)
         for path, data in self.local_library.items():
             if data["title"] not in cloud_titles:
-                rows_to_insert.append((data["title"], "Local File", "N/A", "N/A", data.get("asin", "Unknown"), f"Downloaded ({data['format']})"))
+                
+                loc_authors = data.get("authors", "Local File")
+                loc_series = data.get("series", "N/A")
+                
+                duration_min = data.get("duration_min", 0)
+                if duration_min > 0:
+                    hours, mins = divmod(duration_min, 60)
+                    loc_duration = f"{hours}h {mins}m"
+                else:
+                    loc_duration = "N/A"
+                    
+                asin = data.get("asin", "Unknown")
+                
+                rows_to_insert.append((data["title"], loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
+                all_unique_shelves.update(shelves_db.get(asin, []))
+
+        # --- NEW: Dynamically update the dropdown options ---
+        shelf_list = ["All Shelves"] + sorted(list(all_unique_shelves))
+        if hasattr(self, 'shelf_combo'):
+            self.shelf_combo.config(values=shelf_list)
+            # If the user deleted a tag they were filtering by, reset to 'All'
+            if current_shelf not in shelf_list:
+                self.shelf_filter_var.set("All Shelves")
+                current_shelf = "All Shelves"
 
         # 3. Apply Filters and Insert
+        filtered_rows = []
         for row in rows_to_insert:
             title, authors, series_str, duration_str, asin, status = row
 
@@ -1124,22 +1522,44 @@ class AAXManagerApp:
             if current_filter == "Cloud Only" and status != "Cloud Only":
                 continue
 
+            # --- NEW: Shelf Filter Check ---
+            if current_shelf != "All Shelves":
+                book_shelves = shelves_db.get(asin, [])
+                if current_shelf not in book_shelves:
+                    continue
+
             # Search Query Check (Searches Title, Author, and Series simultaneously)
             if search_query:
                 search_target = f"{title} {authors} {series_str}".lower()
                 if search_query not in search_target:
                     continue
 
-            # If it passes both checks, draw it on the screen
-            self.library_tree.insert("", "end", values=row)
+            # If it passes all checks, queue it for drawing
+            filtered_rows.append(row)
+
+        # Store the filtered data so the Grid view can access it
+        self._current_filtered_data = filtered_rows
+        
+        # Route the rendering based on the active view
+        if self.current_view_mode == "list":
+            for row in filtered_rows:
+                self.library_tree.insert("", "end", values=row)
+        else:
+            self.draw_grid_view()
     
     def handle_action_on_selected(self, action_type):
-        selected = self.library_tree.focus()
-        if not selected:
-            messagebox.showwarning("Selection Required", "Select a title first.")
-            return
+        if self.current_view_mode == "list":
+            selected = self.library_tree.focus()
+            if not selected:
+                messagebox.showwarning("Selection Required", "Select a title first.")
+                return
+            item = self.library_tree.item(selected)
+        else:
+            if not hasattr(self, '_selected_grid_item'):
+                messagebox.showwarning("Selection Required", "Select a title first.")
+                return
+            item = self._selected_grid_item
 
-        item = self.library_tree.item(selected)
         title = item['values'][0]
         asin = item['values'][4]
 
@@ -1153,6 +1573,10 @@ class AAXManagerApp:
         if local_path:
             if not os.path.exists(local_path):
                 messagebox.showerror("File Missing", "The file was deleted or moved. Please remove it from the list and re-download.")
+                return
+                
+            if action_type == "scrape":
+                self.start_scrape_thread(local_path)
                 return
                 
             self.load_specific_file(local_path)
@@ -1176,7 +1600,158 @@ class AAXManagerApp:
                 # Pass the intended action to the worker
                 threading.Thread(target=self.download_worker, args=(asin, title, save_dir, False, action_type), daemon=True).start()
 
-    
+    def start_scrape_thread(self, filepath):
+        if not getattr(self, 'auth_object', None):
+            messagebox.showwarning("Not Logged In", "An Audible login is required to search the catalog for ASINs.")
+            return
+        
+        data = self.local_library.get(filepath, {})
+        current_title = data.get("title", os.path.basename(filepath))
+        
+        query = simpledialog.askstring("Search Catalog", "Enter book title or author to search:", initialvalue=current_title)
+        if not query: return
+        
+        self.dl_status_var.set("Searching catalog...")
+        threading.Thread(target=self.scrape_search_worker, args=(filepath, query), daemon=True).start()
+
+    def scrape_search_worker(self, filepath, query):
+        try:
+            client = audible.Client(auth=self.auth_object)
+            resp = client.get("1.0/catalog/products", title=query, num_results=5, response_groups="product_desc,product_attrs,contributors")
+            products = resp.get("products", [])
+            
+            if not products:
+                self.root.after(0, lambda: messagebox.showinfo("No Results", "No matches found for that title."))
+                return
+                
+            self.root.after(0, lambda: self.show_scrape_results(filepath, products))
+        except Exception as e:
+            self.write_log(f"Scrape search error: {e}")
+            self.root.after(0, lambda: messagebox.showerror("Search Failed", str(e)))
+        finally:
+            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+
+    def show_scrape_results(self, filepath, products):
+        popup = tk.Toplevel(self.root)
+        popup.title("Select Correct Book")
+        popup.geometry("600x300")
+        popup.transient(self.root)
+        
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        popup.configure(bg=bg_color)
+        
+        listbox = tk.Listbox(popup, width=80, height=12)
+        listbox.pack(padx=10, pady=10, fill="both", expand=True)
+        
+        for p in products:
+            title = p.get("title", "")
+            raw_authors = p.get("authors", [])
+            authors = ", ".join([a.get("name", "") for a in raw_authors])
+            listbox.insert(tk.END, f"{title} | {authors} ({p.get('asin')})")
+            
+        def on_select():
+            sel = listbox.curselection()
+            if not sel: return
+            selected_asin = products[sel[0]].get("asin")
+            popup.destroy()
+            self.dl_status_var.set("Fetching Audnexus data...")
+            threading.Thread(target=self.apply_scraped_metadata, args=(filepath, selected_asin), daemon=True).start()
+            
+        ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
+
+    def apply_scraped_metadata(self, filepath, asin):
+        try:
+            # 1. Fetch JSON data directly from Audible (ADDED series and product_attrs)
+            client = audible.Client(auth=self.auth_object)
+            resp = client.get(f"1.0/catalog/products/{asin}", response_groups="product_desc,product_attrs,contributors,media,series")
+            product = resp.get("product", {})
+            
+            if not product:
+                raise Exception("Audible API returned no data for this ASIN.")
+                
+            title = product.get("title", "Unknown Title")
+            
+            raw_authors = product.get("authors", [])
+            authors = ", ".join([a.get("name", "") for a in raw_authors])
+            
+            raw_series = product.get("series", [])
+            series_list = []
+            for s in raw_series:
+                if isinstance(s, dict) and s.get("title"):
+                    series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
+            series_str = ", ".join(series_list) if series_list else ""
+            
+            duration_min = product.get("runtime_length_min", 0)
+            
+            # 2. Fetch High-Res Cover Image
+            cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+            images = product.get("product_images", {})
+            img_url = images.get("500") or images.get("252")
+            
+            if img_url:
+                img_resp = requests.get(img_url, timeout=10)
+                if img_resp.status_code == 200:
+                    with open(cover_path, "wb") as f:
+                        f.write(img_resp.content)
+            
+            # 3. Update TomeBox Local Library Database
+            data = self.local_library.get(filepath, {})
+            data["title"] = title
+            data["authors"] = authors
+            data["series"] = series_str      # NEW
+            data["duration_min"] = duration_min # NEW
+            data["asin"] = asin
+            self.local_library[filepath] = data
+            self.save_local_db()
+            
+            # 4. Embed directly into the local file
+            ext = data.get("format", "").upper()
+            if ext in ["M4B", "MP3"]:
+                self.root.after(0, lambda: self.dl_status_var.set("Embedding tags..."))
+                
+                base_name, original_ext = os.path.splitext(filepath)
+                temp_path = f"{base_name}_temp{original_ext}"
+                
+                cmd = ["ffmpeg", "-y", "-i", filepath]
+                
+                if os.path.exists(cover_path):
+                    cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c:v", "mjpeg", "-disposition:v", "attached_pic"])
+                else:
+                    cmd.extend(["-map", "0:a"])
+                    
+                cmd.extend([
+                    "-c:a", "copy",
+                    "-metadata", f"title={title}",
+                    "-metadata", f"album={title}",
+                    "-metadata", f"artist={authors}",
+                    "-metadata", f"album_artist={authors}",
+                    "-metadata", "genre=Audiobook",
+                    temp_path
+                ])
+                
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                if res.returncode == 0:
+                    import shutil
+                    shutil.move(temp_path, filepath)
+                else:
+                    if os.path.exists(temp_path): os.remove(temp_path)
+                    self.write_log(f"FFmpeg Embed Error: {res.stderr}")
+                    raise Exception("FFmpeg failed to embed metadata. Check log for details.")
+
+            self.root.after(0, lambda: messagebox.showinfo("Success", "Metadata scraped and applied!"))
+            self.root.after(0, self.refresh_library_ui)
+            
+            # Force the UI to immediately reflect the new artwork and title
+            if getattr(self, 'file_path', "") == filepath:
+                self.root.after(0, lambda: self.load_specific_file(filepath))
+                
+        except Exception as e:
+            self.write_log(f"Scrape Error: {e}")
+            self.root.after(0, lambda err=str(e): messagebox.showerror("Scrape Failed", err))
+        finally:
+            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children('')]
         
@@ -1227,7 +1802,8 @@ class AAXManagerApp:
         bottom_panel.grid(row=1, column=0, sticky="ew")
 
         self.build_library_components(left_panel)
-        self.build_auth_components(right_panel)
+        self.build_info_components(right_panel)
+        self.build_bookmarks_components(right_panel)
         self.build_player_components(bottom_panel)
 
     def export_csv_worker(self):
@@ -1441,8 +2017,9 @@ class AAXManagerApp:
             messagebox.showerror("Error", "Could not load auth file. Check the log.")
 
     def start_browser_login_thread(self):
+        if hasattr(self, 'browser_login_btn') and self.browser_login_btn.winfo_exists():
             self.browser_login_btn.config(text="Connecting...", state=tk.DISABLED)
-            threading.Thread(target=self.browser_login_worker, args=(self.locale.get(),), daemon=True).start()
+        threading.Thread(target=self.browser_login_worker, args=(self.locale.get(),), daemon=True).start()
 
     def browser_login_worker(self, locale):
         self.write_log(f"Starting external browser login for region: {locale}")
@@ -1500,7 +2077,10 @@ class AAXManagerApp:
             
         finally:
             self.write_log("Login thread terminated.")
-            self.root.after(0, lambda: self.browser_login_btn.config(text="Login via Browser", state=tk.NORMAL))
+            def restore_btn():
+                if hasattr(self, 'browser_login_btn') and self.browser_login_btn.winfo_exists():
+                    self.browser_login_btn.config(text="Login via Browser", state=tk.NORMAL)
+            self.root.after(0, restore_btn)
 
     def fetch_cloud_library(self):
         self.write_log("DEBUG: fetch_cloud_library method started executing.")
@@ -1521,7 +2101,8 @@ class AAXManagerApp:
             self.write_log("Querying Audible Library API...")
             client = audible.Client(auth=self.auth_object)
             
-            response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
+            # ADDED 'media' to response_groups to get cover art URLs in bulk
+            response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
             
             self.cloud_items = response.get("items", [])
             self.write_log(f"Successfully retrieved {len(self.cloud_items)} library items.")
@@ -1530,11 +2111,45 @@ class AAXManagerApp:
 
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+            
+            # Trigger the silent background cover downloader
+            threading.Thread(target=self.background_cover_downloader, daemon=True).start()
+            
         except Exception as e:
             import traceback
             self.write_log(f"ERROR FETCHING LIBRARY:\n{traceback.format_exc()}")
             self.root.after(0, lambda: messagebox.showerror("Library Error", "Failed to fetch cloud library."))
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+
+    def background_cover_downloader(self):
+        self.write_log("Starting background cover sync...")
+        covers_downloaded = 0
+        
+        for item in getattr(self, 'cloud_items', []):
+            asin = item.get("asin")
+            if not asin: continue
+                
+            cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+            if os.path.exists(cover_path):
+                continue # Skip if we already have it
+                
+            images = item.get("product_images", {})
+            img_url = images.get("500") or images.get("252")
+            
+            if img_url:
+                try:
+                    img_data = requests.get(img_url, timeout=10).content
+                    with open(cover_path, "wb") as f:
+                        f.write(img_data)
+                    covers_downloaded += 1
+                except Exception as e:
+                    pass
+                    
+        if covers_downloaded > 0:
+            self.write_log(f"Downloaded {covers_downloaded} new covers.")
+            # If the user is currently looking at the grid view, refresh it to show the new covers
+            if getattr(self, 'current_view_mode', 'list') == 'grid':
+                self.root.after(0, self.refresh_library_ui)
 
     def update_cloud_ui(self, items):
         for row in self.cloud_tree.get_children():
@@ -1789,6 +2404,7 @@ class AAXManagerApp:
                 return ["-audible_key", a_key, "-audible_iv", a_iv]
             else:
                 return ["-activation_bytes", self.auth_bytes.get().strip()]
+            
     def add_local_file(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
         if not filepath: return
@@ -1796,9 +2412,39 @@ class AAXManagerApp:
         filename = os.path.basename(filepath)
         ext = filename.split(".")[-1].upper()
         
-        self.local_library[filepath] = {"title": filename, "format": ext, "path": filepath}
+        title = filename
+        authors = "Unknown Author"
+        
+        # --- Read embedded ID3 tags using ffprobe ---
+        if ext in ["M4B", "MP3"]:
+            try:
+                cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
+                res = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                data = json.loads(res.stdout)
+                tags = data.get("format", {}).get("tags", {})
+                
+                # Extract Title and Artist (M4B usually uses 'artist' or 'album_artist')
+                if "title" in tags: 
+                    title = tags["title"]
+                if "artist" in tags: 
+                    authors = tags["artist"]
+                elif "album_artist" in tags: 
+                    authors = tags["album_artist"]
+                    
+            except Exception as e:
+                self.write_log(f"Failed to read tags for {filename}: {e}")
+        # -------------------------------------------------
+
+        self.local_library[filepath] = {
+            "title": title, 
+            "format": ext, 
+            "path": filepath, 
+            "authors": authors
+        }
         self.save_local_db()
-        self.refresh_local_ui()
+        self.refresh_library_ui()
+
+    
 
     def remove_local_file(self):
         selected = self.library_tree.focus()
@@ -1823,73 +2469,117 @@ class AAXManagerApp:
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
 
-    def refresh_local_ui(self):
-        for row in self.local_tree.get_children():
-            self.local_tree.delete(row)
-            
-        for path, data in self.local_library.items():
-            self.local_tree.insert("", "end", values=(data['title'], data['format'], data['path']))
+    def open_sleep_menu(self):
+        if hasattr(self, 'sleep_menu_popup') and self.sleep_menu_popup.winfo_exists():
+            self.sleep_menu_popup.destroy()
+            return
 
-    def send_to_player(self):
-            selected = self.local_tree.focus()
-            if not selected: return
-            
-            item = self.local_tree.item(selected)
-            filepath = item['values'][2]
-            
-            if not os.path.exists(filepath):
-                messagebox.showerror("Error", "File no longer exists at that path.")
-                return
-
-            self.load_specific_file(filepath)
-
-    def build_player_components(self, parent):
-        play_frame = ttk.LabelFrame(parent, text="Playback", padding=10)
-        play_frame.pack(fill="x", expand=True, padx=5, pady=5)
-
-        self.is_playing = False
-        self.is_paused = False
-        self.chapter_duration = 0
-        self.current_play_time = 0
-
-        top_row = ttk.Frame(play_frame)
-        top_row.pack(fill="x", pady=2)
+        # 1. Create a borderless popup tool window
+        self.sleep_menu_popup = tk.Toplevel(self.root)
+        self.sleep_menu_popup.wm_overrideredirect(True)
         
-        self.info_label = ttk.Label(top_row, text="", justify="left")
-        self.info_label.pack(side=tk.LEFT, padx=5)
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        self.sleep_menu_popup.config(bg=bg_color, highlightbackground="#4a90e2", highlightthickness=1)
+
+        # 2. Position it directly underneath the Sleep button
+        x = self.timer_btn.winfo_rootx()
+        y = self.timer_btn.winfo_rooty() + self.timer_btn.winfo_height() + 2
+        self.sleep_menu_popup.geometry(f"+{x}+{y}")
+
+        inner = tk.Frame(self.sleep_menu_popup, bg=bg_color, padx=5, pady=5)
+        inner.pack(fill="both", expand=True)
+
+        # 3. Add Presets
+        ttk.Button(inner, text="Turn Off Timer", command=lambda: self.set_sleep_timer("off")).pack(fill="x", pady=(0,5))
+        ttk.Button(inner, text="15 Minutes", command=lambda: self.set_sleep_timer("time", 15)).pack(fill="x", pady=1)
+        ttk.Button(inner, text="30 Minutes", command=lambda: self.set_sleep_timer("time", 30)).pack(fill="x", pady=1)
+        ttk.Button(inner, text="End of Chapter", command=lambda: self.set_sleep_timer("chapters", 1)).pack(fill="x", pady=1)
+
+        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
+
+        # 4. Add Custom Minute Input
+        custom_time_frame = ttk.Frame(inner)
+        custom_time_frame.pack(fill="x", pady=2)
+        ttk.Label(custom_time_frame, text="Mins:").pack(side=tk.LEFT)
+        min_var = tk.StringVar(value="60")
+        ttk.Entry(custom_time_frame, textvariable=min_var, width=5).pack(side=tk.LEFT, padx=(5, 2))
+        ttk.Button(custom_time_frame, text="Set", width=4, command=lambda: self.set_sleep_timer("time", min_var.get())).pack(side=tk.LEFT)
+
+        # 5. Add Custom Chapter Input
+        custom_chap_frame = ttk.Frame(inner)
+        custom_chap_frame.pack(fill="x", pady=2)
+        ttk.Label(custom_chap_frame, text="Chaps:").pack(side=tk.LEFT)
+        chap_var = tk.StringVar(value="2")
+        ttk.Entry(custom_chap_frame, textvariable=chap_var, width=5).pack(side=tk.LEFT, padx=(1, 2))
+        ttk.Button(custom_chap_frame, text="Set", width=4, command=lambda: self.set_sleep_timer("chapters", chap_var.get())).pack(side=tk.LEFT)
+
+        self.sleep_menu_popup.update_idletasks()
+        popup_height = self.sleep_menu_popup.winfo_reqheight()
         
-        self.time_label = ttk.Label(top_row, text="00:00 / 00:00")
-        self.time_label.pack(side=tk.RIGHT, padx=5)
-
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(play_frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill="x", padx=5, pady=5)
-
-        controls_frame = ttk.Frame(play_frame)
-        controls_frame.pack(pady=5)
-
-        ttk.Button(controls_frame, text="<< Prev Chapter", width=14, command=self.prev_chapter).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="-30s", width=5, command=lambda: self.seek_audio(-30)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Play", width=8, command=self.master_play).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Pause", width=8, command=self.pause_audio).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Stop", width=8, command=self.stop_audio).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Next Chapter >>", width=14, command=self.next_chapter).pack(side=tk.LEFT, padx=2)
-
-        self.playback_speed = tk.StringVar(value="1.0x")
-        speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
+        # Get button coordinates
+        x = self.timer_btn.winfo_rootx()
+        y = self.timer_btn.winfo_rooty()
         
-        # Upgraded to Combobox
-        speed_menu = ttk.Combobox(controls_frame, textvariable=self.playback_speed, values=speed_options, state="readonly", width=5)
-        speed_menu.bind("<<ComboboxSelected>>", self.on_speed_change)
-        speed_menu.pack(side=tk.LEFT, padx=10)
+        # Position it directly ABOVE the button instead of below it
+        self.sleep_menu_popup.geometry(f"+{x}+{y - popup_height - 2}")
 
-        self.volume_var = tk.DoubleVar(value=100.0)
-        vol_frame = ttk.Frame(controls_frame)
-        vol_frame.pack(side=tk.LEFT, padx=5)
-        ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
-        self.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.volume_var, command=self.on_volume_change, length=80)
-        self.vol_slider.pack(side=tk.LEFT)
+        # 6. Auto-close if the user clicks away
+        def on_focus_out(event):
+            # Check if the new focus is completely outside the popup
+            if self.sleep_menu_popup.focus_get() is None or not str(self.sleep_menu_popup.focus_get()).startswith(str(self.sleep_menu_popup)):
+                self.sleep_menu_popup.destroy()
+                
+        self.sleep_menu_popup.bind("<FocusOut>", on_focus_out)
+        self.sleep_menu_popup.focus_set()
+
+    def set_sleep_timer(self, mode, value=0):
+        # Clear existing timer loops
+        if hasattr(self, '_sleep_timer_id'):
+            self.root.after_cancel(self._sleep_timer_id)
+            
+        if hasattr(self, 'sleep_menu_popup') and self.sleep_menu_popup.winfo_exists():
+            self.sleep_menu_popup.destroy()
+
+        try:
+            val = int(value)
+        except ValueError:
+            return
+
+        if mode == "off" or val <= 0:
+            self.sleep_mode = None
+            self.timer_btn.config(text="Sleep: Off")
+            return
+            
+        self.sleep_mode = mode
+        
+        if mode == "time":
+            self.sleep_timer_seconds = val * 60
+            self.timer_btn.config(text=f"Sleep: {self.format_time(self.sleep_timer_seconds)}")
+            self.sleep_timer_tick()
+            
+        elif mode == "chapters":
+            self.sleep_chapters_remaining = val
+            text = "End of Chapter" if val == 1 else f"Sleep: {val} ch"
+            self.timer_btn.config(text=text)
+
+    def sleep_timer_tick(self):
+        if getattr(self, 'sleep_mode', None) != "time":
+            return
+            
+        if self.sleep_timer_seconds <= 0:
+            self.sleep_mode = None
+            self.timer_btn.config(text="Sleep: Off")
+            
+            if getattr(self, 'is_playing', False):
+                self.write_log("Sleep timer (minutes) finished. Pausing playback.")
+                self.pause_audio()
+            return
+            
+        self.sleep_timer_seconds -= 1
+        self.timer_btn.config(text=f"Sleep: {self.format_time(self.sleep_timer_seconds)}")
+        
+        self._sleep_timer_id = self.root.after(1000, self.sleep_timer_tick)
 
     def on_volume_change(self, event=None):
         if os.name == 'nt':
@@ -1921,29 +2611,100 @@ class AAXManagerApp:
             self.is_paused = False
             self.resume_playback()
     
-    def master_play(self, event=None):
-        selected = self.library_tree.focus()
+    def on_sleep_timer_set(self, event=None):
+        val = self.sleep_time_var.get()
         
-        if selected:
-            item = self.library_tree.item(selected)
-            title = item['values'][0]
+        # Clear any existing background timer to prevent duplicate countdowns
+        if hasattr(self, '_sleep_timer_id'):
+            self.root.after_cancel(self._sleep_timer_id)
             
-            local_path = None
-            for path, data in self.local_library.items():
-                if data["title"] == title:
-                    local_path = path
-                    break
-                    
-            if local_path and self.file_path == local_path:
-                self.play_chapter()
-                return
-                
-            self.stop_audio()
-            self.handle_action_on_selected("play")
+        if val == "Off":
+            self.sleep_timer_active = False
+            self.timer_countdown_var.set("")
+            return
+            
+        mins = int(val.replace("m", ""))
+        self.sleep_timer_seconds = mins * 60
+        self.sleep_timer_active = True
+        
+        # self.format_time already exists in your code for the playback bar
+        self.timer_countdown_var.set(self.format_time(self.sleep_timer_seconds))
+        
+        self.sleep_timer_tick()
+
+        
+    def _on_grid_scroll(self, event):
+        # Don't do anything if we are in list mode
+        if getattr(self, 'current_view_mode', 'list') != "grid":
+            return
+            
+        # Ensure the mouse is actually hovering over the grid canvas or its children
+        if str(self.grid_canvas) not in str(event.widget):
             return
 
-        if self.file_path:
+        # Safely get the scroll direction (handles both Windows/Mac and Linux X11 inputs)
+        num = getattr(event, 'num', 0)
+        delta = getattr(event, 'delta', 0)
+
+        # Scroll Up
+        if num == 4 or delta > 0:
+            self.grid_canvas.yview_scroll(-1, "units")
+        # Scroll Down
+        elif num == 5 or delta < 0:
+            self.grid_canvas.yview_scroll(1, "units")
+
+    def master_play(self, event=None):
+        # 1. Grab the selected item based on the current view mode
+        if getattr(self, 'current_view_mode', 'list') == "list":
+            selected = self.library_tree.focus()
+            if not selected:
+                # Fallback: if nothing is selected but a file is loaded, resume it
+                if self.file_path:
+                    self.play_chapter()
+                else:
+                    messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
+                return
+            item = self.library_tree.item(selected)
+        else:
+            if not hasattr(self, '_selected_grid_item') or not self._selected_grid_item:
+                if self.file_path:
+                    self.play_chapter()
+                else:
+                    messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
+                return
+            item = self._selected_grid_item
+
+        title = item['values'][0]
+        status = item['values'][5]  # Index 5 is the status string
+
+        # 2. Check if the file is actually local
+        if "Downloaded" not in status:
+            messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")
+            return
+
+        # 3. Find the matching filepath in the local database
+        local_path = None
+        for path, data in self.local_library.items():
+            if data.get("title") == title:
+                local_path = path
+                break
+
+        if not local_path or not os.path.exists(local_path):
+            messagebox.showerror("File Error", "The audio file could not be found on your disk.")
+            return
+
+        # 4. If it's already the active file, just resume playback
+        if self.file_path == local_path:
             self.play_chapter()
+            return
+
+        # 5. If it's a new file, stop the current audio and route through your action handler
+        self.stop_audio()
+        
+        # Run metadata fetch in a background thread so it doesn't freeze the UI
+        threading.Thread(target=self.fetch_metadata_worker, args=(local_path,), daemon=True).start()
+        
+        self.handle_action_on_selected("play")
 
     def load_file_prompt(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b")])
@@ -1992,6 +2753,105 @@ class AAXManagerApp:
             self.progress_var.set(percent)
 
         threading.Thread(target=self.fetch_metadata_worker, args=(filepath,), daemon=True).start()
+        self.refresh_bookmarks_ui()
+
+    def add_bookmark(self):
+        if not getattr(self, 'file_path', None):
+            messagebox.showwarning("No File", "Please load an audiobook first.")
+            return
+
+        # Pause playback while typing so you don't miss anything
+        was_playing = self.is_playing
+        if was_playing:
+            self.pause_audio()
+
+        current_time = getattr(self, 'current_play_time', 0.0)
+        chapter_idx = getattr(self, 'current_chapter_idx', 0)
+        
+        # Calculate absolute time for sorting purposes
+        abs_time = current_time
+        if self.chapters:
+            abs_time += float(self.chapters[chapter_idx].get("start_time", 0))
+
+        note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.format_time(current_time)}:")
+        
+        # Resume automatically
+        if was_playing:
+            self.is_paused = False
+            self.resume_playback()
+            
+        if not note: return 
+        
+        # Save to database
+        local_data = self.local_library.get(self.file_path, {})
+        if "bookmarks" not in local_data:
+            local_data["bookmarks"] = []
+            
+        local_data["bookmarks"].append({
+            "chapter_idx": chapter_idx,
+            "time": current_time,
+            "abs_time": abs_time,
+            "note": note
+        })
+        
+        self.save_local_db()
+        self.refresh_bookmarks_ui()
+
+    def refresh_bookmarks_ui(self):
+        if not hasattr(self, 'bm_tree'): return
+        
+        for row in self.bm_tree.get_children():
+            self.bm_tree.delete(row)
+            
+        if not getattr(self, 'file_path', None): return
+        
+        local_data = self.local_library.get(self.file_path, {})
+        bookmarks = local_data.get("bookmarks", [])
+        
+        # Sort sequentially by timestamp
+        bookmarks.sort(key=lambda x: x.get("abs_time", 0))
+        
+        for idx, bm in enumerate(bookmarks):
+            chap_idx = bm.get("chapter_idx", 0)
+            
+            # Pull the actual chapter title if available
+            chap_title = f"Chapter {chap_idx + 1}"
+            if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
+                chap_title = self.chapters[chap_idx].get("tags", {}).get("title", chap_title)
+                
+            t_str = self.format_time(bm.get("time", 0))
+            display_time = f"{chap_title} - {t_str}"
+            
+            # Save the list index as the iid so we can look it up on double-click
+            self.bm_tree.insert("", "end", iid=str(idx), values=(display_time, bm.get("note", "")))
+
+    def jump_to_bookmark(self, event=None):
+        selected = self.bm_tree.focus()
+        if not selected: return
+        
+        idx = int(selected)
+        bookmarks = self.local_library.get(self.file_path, {}).get("bookmarks", [])
+        
+        if 0 <= idx < len(bookmarks):
+            bm = bookmarks[idx]
+            
+            self.stop_audio()
+            self.current_chapter_idx = bm.get("chapter_idx", 0)
+            self.current_play_time = bm.get("time", 0.0)
+            
+            self.play_chapter()
+
+    def delete_bookmark(self):
+        selected = self.bm_tree.focus()
+        if not selected: return
+        
+        idx = int(selected)
+        bookmarks = self.local_library.get(self.file_path, {}).get("bookmarks", [])
+        
+        if 0 <= idx < len(bookmarks):
+            del bookmarks[idx]
+            self.save_local_db()
+            self.refresh_bookmarks_ui()
 
     def verify_bytes(self, filepath):
         cmd = ["ffmpeg", "-v", "error"]
@@ -2057,19 +2917,63 @@ class AAXManagerApp:
             except Exception:
                 total_duration = 0
 
-        # Build the conversion command
+        # --- NEW: Gather Metadata and Cover Art ---
+        original_data = self.local_library.get(input_path, {})
+        title = original_data.get("title", os.path.basename(output_path))
+        asin = original_data.get("asin", "")
+
+        # Resolve Authors from the cloud cache
+        authors = ""
+        for item in getattr(self, 'cloud_items', []):
+            if item.get("asin") == asin:
+                raw_authors = item.get("authors", [])
+                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                break
+
+        cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+        # ------------------------------------------
+
+        # Build the base conversion command
         cmd = ["ffmpeg", "-y"]
         if input_path.endswith(".aax") or input_path.endswith(".aaxc"):
             cmd.extend(self.get_drm_flags(input_path))
             
+        cmd.extend(["-i", input_path])
+        
+        # --- NEW: Inject the Cover Art Stream ---
+        if asin and os.path.exists(cover_path):
+            cmd.extend([
+                "-i", cover_path, 
+                "-map", "0:a", 
+                "-map", "1:v", 
+                "-c:v", "mjpeg", 
+                "-disposition:v", "attached_pic"
+            ])
+        # ----------------------------------------
+        
+        # --- NEW: Inject the Text Metadata Tags ---
+        cmd.extend([
+            "-c:a", "copy",
+            "-metadata", f"title={title}",
+            "-metadata", f"album={title}",
+            "-metadata", "genre=Audiobook"
+        ])
+        
+        if authors:
+            cmd.extend([
+                "-metadata", f"artist={authors}",
+                "-metadata", f"album_artist={authors}"
+            ])
+        # ------------------------------------------
+
         # Explicitly ask for machine-readable progress on the main output pipe
-        cmd.extend(["-i", input_path, "-c", "copy", "-progress", "pipe:1", output_path])
+        cmd.extend(["-progress", "pipe:1", output_path])
         
         try:
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, # THE FIX: Throw all the diagnostic spam into a black hole so it never freezes
+                stderr=subprocess.DEVNULL, # Throw all the diagnostic spam into a black hole so it never freezes
                 universal_newlines=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
@@ -2101,10 +3005,6 @@ class AAXManagerApp:
             if process.returncode != 0:
                 raise Exception(f"FFmpeg process failed with exit code {process.returncode}.")
             
-            original_data = self.local_library.get(input_path, {})
-            title = original_data.get("title", os.path.basename(output_path))
-            asin = original_data.get("asin", "")
-            
             self.local_library[output_path] = {
                 "title": title, 
                 "format": "M4B", 
@@ -2113,7 +3013,7 @@ class AAXManagerApp:
             }
             self.save_local_db()
             
-            self.root.after(0, lambda: messagebox.showinfo("Success", "File converted."))
+            self.root.after(0, lambda: messagebox.showinfo("Success", "File converted with embedded metadata."))
             self.root.after(0, self.refresh_library_ui)
             
         except Exception as e:
@@ -2226,9 +3126,26 @@ class AAXManagerApp:
             vol_int = int(self.volume_var.get())
             cmd.extend(["-volume", str(vol_int)])
         
+        audio_filters = []
+        
+        # 1. Speed
         speed_val = float(self.playback_speed.get().replace("x", ""))
         if speed_val != 1.0:
-            cmd.extend(["-af", f"atempo={speed_val}"])
+            audio_filters.append(f"atempo={speed_val}")
+            
+        # 2. Voice Boost (Dynamic Range Compression)
+        if getattr(self, 'voice_boost_var', None) and self.voice_boost_var.get():
+            # Softens loud peaks and boosts quiet whispers
+            audio_filters.append("acompressor=threshold=-15dB:ratio=3:makeup=5dB")
+            
+        # 3. Skip Silence
+        if getattr(self, 'skip_silence_var', None) and self.skip_silence_var.get():
+            # Strips any dead air longer than 0.5 seconds
+            audio_filters.append("silenceremove=stop_periods=-1:stop_duration=0.5:stop_threshold=-40dB")
+
+        # Chain them all together with commas for FFmpeg
+        if audio_filters:
+            cmd.extend(["-af", ",".join(audio_filters)])
         
         if self.file_path.endswith(".aax") or self.file_path.endswith(".aaxc"):
             cmd.extend(self.get_drm_flags(self.file_path))
@@ -2306,9 +3223,41 @@ class AAXManagerApp:
 
     def next_chapter(self):
         self.save_playback_state()
+
         if self.current_chapter_idx < len(self.chapters) - 1:
             self.current_chapter_idx += 1
             self.current_play_time = 0
+
+            # --- NEW: Chapter Sleep Timer Hook ---
+            if getattr(self, 'sleep_mode', None) == "chapters":
+                self.sleep_chapters_remaining -= 1
+                if self.sleep_chapters_remaining <= 0:
+                    self.sleep_mode = None
+                    self.timer_btn.config(text="Sleep: Off")
+                    self.write_log("Sleep timer (chapters) finished. Pausing playback.")
+                    self.is_paused = True 
+                    
+                    # Ensure the UI ticks over to the new chapter title, but stay paused
+                    chapter = self.chapters[self.current_chapter_idx]
+                    start_time = float(chapter.get("start_time", 0))
+                    end_time = float(chapter.get("end_time", 0))
+                    self.chapter_duration = end_time - start_time
+                    self.update_info()
+                    
+                    curr_str = self.format_time(self.current_play_time)
+                    dur_str = self.format_time(self.chapter_duration)
+                    self.time_label.config(text=f"{curr_str} / {dur_str}")
+                    self.progress_var.set(0)
+                    
+                    if self.player_process:
+                        self.player_process.terminate()
+                        self.player_process = None
+                        
+                    return # Halt here, do not start the audio
+                else:
+                    self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
+            # -------------------------------------
+
             self.is_paused = False
             self.play_chapter()
         else:

@@ -3,6 +3,7 @@ requests
 Pillow
 sv-ttk
 rsa
+pystray
 
 # Optional: Windows-specific volume control dependencies
 # (Safe to ignore or remove if running exclusively on Mac/Linux)
