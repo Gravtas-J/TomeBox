@@ -29,6 +29,14 @@ class AAXManagerApp:
         self.auth_save_path = os.path.join(self.base_dir, "my_audible_auth.json")
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
         self.settings_path = os.path.join(self.base_dir, "settings.json")
+        self.settings = self.load_settings()
+        
+        self.default_download_dir = self.settings.get("download_dir", "")
+        self.active_profile = self.settings.get("active_profile", "Main")
+        
+        # Dynamically named based on the profile
+        self.auth_save_path = os.path.join(self.base_dir, f"auth_{self.active_profile}.json")
+        self.cloud_cache_path = os.path.join(self.base_dir, f"cloud_{self.active_profile}.json")
         self.auth_object = None
         self.local_library = self.load_local_db()
         self.cloud_items = [] 
@@ -53,6 +61,14 @@ class AAXManagerApp:
         self.dl_status_var = tk.StringVar(value="Idle")
 
         self.root.after(100, self.check_dependencies)
+        
+        try:
+            icon_path = os.path.join(self.base_dir, "tomebox.png")
+            if os.path.exists(icon_path):
+                icon_img = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(True, icon_img) # "True" applies it to all future dialog windows too
+        except Exception as e:
+            self.write_log(f"Could not load app icon: {e}")
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -61,6 +77,34 @@ class AAXManagerApp:
 
         threading.Thread(target=self.db_monitor_worker, daemon=True).start()
     
+    def add_new_profile(self):
+        new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
+        if new_name and new_name not in self.profiles_list:
+            self.profiles_list.append(new_name)
+            self.settings["profiles"] = self.profiles_list
+            self.profile_combo.config(values=self.profiles_list)
+            self.profile_combo.set(new_name)
+            self.switch_profile()
+
+    def switch_profile(self, event=None):
+        selected = self.profile_combo.get()
+        self.active_profile = selected
+        self.settings["active_profile"] = selected
+        self.save_settings()
+        
+        # Update paths
+        self.auth_save_path = os.path.join(self.base_dir, f"auth_{self.active_profile}.json")
+        self.cloud_cache_path = os.path.join(self.base_dir, f"cloud_{self.active_profile}.json")
+        
+        # Clear current session
+        self.auth_object = None
+        self.auth_bytes.set("")
+        self.cloud_items = self.load_cloud_cache()
+        
+        # Try to load the new profile's auth file
+        self.auto_load_auth()
+        self.refresh_library_ui()
+
     def check_dependencies(self):
         import shutil
         import webbrowser
@@ -473,6 +517,19 @@ class AAXManagerApp:
         self.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=self.load_auth_file_prompt)
         self.auth_file_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
+        profile_frame = ttk.Frame(auth_frame)
+        profile_frame.pack(fill="x", pady=5)
+        
+        ttk.Label(profile_frame, text="Profile:").pack(side=tk.LEFT, padx=5)
+        
+        self.profiles_list = self.settings.get("profiles", ["Main"])
+        self.profile_combo = ttk.Combobox(profile_frame, values=self.profiles_list, state="readonly", width=15)
+        self.profile_combo.set(self.active_profile)
+        self.profile_combo.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(profile_frame, text="New", width=5, command=self.add_new_profile).pack(side=tk.LEFT)
+        
+        self.profile_combo.bind("<<ComboboxSelected>>", self.switch_profile)
         # ttk.Checkbutton(auth_frame, text="Enable API Debug Output", variable=self.debug_mode).pack(anchor="w", pady=5)
 
         # # NEW: Appearance Settings
@@ -602,6 +659,24 @@ class AAXManagerApp:
         self.root.option_add('*TCombobox*Listbox.foreground', colors["fg"])
         self.root.option_add('*TCombobox*Listbox.selectBackground', colors["select"])
         self.root.option_add('*TCombobox*Listbox.selectForeground', "#ffffff")
+        
+        def repaint_combobox_dropdowns(widget):
+            if isinstance(widget, ttk.Combobox):
+                try:
+                    # Ask the Tcl engine for the exact hidden popdown window path
+                    popdown = widget.tk.eval(f'ttk::combobox::PopdownWindow {widget._w}')
+                    # The legacy listbox is specifically located at {popdown}.f.l
+                    widget.tk.call(f'{popdown}.f.l', 'configure',
+                                   '-background', colors["entry"],
+                                   '-foreground', colors["fg"],
+                                   '-selectbackground', colors["select"],
+                                   '-selectforeground', "#ffffff")
+                except tk.TclError:
+                    pass
+            for child in widget.winfo_children():
+                repaint_combobox_dropdowns(child)
+                
+        repaint_combobox_dropdowns(self.root)
         
         style.configure("TEntry", fieldbackground=colors["entry"], foreground=colors["fg"])
         
@@ -1515,7 +1590,9 @@ class AAXManagerApp:
                 "format": "AAXC", 
                 "path": filepath,
                 "audible_key": a_key,
-                "audible_iv": a_iv
+                "audible_iv": a_iv,
+                "asin": asin,
+                "owner": self.active_profile  # NEW
             }
             self.save_local_db()
             self.root.after(0, self.refresh_library_ui)

@@ -62,23 +62,27 @@ def create_startup_scripts(base_dir, py_exec):
     
     return bat_path, sh_path
 
-def create_shortcut(base_dir, bat_path, sh_path):
+def create_shortcut(base_dir, bat_path, sh_path, py_exec):
     print_step("Creating desktop shortcut...")
     os_name = platform.system()
     desktop_dir = Path.home() / "Desktop"
 
     if os_name == "Windows":
-        # Use a temporary VBScript to create the shortcut without needing pywin32 pip package
         shortcut_path = desktop_dir / f"{APP_NAME}.lnk"
         vbs_path = base_dir / "create_shortcut.vbs"
+        
+        # Use pythonw.exe to run without a terminal window
+        pyw_exec = str(py_exec).replace("python.exe", "pythonw.exe")
         
         vbs_content = f"""
 Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "{bat_path}"
+oLink.TargetPath = "{pyw_exec}"
+oLink.Arguments = "{MAIN_SCRIPT}"
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
+oLink.IconLocation = "{base_dir}\\tomebox.ico"
 oLink.Save
 """
         with open(vbs_path, "w") as f:
@@ -86,16 +90,15 @@ oLink.Save
             
         subprocess.run(["cscript.exe", "//Nologo", str(vbs_path)])
         os.remove(vbs_path)
-        print(f"  -> Created Windows shortcut at {shortcut_path}")
+        print(f"  -> Created stealth Windows shortcut at {shortcut_path}")
 
     elif os_name == "Linux":
-        # Create a standard .desktop file
         shortcut_path = desktop_dir / f"{APP_NAME}.desktop"
         desktop_content = f"""[Desktop Entry]
 Name={APP_NAME}
 Comment=Audiobook Manager
 Exec={sh_path}
-Icon=utilities-terminal
+Icon={base_dir}/tomebox.png
 Terminal=false
 Type=Application
 Categories=AudioVideo;
@@ -105,16 +108,13 @@ Categories=AudioVideo;
         os.chmod(shortcut_path, 0o755)
         print(f"  -> Created Linux .desktop file at {shortcut_path}")
 
-    elif os_name == "Darwin": # macOS
-        # Create an executable .command wrapper on the desktop
-        shortcut_path = desktop_dir / f"{APP_NAME}.command"
-        command_content = f"""#!/bin/bash
-"{sh_path}"
-"""
-        with open(shortcut_path, "w") as f:
-            f.write(command_content)
-        os.chmod(shortcut_path, 0o755)
-        print(f"  -> Created macOS command script at {shortcut_path}")
+    elif os_name == "Darwin":
+        # Compile a native Mac .app bundle to hide the terminal
+        app_path = desktop_dir / f"{APP_NAME}.app"
+        apple_script = f'do shell script "cd \\"{base_dir}\\" && \\"{py_exec}\\" \\"{MAIN_SCRIPT}\\" > /dev/null 2>&1 &"'
+        
+        subprocess.run(["osacompile", "-e", apple_script, "-o", str(app_path)])
+        print(f"  -> Created native macOS App at {app_path}")
 
 def main():
     print(f"=== {APP_NAME} Installer ===")
@@ -132,7 +132,7 @@ def main():
     bat_path, sh_path = create_startup_scripts(base_dir, py_exec)
     
     # 4. Create Desktop Shortcut
-    create_shortcut(base_dir, bat_path, sh_path)
+    create_shortcut(base_dir, bat_path, sh_path, py_exec)
     
     print_step("Installation Complete!")
     print(f"You can now launch {APP_NAME} from your desktop shortcut.")

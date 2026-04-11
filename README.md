@@ -4,13 +4,17 @@ TomeBox is a desktop application for managing, downloading, playing, and convert
 
 ## Get Started
 
-### 1. Download and extract the TomeBox folder.
+### 1. 
+#### Download and extract the TomeBox folder.
 
-### 2. If you are on Windows, double-click setup.bat.
+### 2. 
+#### If you are on Windows, double-click setup.bat.
 
-### 3. If you are on Mac/Linux, double-click setup.command (Note: Mac/Linux users may need to right-click -> properties -> allow executing as program depending on their security settings).
+### 3. 
+#### If you are on Mac/Linux, double-click setup.command (Note: Mac/Linux users may need to right-click -> properties -> allow executing as program depending on their security settings).
 
-### 4. The script will install everything, check for FFmpeg, and drop a TomeBox shortcut right on your desktop!
+### 4. 
+#### The script will install everything, check for FFmpeg, and drop a TomeBox shortcut right on your desktop!
 
 ## Features
 
