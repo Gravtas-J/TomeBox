@@ -2315,8 +2315,7 @@ class AAXManagerApp:
                 "path": filepath,
                 "audible_key": a_key,
                 "audible_iv": a_iv,
-                "asin": asin,
-                "owner": self.active_profile  # NEW
+                "asin": asin  # NEW: Save ASIN for metadata fetching
             }
             self.save_local_db()
             self.root.after(0, self.refresh_library_ui)
@@ -2396,14 +2395,34 @@ class AAXManagerApp:
             self.progress_var.set(percent)
         
     def get_drm_flags(self, filepath):
-            data = self.local_library.get(filepath, {})
-            a_key = data.get("audible_key")
-            a_iv = data.get("audible_iv")
+        data = self.local_library.get(filepath, {})
+        a_key = data.get("audible_key")
+        a_iv = data.get("audible_iv")
+        
+        # 1. AAXC Files (Already Multi-User Safe)
+        if a_key and a_iv:
+            return ["-audible_key", a_key, "-audible_iv", a_iv]
             
-            if a_key and a_iv:
-                return ["-audible_key", a_key, "-audible_iv", a_iv]
-            else:
-                return ["-activation_bytes", self.auth_bytes.get().strip()]
+        # 2. Legacy AAX Files (Requires dynamic activation bytes)
+        owner = data.get("owner", self.active_profile)
+        
+        # If the active profile owns it, use the bytes already loaded in memory
+        if owner == self.active_profile and self.auth_bytes.get().strip():
+            return ["-activation_bytes", self.auth_bytes.get().strip()]
+            
+        # If someone else owns it, quietly load their auth file to decrypt it
+        owner_auth_path = os.path.join(self.base_dir, f"auth_{owner}.json")
+        if os.path.exists(owner_auth_path):
+            try:
+                temp_auth = audible.Authenticator.from_file(owner_auth_path)
+                dynamic_bytes = temp_auth.get_activation_bytes()
+                if dynamic_bytes:
+                    return ["-activation_bytes", dynamic_bytes]
+            except Exception as e:
+                self.write_log(f"Failed to dynamically load auth for {owner}: {e}")
+        
+        # Ultimate fallback
+        return ["-activation_bytes", self.auth_bytes.get().strip()]
             
     def add_local_file(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
@@ -2439,7 +2458,8 @@ class AAXManagerApp:
             "title": title, 
             "format": ext, 
             "path": filepath, 
-            "authors": authors
+            "authors": authors,
+            "owner": self.active_profile
         }
         self.save_local_db()
         self.refresh_library_ui()
