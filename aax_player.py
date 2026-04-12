@@ -79,6 +79,7 @@ class AAXManagerApp:
         except Exception as e:
             self.write_log(f"Could not load app icon: {e}")
 
+        self.build_context_menu()
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
         self.setup_tray_icon()
@@ -586,6 +587,7 @@ class AAXManagerApp:
         self.root.bind_all("<MouseWheel>", self._on_grid_scroll)  
         self.root.bind_all("<Button-4>", self._on_grid_scroll)    
         self.root.bind_all("<Button-5>", self._on_grid_scroll)    
+        self.root.bind_all("<Button-3>", self.show_context_menu)
         for col in self.library_tree["columns"]:
             self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
             
@@ -698,6 +700,34 @@ class AAXManagerApp:
             variable=self.skip_silence_var, command=self.on_filter_change
         ).pack(side=tk.LEFT, padx=5)
 
+    def build_context_menu(self):
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        
+        # Playback Controls
+        self.context_menu.add_command(label="▶ Play", command=self.master_play)
+        self.context_menu.add_command(label="⏸ Pause", command=self.pause_audio)
+        self.context_menu.add_separator()
+        
+        # Chapter Navigation
+        self.context_menu.add_command(label="⏮ Prev Chapter", command=self.prev_chapter)
+        self.context_menu.add_command(label="⏭ Next Chapter", command=self.next_chapter)
+        self.context_menu.add_separator()
+        
+        # Seeking
+        self.context_menu.add_command(label="⏪ -30s", command=lambda: self.seek_audio(-30))
+        self.context_menu.add_command(label="⏩ +30s", command=lambda: self.seek_audio(30))
+        self.context_menu.add_separator()
+
+        # File Operations 
+        self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
+        self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
+        self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
+        self.context_menu.add_separator()
+        
+        # Tools
+        self.context_menu.add_command(label="🔖 Bookmark", command=self.add_bookmark)
+        self.context_menu.add_command(label="📑 Chapters", command=self.open_chapter_window)
+
     def build_bookmarks_components(self, parent):
         self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
         self.bm_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -721,6 +751,21 @@ class AAXManagerApp:
         btn_frame = ttk.Frame(self.bm_frame)
         btn_frame.pack(fill="x", pady=(5, 0))
         ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
+
+    def show_context_menu(self, event):
+        # If we are in the list view, select the item under the cursor first
+        if getattr(self, 'current_view_mode', 'list') == "list":
+            item = self.library_tree.identify_row(event.y)
+            if item:
+                self.library_tree.selection_set(item)
+                self.library_tree.focus(item)
+                self.on_item_select() # Update the side panel preview
+
+        # Pop the menu at the exact screen coordinates of the mouse click
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
 
     def open_chapter_window(self):
         # Ensure a book is loaded and has chapter data
