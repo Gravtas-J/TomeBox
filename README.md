@@ -96,7 +96,7 @@ Abstract the Audible API logic to support adding modules for Soundbooth Theater 
 ## Phase 3: Self hosting 
 
 ### implementing self hosting
-create a fastapi and migrate to sqlite to enable streaming from server instance to networked devices. 
+create a FastAPI and migrate to SQlite to enable streaming from server instance to networked devices. 
 
 ## Acknowledgments
 
