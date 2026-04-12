@@ -4,7 +4,7 @@ Pillow
 sv-ttk
 rsa
 pystray
-
+tkinterdnd2
 # Optional: Windows-specific volume control dependencies
 # (Safe to ignore or remove if running exclusively on Mac/Linux)
 pycaw

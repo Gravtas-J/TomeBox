@@ -13,8 +13,9 @@ import csv
 import sv_ttk
 try:
     import audible
+    from tkinterdnd2 import DND_FILES, TkinterDnD
 except ImportError:
-    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow")
+    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow tkinterdnd2")
     exit()
 import pystray
 from pystray import MenuItem as item
@@ -25,6 +26,8 @@ class AAXManagerApp:
         self.root = root
         self.root.title("TomeBox")
         self.root.geometry("1550x850")
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind('<<Drop>>', self.on_file_drop)
 
         self.enforce_single_instance()
         
@@ -113,6 +116,61 @@ class AAXManagerApp:
         self.settings["stats"] = stats
         self.save_settings()
         self.check_achievements()
+
+    def on_file_drop(self, event):
+        # Tkinter safely parses the dropped string into a tuple of file paths
+        files = self.root.tk.splitlist(event.data)
+        
+        # Start a background thread so FFprobe doesn't freeze the app if you drop 50 files
+        threading.Thread(target=self.process_dropped_files_worker, args=(files,), daemon=True).start()
+
+    def process_dropped_files_worker(self, files):
+        valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
+        added_count = 0
+        
+        for filepath in files:
+            if not os.path.exists(filepath): continue
+            
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext not in valid_exts: continue
+            
+            filename = os.path.basename(filepath)
+            title = filename
+            authors = "Unknown Author"
+            format_clean = ext.replace(".", "").upper()
+            
+            self.root.after(0, lambda f=filename: self.dl_status_var.set(f"Importing: {f}"))
+            
+            if format_clean in ["M4B", "MP3"]:
+                try:
+                    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
+                    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                    data = json.loads(res.stdout)
+                    tags = data.get("format", {}).get("tags", {})
+
+                    if "title" in tags: title = tags["title"]
+                    if "artist" in tags: authors = tags["artist"]
+                    elif "album_artist" in tags: authors = tags["album_artist"]
+                except Exception as e:
+                    self.write_log(f"Failed to read tags for {filename}: {e}")
+
+            self.local_library[filepath] = {
+                "title": title, 
+                "format": format_clean, 
+                "path": filepath, 
+                "authors": authors,
+                "owner": self.active_profile
+            }
+            added_count += 1
+            
+        if added_count > 0:
+            self.save_local_db()
+            self.root.after(0, self.refresh_library_ui)
+            self.root.after(0, lambda c=added_count: self.dl_status_var.set(f"Successfully imported {c} files."))
+        else:
+            self.root.after(0, lambda: self.dl_status_var.set("No valid audiobooks found in drop."))
+            
+        self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
 
     def check_achievements(self):
         stats = self.settings.get("stats", {})
@@ -705,28 +763,28 @@ class AAXManagerApp:
         
         # Playback Controls
         self.context_menu.add_command(label="▶ Play", command=self.master_play)
-        self.context_menu.add_command(label="⏸ Pause", command=self.pause_audio)
+        # self.context_menu.add_command(label="⏸ Pause", command=self.pause_audio)
         self.context_menu.add_separator()
         
         # Chapter Navigation
-        self.context_menu.add_command(label="⏮ Prev Chapter", command=self.prev_chapter)
-        self.context_menu.add_command(label="⏭ Next Chapter", command=self.next_chapter)
-        self.context_menu.add_separator()
+        # self.context_menu.add_command(label="⏮ Prev Chapter", command=self.prev_chapter)
+        # self.context_menu.add_command(label="⏭ Next Chapter", command=self.next_chapter)
+        # self.context_menu.add_separator()
         
-        # Seeking
-        self.context_menu.add_command(label="⏪ -30s", command=lambda: self.seek_audio(-30))
-        self.context_menu.add_command(label="⏩ +30s", command=lambda: self.seek_audio(30))
-        self.context_menu.add_separator()
+        # # Seeking
+        # self.context_menu.add_command(label="⏪ -30s", command=lambda: self.seek_audio(-30))
+        # self.context_menu.add_command(label="⏩ +30s", command=lambda: self.seek_audio(30))
+        # self.context_menu.add_separator()
 
         # File Operations 
         self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
         self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
         self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
-        self.context_menu.add_separator()
-        
+        # self.context_menu.add_separator()
+
         # Tools
-        self.context_menu.add_command(label="🔖 Bookmark", command=self.add_bookmark)
-        self.context_menu.add_command(label="📑 Chapters", command=self.open_chapter_window)
+        # self.context_menu.add_command(label="🔖 Bookmark", command=self.add_bookmark)
+        # self.context_menu.add_command(label="📑 Chapters", command=self.open_chapter_window)
 
     def build_bookmarks_components(self, parent):
         self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
@@ -3559,7 +3617,7 @@ class AAXManagerApp:
             self.info_label.config(text=f"Playing:\n{title}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = TkinterDnD.Tk()
     app = AAXManagerApp(root)
     
     current_engine = app.settings.get("ui_mode", "modern")
