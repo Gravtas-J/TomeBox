@@ -2071,14 +2071,17 @@ class AAXManagerApp:
 
         self._current_filtered_data = filtered_rows
 
-        is_completely_empty = (not self.cloud_items) and (not self.local_library)
+        is_completely_empty = (not getattr(self, 'cloud_items', [])) and (not self.local_library)
 
         if is_completely_empty:
             self.library_tree.pack_forget()
             self.grid_canvas.pack_forget()
-            self.empty_state_frame.pack(fill="both", expand=True)
+            if hasattr(self, 'empty_state_frame'):
+                self.empty_state_frame.pack(fill="both", expand=True)
         else:
-            self.empty_state_frame.pack_forget()
+            if hasattr(self, 'empty_state_frame'):
+                self.empty_state_frame.pack_forget()
+                
             if self.current_view_mode == "list":
                 self.grid_canvas.pack_forget()
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
@@ -2088,12 +2091,6 @@ class AAXManagerApp:
                 self.library_tree.pack_forget()
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
                 self.draw_grid_view()
-
-        if self.current_view_mode == "list":
-            for row in filtered_rows:
-                self.library_tree.insert("", "end", values=row)
-        else:
-            self.draw_grid_view()
     
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
