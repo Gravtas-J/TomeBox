@@ -80,3 +80,14 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 * `settings.json`: Stores application preferences, UI themes, and your achievement/stats database.
 * `aax_manager.log`: Output log for debugging and process tracking.
 * `.tomebox_version`: Local hash file used by the auto-updater.
+
+## Acknowledgments
+
+TomeBox stands on the shoulders of giants. This project is only possible thanks to the incredible work of the open-source community. A massive thank you to the maintainers and contributors of the following projects:
+
+* **[FFmpeg & FFplay](https://ffmpeg.org/):** The absolute powerhouse driving the DRM decryption, audio conversion, chapter extraction, and playback engine.
+* **[audible (Python Library)](https://github.com/mkb79/audible):** The brilliant unofficial Audible API wrapper by mkb79 that makes cloud synchronization, authentication, and metadata scraping possible.
+* **[sv-ttk (Sun Valley TTK)](https://github.com/rdbende/Sun-Valley-ttk-theme):** For bringing a beautiful, modern, Windows-native dark theme to classic Tkinter.
+* **[Pillow (PIL)](https://python-pillow.org/):** Handling the high-res cover art processing, resizing, and rendering for the visual grid.
+* **[Pycaw](https://github.com/AndreMiras/pycaw):** Enabling the native OS-level volume mixer hooks on Windows.
+* **[Gyan.dev](https://www.gyan.dev/ffmpeg/builds/):** For providing the highly available, pre-compiled portable FFmpeg Windows binaries used in the automated installer.
