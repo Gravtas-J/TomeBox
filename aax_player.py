@@ -89,7 +89,7 @@ class AAXManagerApp:
         self.setup_tray_icon()
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
-
+        threading.Thread(target=self.cleanup_orphaned_files, daemon=True).start()
         threading.Thread(target=self.db_monitor_worker, daemon=True).start()
 
         if "stats" not in self.settings:
@@ -111,6 +111,48 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
     
+    def cleanup_orphaned_files(self):
+        save_dir = self.settings.get("download_dir", "")
+        if not save_dir or not os.path.exists(save_dir):
+            return
+
+        self.write_log("Running startup scan for orphaned/partial files...")
+        cleaned_count = 0
+
+        try:
+            for filename in os.listdir(save_dir):
+                filepath = os.path.join(save_dir, filename)
+                
+                # Skip directories
+                if not os.path.isfile(filepath):
+                    continue
+
+                # Target 1: Explicitly temporary/partial files
+                if filename.endswith(".part") or "_temp." in filename:
+                    try:
+                        os.remove(filepath)
+                        self.write_log(f"Deleted partial file: {filename}")
+                        cleaned_count += 1
+                    except OSError:
+                        pass
+                    continue
+
+                # Target 2: Corrupted 0-byte media files
+                if filename.lower().endswith(('.aax', '.aaxc', '.m4b', '.mp3')):
+                    try:
+                        if os.path.getsize(filepath) == 0:
+                            os.remove(filepath)
+                            self.write_log(f"Deleted empty 0-byte file: {filename}")
+                            cleaned_count += 1
+                    except OSError:
+                        pass
+
+            if cleaned_count > 0:
+                self.write_log(f"Cleanup complete. Removed {cleaned_count} orphaned files.")
+                
+        except Exception as e:
+            self.write_log(f"Failed to run orphaned file cleanup: {e}")
+
     def toggle_system_sleep(self, prevent_sleep=True):
         if os.name != 'nt':
             return # Only implemented for Windows
@@ -682,18 +724,6 @@ class AAXManagerApp:
         self.empty_state_img_label = ttk.Label(self.empty_state_frame)
         self.empty_state_img_label.pack(pady=(80, 20))
         
-        # try:
-        #     img_path = os.path.join(self.base_dir, "assets", "Inital_Load.png")
-        #     if os.path.exists(img_path):
-        #         from PIL import Image, ImageTk
-        #         empty_img = Image.open(img_path)
-        #         empty_img.thumbnail((350, 350), Image.Resampling.LANCZOS)
-        #         self.empty_photo = ImageTk.PhotoImage(empty_img)
-        #         self.empty_state_img_label.config(image=self.empty_photo)
-        #     else:
-        #         self.empty_state_img_label.config(text="[ Missing Asset: assets/Inital_Load.png ]", font=("Segoe UI", 12))
-        # except Exception as e:
-        #     self.write_log(f"Failed to load empty state image: {e}")
 
         empty_text = (
             "Your library is completely empty.\n\n"
@@ -2761,23 +2791,25 @@ class AAXManagerApp:
             self.write_log(f"Extracted AAXC Key: {a_key}")
 
             safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
             filepath = os.path.join(save_dir, f"{safe_title}.aaxc")
+            temp_filepath = f"{filepath}.part"
             
-            self.write_log(f"Downloading AAXC file to: {filepath}")
+            self.write_log(f"Downloading AAXC file to: {temp_filepath}")
             
             headers = {"User-Agent": "Audible/6.6.1 (iPhone; iOS 15.5; Scale/3.00)"}
             import urllib.request
             req = urllib.request.Request(download_link, headers=headers)
             
-            with urllib.request.urlopen(req) as response, open(filepath, 'wb') as out_file:
+            with urllib.request.urlopen(req) as response, open(temp_filepath, 'wb') as out_file:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 last_log_percent = 0
                 last_ui_percent = -1 
                 
                 while True:
-                    if is_queue and asin in self.active_downloads:
-                        if self.active_downloads[asin]["cancel_flag"]:
+                    if is_queue and asin in getattr(self, 'active_downloads', {}):
+                        if self.active_downloads[asin].get("cancel_flag"):
                             raise Exception("Download canceled by user.")
 
                     chunk = response.read(32768)
@@ -2792,7 +2824,7 @@ class AAXManagerApp:
                         if percent_int > last_ui_percent:
                             self.root.after(0, self.dl_progress_var.set, percent_float)
                             
-                            if is_queue and asin in self.active_downloads:
+                            if is_queue and asin in getattr(self, 'active_downloads', {}):
                                 self.root.after(0, self.active_downloads[asin]["prog_var"].set, percent_float)
                                 self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{percent_int}%")
                                 
@@ -2802,7 +2834,10 @@ class AAXManagerApp:
                             self.write_log(f"Download Progress: {percent_int}%")
                             last_log_percent = percent_int
             
-            if is_queue and asin in self.active_downloads:
+            # Stream complete, finalize the file
+            os.replace(temp_filepath, filepath)
+
+            if is_queue and asin in getattr(self, 'active_downloads', {}):
                 self.root.after(0, self.active_downloads[asin]["status_var"].set, "Complete")
             
             self.write_log(f"Download complete: {safe_title}.aaxc")
@@ -2832,10 +2867,11 @@ class AAXManagerApp:
             error_trace = traceback.format_exc()
             error_msg = str(e)
             
-            if "canceled by user" in error_msg.lower() and filepath and os.path.exists(filepath):
+            # Clean up the .part file on failure/cancellation
+            if os.path.exists(temp_filepath):
                 try:
-                    os.remove(filepath)
-                    self.write_log(f"Cleaned up partial file: {filepath}")
+                    os.remove(temp_filepath)
+                    self.write_log(f"Cleaned up partial file: {temp_filepath}")
                 except OSError as cleanup_error:
                     self.write_log(f"Failed to clean up partial file: {cleanup_error}")
             else:
@@ -3395,6 +3431,10 @@ class AAXManagerApp:
 
         cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
 
+        # Define the temporary part file
+        base, ext = os.path.splitext(output_path)
+        temp_out_path = f"{base}_temp{ext}"
+
         cmd = ["ffmpeg", "-y"]
         if input_path.endswith(".aax") or input_path.endswith(".aaxc"):
             cmd.extend(self.get_drm_flags(input_path))
@@ -3423,7 +3463,8 @@ class AAXManagerApp:
                 "-metadata", f"album_artist={authors}"
             ])
 
-        cmd.extend(["-progress", "pipe:1", output_path])
+        # Target the .part file instead of the final .m4b
+        cmd.extend(["-progress", "pipe:1", temp_out_path])
         
         try:
             process = subprocess.Popen(
@@ -3457,6 +3498,9 @@ class AAXManagerApp:
             if process.returncode != 0:
                 raise Exception(f"FFmpeg process failed with exit code {process.returncode}.")
             
+            # Atomic rename upon absolute success
+            os.replace(temp_out_path, output_path)
+            
             self.local_library[output_path] = {
                 "title": title, 
                 "format": "M4B", 
@@ -3469,12 +3513,17 @@ class AAXManagerApp:
             self.root.after(0, self.refresh_library_ui)
             
         except Exception as e:
+            # Clean up the immediate failure, fallback to startup cleaner if this misses
+            if os.path.exists(temp_out_path):
+                try:
+                    os.remove(temp_out_path)
+                except OSError:
+                    pass
             self.write_log(f"Conversion Error: {e}")
             self.root.after(0, lambda err=str(e): messagebox.showerror("Conversion Failed", err))
         finally:
             self.root.after(0, lambda: self.dl_status_var.set(f"Ready: {os.path.basename(input_path)}"))
             self.root.after(0, lambda: self.dl_progress_var.set(0))
-
 
     def split_worker(self, input_path, output_dir):
         try:
