@@ -3,6 +3,8 @@ import sys
 import subprocess
 import shutil
 import platform
+import urllib.request
+import zipfile
 from pathlib import Path
 
 # --- Configuration ---
@@ -13,17 +15,49 @@ REQUIREMENTS_FILE = "requirements.txt"
 def print_step(msg):
     print(f"\n[+] {msg}")
 
-def check_ffmpeg():
-    print_step("Checking for system dependencies...")
-    ffmpeg_installed = shutil.which("ffmpeg") is not None
-    ffplay_installed = shutil.which("ffplay") is not None
+def download_portable_ffmpeg(base_dir):
+    print_step("Setting up Portable FFmpeg...")
     
-    if ffmpeg_installed and ffplay_installed:
-        print("  -> FFmpeg and FFplay found in system PATH.")
-    else:
-        print("  -> WARNING: FFmpeg or FFplay is missing from system PATH.")
-        print("  -> TomeBox will install, but conversion and playback will not function until FFmpeg is installed.")
-        print("  -> Download it here: https://ffmpeg.org/download.html")
+    if platform.system() != "Windows":
+        print("  -> Non-Windows OS detected. Please install FFmpeg via your package manager (e.g., apt, brew).")
+        return
+
+    # We need ffprobe for chapter extraction, alongside ffmpeg and ffplay
+    exe_names = ["ffmpeg.exe", "ffplay.exe", "ffprobe.exe"]
+    missing = [exe for exe in exe_names if not (base_dir / exe).exists()]
+    
+    if not missing:
+        print("  -> Portable FFmpeg binaries already present in the TomeBox folder. Skipping download.")
+        return
+        
+    print(f"  -> Missing binaries: {', '.join(missing)}")
+    print("  -> Downloading official FFmpeg release (this may take a minute depending on your connection)...")
+    
+    # Official, highly-available Windows build repository
+    url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    zip_path = base_dir / "ffmpeg_temp.zip"
+    
+    try:
+        urllib.request.urlretrieve(url, zip_path)
+        
+        print("  -> Download complete. Extracting binaries...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            for file_info in zip_ref.infolist():
+                # Locate the specific .exe files hidden inside the nested folders
+                if file_info.filename.endswith(tuple(exe_names)):
+                    # Trick the zip extractor into dropping the file directly into the base directory 
+                    # instead of recreating the nested folder structure
+                    file_info.filename = os.path.basename(file_info.filename)
+                    zip_ref.extract(file_info, base_dir)
+                    print(f"     Extracted: {file_info.filename}")
+        
+    except Exception as e:
+        print(f"  -> ERROR downloading or extracting FFmpeg: {e}")
+        print("  -> You may need to download it manually from https://ffmpeg.org/download.html")
+    finally:
+        if zip_path.exists():
+            os.remove(zip_path)
+            print("  -> Cleaned up temporary zip file.")
 
 def install_requirements():
     print_step("Installing Python requirements...")
@@ -45,14 +79,20 @@ def create_startup_scripts(base_dir, py_exec):
     with open(bat_path, "w") as f:
         f.write("@echo off\n")
         f.write(f"cd /d \"{base_dir}\"\n")
+        # --- NEW: Run updater before main script ---
+        f.write(f"\"{py_exec}\" updater.py\n")
+        # ------------------------------------------
         f.write(f"\"{py_exec}\" {MAIN_SCRIPT}\n")
     print(f"  -> Created {bat_path.name}")
 
     # 2. Unix Shell Script (Linux / macOS)
     sh_path = base_dir / "start_tomebox.sh"
-    with open(sh_path, "w") as f:
+    with open(sh_path, "w", newline='\n') as f:
         f.write("#!/bin/bash\n")
         f.write(f"cd \"{base_dir}\"\n")
+        # --- NEW: Run updater before main script ---
+        f.write(f"\"{py_exec}\" updater.py\n")
+        # ------------------------------------------
         f.write(f"\"{py_exec}\" {MAIN_SCRIPT}\n")
     
     # Make shell script executable
@@ -82,7 +122,7 @@ oLink.TargetPath = "{pyw_exec}"
 oLink.Arguments = "{MAIN_SCRIPT}"
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
-oLink.IconLocation = "{base_dir}\\tomebox.ico"
+oLink.IconLocation = "{base_dir}\\tomebox.png"
 oLink.Save
 """
         with open(vbs_path, "w") as f:
@@ -122,8 +162,8 @@ def main():
     base_dir = Path(__file__).parent.resolve()
     py_exec = sys.executable
 
-    # 1. Dependency Check
-    check_ffmpeg()
+    # 1. Download Portable FFmpeg (Replaces the manual warning check)
+    download_portable_ffmpeg(base_dir)
     
     # 2. Install Requirements
     install_requirements()

@@ -8,11 +8,7 @@ Migrating the frontend away from Tkinter.
 ## Multi-Provider Support: 
 Abstract the Audible API logic to support adding modules for Soundbooth Theater or other DRM-free stores.
 
-## Audiobookshelf Integration: 
-Add an API hook to push/pull playback timestamps from a user's self-hosted Audiobookshelf server, bridging the desktop-to-mobile gap.
-
 # Phase 3: Community and Gamification
-Achievement System (Stats tracker and popup notifications)
 
 Hidden Interactions (Keystroke easter eggs)
 

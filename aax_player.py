@@ -2530,16 +2530,6 @@ class AAXManagerApp:
             if not is_queue:
                 self.root.after(0, lambda: self.dl_status_var.set("Idle"))
                 self.root.after(0, lambda: self.dl_progress_var.set(0))
-        self.local_library[filepath] = {
-                "title": title, 
-                "format": "AAXC", 
-                "path": filepath,
-                "audible_key": a_key,
-                "audible_iv": a_iv,
-                "asin": asin  # NEW: Save ASIN for metadata fetching
-            }
-        self.save_local_db()
-        self.root.after(0, self.refresh_library_ui)
         
     def seek_audio(self, offset):
         if not self.file_path or not self.chapters:
