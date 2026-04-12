@@ -10,7 +10,7 @@ import requests
 import io
 from PIL import Image, ImageTk
 import csv
-import sv_ttk
+# import sv_ttk
 try:
     import audible
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -436,33 +436,33 @@ class AAXManagerApp:
         self.appearance_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
         self.file_menu.add_cascade(label="Appearance", menu=self.appearance_menu)
         
-        if not hasattr(self, 'ui_mode_var'):
-            self.ui_mode_var = tk.StringVar(value=self.settings.get("ui_mode", "modern"))
+        # if not hasattr(self, 'ui_mode_var'):
+        #     self.ui_mode_var = tk.StringVar(value=self.settings.get("ui_mode", "modern"))
             
-        self.appearance_menu.add_radiobutton(label="Classic Engine (ttk)", variable=self.ui_mode_var, value="classic", command=self.on_ui_mode_change)
-        self.appearance_menu.add_radiobutton(label="Modern Engine (sv_ttk)", variable=self.ui_mode_var, value="modern", command=self.on_ui_mode_change)
+        # self.appearance_menu.add_radiobutton(label="Classic Engine (ttk)", variable=self.ui_mode_var, value="classic", command=self.on_ui_mode_change)
+        # self.appearance_menu.add_radiobutton(label="Modern Engine (sv_ttk)", variable=self.ui_mode_var, value="modern", command=self.on_ui_mode_change)
 
-        self.appearance_menu.add_separator()
+        # self.appearance_menu.add_separator()
 
         # Classic Palettes Sub-Menu
-        self.palette_menu = tk.Menu(self.appearance_menu, tearoff=0, relief="flat")
-        self.appearance_menu.add_cascade(label="Classic Engine Palettes", menu=self.palette_menu)
+        # self.palette_menu = tk.Menu(self.appearance_menu, tearoff=0, relief="flat")
+        # self.appearance_menu.add_cascade(label="Colour Palettes", menu=self.palette_menu)
         
         self.palette_var = tk.StringVar(value=self.settings.get("classic_palette", "light"))
         
-        self.palette_menu.add_radiobutton(label="Light Default", variable=self.palette_var, value="light", command=lambda: self.apply_classic_palette("light"))
-        self.palette_menu.add_radiobutton(label="Dark Charcoal", variable=self.palette_var, value="dark", command=lambda: self.apply_classic_palette("dark"))
-        self.palette_menu.add_radiobutton(label="Terminal Green", variable=self.palette_var, value="terminal", command=lambda: self.apply_classic_palette("terminal"))
-        self.palette_menu.add_separator()
-        self.palette_menu.add_radiobutton(label="Solarized Dark", variable=self.palette_var, value="solarized_dark", command=lambda: self.apply_classic_palette("solarized_dark"))
-        self.palette_menu.add_radiobutton(label="Solarized Light", variable=self.palette_var, value="solarized_light", command=lambda: self.apply_classic_palette("solarized_light"))
-        self.palette_menu.add_separator()
-        self.palette_menu.add_radiobutton(label="Dracula", variable=self.palette_var, value="dracula", command=lambda: self.apply_classic_palette("dracula"))
-        self.palette_menu.add_radiobutton(label="Nordic Slate", variable=self.palette_var, value="nord", command=lambda: self.apply_classic_palette("nord"))
-        self.palette_menu.add_radiobutton(label="Cyberpunk", variable=self.palette_var, value="cyberpunk", command=lambda: self.apply_classic_palette("cyberpunk"))
-
+        self.appearance_menu.add_radiobutton(label="Light Default", variable=self.palette_var, value="light", command=lambda: self.apply_classic_palette("light"))
+        self.appearance_menu.add_radiobutton(label="Dark Charcoal", variable=self.palette_var, value="dark", command=lambda: self.apply_classic_palette("dark"))
+        self.appearance_menu.add_radiobutton(label="Terminal Green", variable=self.palette_var, value="terminal", command=lambda: self.apply_classic_palette("terminal"))
         self.appearance_menu.add_separator()
-        self.appearance_menu.add_command(label="Toggle Light / Dark Mode", command=self.toggle_custom_colors)
+        self.appearance_menu.add_radiobutton(label="Solarized Dark", variable=self.palette_var, value="solarized_dark", command=lambda: self.apply_classic_palette("solarized_dark"))
+        self.appearance_menu.add_radiobutton(label="Solarized Light", variable=self.palette_var, value="solarized_light", command=lambda: self.apply_classic_palette("solarized_light"))
+        self.appearance_menu.add_separator()
+        self.appearance_menu.add_radiobutton(label="Dracula", variable=self.palette_var, value="dracula", command=lambda: self.apply_classic_palette("dracula"))
+        self.appearance_menu.add_radiobutton(label="Nordic Slate", variable=self.palette_var, value="nord", command=lambda: self.apply_classic_palette("nord"))
+        self.appearance_menu.add_radiobutton(label="Cyberpunk", variable=self.palette_var, value="cyberpunk", command=lambda: self.apply_classic_palette("cyberpunk"))
+
+        # self.appearance_menu.add_separator()
+        # self.appearance_menu.add_command(label="Toggle Light / Dark Mode", command=self.toggle_custom_colors)
 
         self.file_menu.add_separator()
 
@@ -1444,33 +1444,33 @@ class AAXManagerApp:
 
     
 
-    def toggle_custom_colors(self):
-        if self.settings.get("ui_mode", "modern") == "classic":
-            messagebox.showinfo(
-                "Engine Restriction", 
-                "Light / Dark mode toggling is a feature of the Modern Engine (sv_ttk).\n\n"
-                "To use this feature, please select the Modern Engine from the Appearance menu and restart TomeBox."
-            )
-            return
+    # def toggle_custom_colors(self):
+    #     if self.settings.get("ui_mode", "modern") == "classic":
+    #         messagebox.showinfo(
+    #             "Engine Restriction", 
+    #             "Light / Dark mode toggling is a feature of the Modern Engine (sv_ttk).\n\n"
+    #             "To use this feature, please select the Modern Engine from the Appearance menu and restart TomeBox."
+    #         )
+    #         return
 
-        import sv_ttk
+    #     import sv_ttk
 
-        current_theme = sv_ttk.get_theme()
+    #     current_theme = sv_ttk.get_theme()
         
-        if current_theme == "dark":
-            sv_ttk.set_theme("light")
-            bg_color = "#f3f3f3" 
-        else:
-            sv_ttk.set_theme("dark")
-            bg_color = "#1c1c1c" 
+    #     if current_theme == "dark":
+    #         sv_ttk.set_theme("light")
+    #         bg_color = "#f3f3f3" 
+    #     else:
+    #         sv_ttk.set_theme("dark")
+    #         bg_color = "#1c1c1c" 
 
-        if hasattr(self, 'queue_canvas'):
-            self.queue_canvas.config(bg=bg_color)
-            self.queue_inner.config(bg=bg_color)
+    #     if hasattr(self, 'queue_canvas'):
+    #         self.queue_canvas.config(bg=bg_color)
+    #         self.queue_inner.config(bg=bg_color)
 
-            for data in getattr(self, 'active_downloads', {}).values():
-                if "frame" in data:
-                    data["frame"].config(bg=bg_color)
+    #         for data in getattr(self, 'active_downloads', {}).values():
+    #             if "frame" in data:
+    #                 data["frame"].config(bg=bg_color)
 
     def apply_classic_palette(self, palette_name):
         style = ttk.Style()
@@ -1512,7 +1512,7 @@ class AAXManagerApp:
         style.map("TMenubutton", background=[("active", colors["select"])], foreground=[("active", "#ffffff")])
         
         if hasattr(self, 'file_menu'):
-            menu_list = [self.file_menu, self.appearance_menu, self.palette_menu, self.export_menu, self.help_menu]
+            menu_list = [self.file_menu, self.appearance_menu, self.export_menu, self.help_menu]
             for m in menu_list:
                 m.config(
                     bg=colors["entry"], 
@@ -1578,12 +1578,12 @@ class AAXManagerApp:
         self.settings["classic_palette"] = palette_name
         self.save_settings()
 
-    def on_ui_mode_change(self, *args):
-        new_mode = self.ui_mode_var.get()
-        self.settings["ui_mode"] = new_mode
-        self.save_settings()
+    # def on_ui_mode_change(self, *args):
+    #     new_mode = self.ui_mode_var.get()
+    #     self.settings["ui_mode"] = new_mode
+    #     self.save_settings()
             
-        messagebox.showinfo("Restart Required", f"UI engine set to '{new_mode}'.\n\nPlease restart TomeBox to apply the changes.")
+    #     messagebox.showinfo("Restart Required", f"UI engine set to '{new_mode}'.\n\nPlease restart TomeBox to apply the changes.")
 
     def download_all_prompt(self):
         save_dir = getattr(self, 'default_download_dir', '')
@@ -3620,13 +3620,14 @@ if __name__ == "__main__":
     root = TkinterDnD.Tk()
     app = AAXManagerApp(root)
     
-    current_engine = app.settings.get("ui_mode", "modern")
+    # current_engine = app.settings.get("ui_mode", "modern")
     
-    if current_engine == "modern":
-        import sv_ttk
-        sv_ttk.set_theme("dark") 
-    else:
-        saved_palette = app.settings.get("classic_palette", "light")
-        app.apply_classic_palette(saved_palette)
-        
+    # if current_engine == "modern":
+    #     import sv_ttk
+    #     sv_ttk.set_theme("dark") 
+    # else:
+    #     saved_palette = app.settings.get("classic_palette", "light")
+    #     app.apply_classic_palette(saved_palette)
+    saved_palette = app.settings.get("classic_palette", "dark")
+    app.apply_classic_palette(saved_palette)
     root.mainloop()
