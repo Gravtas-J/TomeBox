@@ -352,18 +352,13 @@ class AAXManagerApp:
             time.sleep(2)
 
     def build_menu_bar(self):
-        # 1. Strip out any native OS menu
         self.root.config(menu="")
-
-        # 2. Build the fake menu bar frame at the very top of the app
         self.menu_frame = ttk.Frame(self.root)
         self.menu_frame.pack(side=tk.TOP, fill="x")
 
-        # 3. Create the 'File' button
         self.file_menubutton = ttk.Menubutton(self.menu_frame, text="File")
         self.file_menubutton.pack(side=tk.LEFT, padx=5, pady=2)
 
-        # 4. Attach a standard tk.Menu to the button (dropdowns CAN be colored!)
         self.file_menu = tk.Menu(self.file_menubutton, tearoff=0, relief="flat")
         self.file_menubutton.config(menu=self.file_menu)
         
@@ -456,7 +451,7 @@ class AAXManagerApp:
         self.auth_window.title("Authentication & Profiles")
         self.auth_window.geometry("380x320")
         self.auth_window.resizable(False, False)
-        self.auth_window.transient(self.root) # Keeps it on top of the main window
+        self.auth_window.transient(self.root) 
         
         # Apply current theme background
         style = ttk.Style()
@@ -575,7 +570,7 @@ class AAXManagerApp:
         self.library_tree.bind("<<TreeviewSelect>>", self.on_item_select)
         
         self.current_view_mode = "list"
-        self.grid_images_ref = [] # Prevents Python garbage collection from deleting the images
+        self.grid_images_ref = [] 
         
         
         self.grid_canvas = tk.Canvas(tree_frame, bg="#1c1c1c", highlightthickness=0)
@@ -588,9 +583,9 @@ class AAXManagerApp:
         
         
         self.grid_canvas.bind("<Configure>", self.on_canvas_resize)
-        self.root.bind_all("<MouseWheel>", self._on_grid_scroll)  # Windows / Mac
-        self.root.bind_all("<Button-4>", self._on_grid_scroll)    # Linux Scroll Up
-        self.root.bind_all("<Button-5>", self._on_grid_scroll)    # Linux Scroll Down
+        self.root.bind_all("<MouseWheel>", self._on_grid_scroll)  
+        self.root.bind_all("<Button-4>", self._on_grid_scroll)    
+        self.root.bind_all("<Button-5>", self._on_grid_scroll)    
         for col in self.library_tree["columns"]:
             self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
             
@@ -664,7 +659,6 @@ class AAXManagerApp:
         self.playback_speed = tk.StringVar(value="1.0x")
         speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
         
-        # Upgraded to Combobox
         speed_menu = ttk.Combobox(controls_frame, textvariable=self.playback_speed, values=speed_options, state="readonly", width=5)
         speed_menu.bind("<<ComboboxSelected>>", self.on_speed_change)
         speed_menu.pack(side=tk.LEFT, padx=10)
@@ -705,7 +699,6 @@ class AAXManagerApp:
 
     def build_bookmarks_components(self, parent):
         self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
-        # Use expand=True so it takes up the remaining vertical space in the side panel
         self.bm_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
         scroll = ttk.Scrollbar(self.bm_frame)
@@ -729,7 +722,6 @@ class AAXManagerApp:
         ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
 
     def start_convert_all_thread(self):
-        # Scan local library for unconverted DRM files
         to_convert = [path for path, data in self.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
         
         if not to_convert:
@@ -742,7 +734,6 @@ class AAXManagerApp:
         threading.Thread(target=self.convert_all_worker, args=(to_convert,), daemon=True).start()
 
     def on_item_select(self, event=None):
-        # 1. Identify what was clicked based on the active view
         if getattr(self, 'current_view_mode', 'list') == "list":
             selected = self.library_tree.focus()
             if not selected: return
@@ -757,21 +748,17 @@ class AAXManagerApp:
             authors = item['values'][1]
             asin = item['values'][4]
 
-        # 2. Update the Side Panel Text
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)
         
-        # 3. Resolve the Cover Art Path
         cover_path = None
         covers_dir = getattr(self, 'covers_dir', self.base_dir)
         
-        # Try finding the high-res Audnexus/Audible cover first
         if asin and asin != "Unknown":
             test_path = os.path.join(covers_dir, f"{asin}.jpg")
             if os.path.exists(test_path):
                 cover_path = test_path
                 
-        # If no ASIN cover, check if it's a local file with extracted ID3 art
         if not cover_path:
             for p, d in getattr(self, 'local_library', {}).items():
                 if d.get("title") == title:
@@ -780,7 +767,6 @@ class AAXManagerApp:
                         cover_path = test_local
                     break
 
-        # 4. Paint the Image to the UI
         if cover_path and hasattr(self, 'cover_label'):
             try:
                 from PIL import Image, ImageTk
@@ -788,7 +774,7 @@ class AAXManagerApp:
                 img.thumbnail((400, 400), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 self.cover_label.config(image=photo, text="")
-                self.current_cover_photo = photo # Prevent garbage collection
+                self.current_cover_photo = photo 
             except Exception:
                 self.cover_label.config(image="", text=title)
         elif hasattr(self, 'cover_label'):
@@ -804,13 +790,11 @@ class AAXManagerApp:
             data = self.local_library.get(filepath, {})
             title = data.get("title", "Unknown")
             
-            # Update UI progress
             self.root.after(0, lambda i=idx, t=title: self.dl_status_var.set(f"Converting {i}/{total}: {t}"))
             
             base_name, _ = os.path.splitext(filepath)
             out_path = f"{base_name}.m4b"
             
-            # Fetch the dynamic or static DRM keys using your existing method
             drm_flags = self.get_drm_flags(filepath)
             
             cmd = ["ffmpeg", "-y"] + drm_flags + ["-i", filepath, "-c", "copy", out_path]
@@ -819,18 +803,15 @@ class AAXManagerApp:
                 res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
                 if res.returncode == 0:
-                    # Update the database to point to the new M4B file
                     self.local_library[out_path] = data
                     self.local_library[out_path]["format"] = "M4B"
                     self.local_library[out_path]["path"] = out_path
                     
-                    # Delete the original encrypted file and its old database entry
                     if os.path.exists(filepath):
                         os.remove(filepath)
                     del self.local_library[filepath]
                     self.save_local_db()
                     
-                    # Force a UI refresh so the list updates live as files finish
                     self.root.after(0, self.refresh_library_ui)
                 else:
                     self.write_log(f"Batch Convert Error on {title}: {res.stderr}")
@@ -842,7 +823,6 @@ class AAXManagerApp:
         self.root.after(0, lambda: messagebox.showinfo("Convert All", "Batch conversion complete!"))
 
     def manage_shelves_prompt(self):
-        # Grab the selected item based on the active view
         if getattr(self, 'current_view_mode', 'list') == "list":
             selected = self.library_tree.focus()
             if not selected:
@@ -862,15 +842,12 @@ class AAXManagerApp:
             messagebox.showerror("Error", "Cannot tag an orphaned file without an ASIN. Please scrape its metadata first.")
             return
 
-        # Ensure the global shelf database exists
         if "shelves_db" not in self.settings:
             self.settings["shelves_db"] = {}
 
-        # Load existing tags
         current_shelves = self.settings["shelves_db"].get(asin, [])
         current_shelves_str = ", ".join(current_shelves)
 
-        # Prompt user
         new_shelves_str = simpledialog.askstring(
             "Manage Shelves", 
             f"Enter custom shelves for:\n{title}\n\n(Separate multiple tags with commas)", 
@@ -878,7 +855,6 @@ class AAXManagerApp:
         )
 
         if new_shelves_str is not None:
-            # Clean up spacing and save
             tags = [t.strip() for t in new_shelves_str.split(",") if t.strip()]
             self.settings["shelves_db"][asin] = tags
             self.save_settings()
@@ -887,7 +863,6 @@ class AAXManagerApp:
 
 
     def open_achievements_window(self):
-        # Prevent opening multiple instances
         if hasattr(self, 'ach_window') and self.ach_window.winfo_exists():
             self.ach_window.lift()
             self.ach_window.focus_set()
@@ -897,8 +872,7 @@ class AAXManagerApp:
         self.ach_window.title("My Achievements")
         self.ach_window.geometry("450x600")
         self.ach_window.transient(self.root)
-        
-        # Pull colors dynamically to match the current theme
+
         style = ttk.Style()
         bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
         fg_color = style.lookup("TLabel", "foreground") or "#000000"
@@ -908,8 +882,7 @@ class AAXManagerApp:
         main_frame.pack(fill="both", expand=True)
         
         ttk.Label(main_frame, text="TomeBox Achievements", font=("Segoe UI", 16, "bold")).pack(pady=(0, 15))
-        
-        # Create a scrollable canvas for the achievement cards
+
         canvas = tk.Canvas(main_frame, bg=bg_color, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = tk.Frame(canvas, bg=bg_color)
@@ -920,8 +893,7 @@ class AAXManagerApp:
         )
         
         canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        
-        # Make the inner frame expand to the width of the canvas
+
         canvas.bind(
             "<Configure>",
             lambda e: canvas.itemconfig(canvas_window, width=e.width)
@@ -930,16 +902,13 @@ class AAXManagerApp:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        
-        # Fetch current progress
+
         stats = self.settings.get("stats", {})
         unlocked = stats.get("unlocked_achievements", [])
-        
-        # Build the cards
+
         for ach_id, data in getattr(self, 'achievements', {}).items():
             is_unlocked = ach_id in unlocked
-            
-            # Styling based on unlock status
+
             border_color = "#4a90e2" if is_unlocked else "#555555"
             status_icon = "🏆" if is_unlocked else "🔒"
             text_color = fg_color if is_unlocked else "#888888"
@@ -954,8 +923,7 @@ class AAXManagerApp:
             tk.Label(header_frame, text=data["title"], font=("Segoe UI", 12, "bold"), fg=text_color, bg=bg_color).pack(side=tk.LEFT)
             
             tk.Label(card, text=data["desc"], font=("Segoe UI", 9), fg=text_color, bg=bg_color).pack(anchor="w", padx=45, pady=(0, 5))
-            
-            # Calculate and display progress
+
             current_val = stats.get(data["type"], 0)
             threshold = data["threshold"]
             
@@ -971,14 +939,12 @@ class AAXManagerApp:
             if is_unlocked:
                 prog_text = "Completed!"
                 percent = 100
-                
-            # Progress text and bar
+
             bottom_frame = tk.Frame(card, bg=bg_color)
             bottom_frame.pack(fill="x", padx=10, pady=(0, 10))
             
             tk.Label(bottom_frame, text=prog_text, font=("Segoe UI", 8, "italic"), fg=text_color, bg=bg_color).pack(side=tk.RIGHT)
-            
-            # Custom drawn progress bar so we can control the color easily
+
             bar_bg = "#333333" if is_unlocked else "#d3d3d3"
             bar_canvas = tk.Canvas(bottom_frame, height=6, bg=bar_bg, highlightthickness=0)
             bar_canvas.pack(side=tk.LEFT, fill="x", expand=True, padx=(35, 10))
@@ -992,7 +958,7 @@ class AAXManagerApp:
         self.save_settings()
 
     def on_filter_change(self):
-        # Restart the player seamlessly if it's currently playing
+
         if getattr(self, 'is_playing', False):
             self.pause_audio()
             self.is_paused = False
@@ -1044,8 +1010,7 @@ class AAXManagerApp:
         local_data = self.local_library.get(filepath, {})
         title = local_data.get("title", "")
         asin = local_data.get("asin")
-        
-        # 1. Resolve ASIN and Authors from the existing cloud cache
+
         authors = ""
         for item in getattr(self, 'cloud_items', []):
             if item.get("title") == title or item.get("asin") == asin:
@@ -1061,7 +1026,6 @@ class AAXManagerApp:
 
         cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
 
-        # 2. Check Local Disk Cache First
         if os.path.exists(cover_path):
             try:
                 img = Image.open(cover_path)
@@ -1074,11 +1038,10 @@ class AAXManagerApp:
                     self.author_label.config(text=authors)
                 
                 self.root.after(0, update_ui_local)
-                return  # Exit early, no API calls needed!
+                return 
             except Exception as e:
                 self.write_log(f"Failed to load local cover cache, falling back to API: {e}")
 
-        # 3. Fallback to Audible API if not cached
         if not getattr(self, 'auth_object', None):
             return
             
@@ -1096,8 +1059,7 @@ class AAXManagerApp:
             
             if image_url:
                 img_data = requests.get(image_url).content
-                
-                # Save it locally for next time
+
                 with open(cover_path, "wb") as f:
                     f.write(img_data)
                     
@@ -1133,8 +1095,7 @@ class AAXManagerApp:
         if os.path.exists(self.local_db_path):
             with open(self.local_db_path, "r") as f:
                 raw_db = json.load(f)
-                
-            # Dictionary comprehension to keep only files that actually exist
+
             cleaned_db = {path: data for path, data in raw_db.items() if os.path.exists(path)}
             return cleaned_db
         return {}
@@ -1142,7 +1103,7 @@ class AAXManagerApp:
     def save_local_db(self):
         with open(self.local_db_path, "w") as f:
             json.dump(self.local_library, f, indent=4)
-        # Update the tracker so the monitor ignores this specific change
+
         self.last_db_mtime = os.path.getmtime(self.local_db_path)
     
     def load_cloud_cache(self):
@@ -1167,7 +1128,6 @@ class AAXManagerApp:
             self.default_download_dir = directory
             self.settings["download_dir"] = directory
             self.save_settings()
-            # Let the user know it was saved since the visual label is gone
             messagebox.showinfo("Folder Saved", f"Default download folder updated to:\n{directory}")
 
     def download_title_prompt(self):
@@ -1291,7 +1251,6 @@ class AAXManagerApp:
     
 
     def toggle_custom_colors(self):
-        # NEW: Safeguard against hijacking classic mode
         if self.settings.get("ui_mode", "modern") == "classic":
             messagebox.showinfo(
                 "Engine Restriction", 
@@ -1301,23 +1260,20 @@ class AAXManagerApp:
             return
 
         import sv_ttk
-        
-        # sv_ttk.get_theme() returns either "dark" or "light"
+
         current_theme = sv_ttk.get_theme()
         
         if current_theme == "dark":
             sv_ttk.set_theme("light")
-            bg_color = "#f3f3f3" # Standard light gray background
+            bg_color = "#f3f3f3" 
         else:
             sv_ttk.set_theme("dark")
-            bg_color = "#1c1c1c" # Standard dark gray background
-            
-        # Update the standard tk elements that sv_ttk misses
+            bg_color = "#1c1c1c" 
+
         if hasattr(self, 'queue_canvas'):
             self.queue_canvas.config(bg=bg_color)
             self.queue_inner.config(bg=bg_color)
-            
-            # Update any active download rows in the queue
+
             for data in getattr(self, 'active_downloads', {}).values():
                 if "frame" in data:
                     data["frame"].config(bg=bg_color)
@@ -1325,8 +1281,7 @@ class AAXManagerApp:
     def apply_classic_palette(self, palette_name):
         style = ttk.Style()
         style.theme_use("clam")
-        
-        # Expanded Theme Roster
+
         palettes = {
             "light": {"bg": "#f0f0f0", "fg": "#000000", "entry": "#ffffff", "select": "#0078D7", "btn": "#e1e1e1", "border": "#cccccc"},
             "dark": {"bg": "#2b2b2b", "fg": "#e0e0e0", "entry": "#1e1e1e", "select": "#4a90e2", "btn": "#3c3c3c", "border": "#555555"},
@@ -1359,12 +1314,9 @@ class AAXManagerApp:
         style.configure("TButton", background=colors["btn"], borderwidth=1, bordercolor=colors["border"])
         style.map("TButton", background=[("active", colors["select"])])
         
-        # --- NEW MENU BAR STYLES ---
-        # Make the top bar button blend into the background
         style.configure("TMenubutton", background=colors["bg"], foreground=colors["fg"], borderwidth=0, arrowcolor=colors["bg"])
         style.map("TMenubutton", background=[("active", colors["select"])], foreground=[("active", "#ffffff")])
         
-        # Manually paint the legacy tk.Menu dropdowns
         if hasattr(self, 'file_menu'):
             menu_list = [self.file_menu, self.appearance_menu, self.palette_menu, self.export_menu, self.help_menu]
             for m in menu_list:
@@ -1391,9 +1343,7 @@ class AAXManagerApp:
         def repaint_combobox_dropdowns(widget):
             if isinstance(widget, ttk.Combobox):
                 try:
-                    # Ask the Tcl engine for the exact hidden popdown window path
                     popdown = widget.tk.eval(f'ttk::combobox::PopdownWindow {widget._w}')
-                    # The legacy listbox is specifically located at {popdown}.f.l
                     widget.tk.call(f'{popdown}.f.l', 'configure',
                                    '-background', colors["entry"],
                                    '-foreground', colors["fg"],
@@ -1465,7 +1415,6 @@ class AAXManagerApp:
     
 
     def toggle_library_view(self):
-        # Hunt down the existing vertical scrollbar in the UI
         scroll_bar = None
         for child in self.library_tree.master.winfo_children():
             if isinstance(child, ttk.Scrollbar) and str(child.cget("orient")) == "vertical":
@@ -1478,7 +1427,6 @@ class AAXManagerApp:
             self.library_tree.pack_forget()
             self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
             
-            # HOT-SWAP: Connect scrollbar to Canvas
             if scroll_bar:
                 scroll_bar.config(command=self.grid_canvas.yview)
                 self.grid_canvas.config(yscrollcommand=scroll_bar.set)
@@ -1488,7 +1436,6 @@ class AAXManagerApp:
             self.grid_canvas.pack_forget()
             self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
             
-            # HOT-SWAP: Connect scrollbar back to Treeview
             if scroll_bar:
                 scroll_bar.config(command=self.library_tree.yview)
                 self.library_tree.config(yscrollcommand=scroll_bar.set)
@@ -1496,14 +1443,12 @@ class AAXManagerApp:
         self.refresh_library_ui()
 
     def on_canvas_resize(self, event):
-        # Force the inner frame to exactly match the canvas width. 
-        # This completely disables the horizontal panning glitch.
+
         if hasattr(self, 'grid_window_id'):
             self.grid_canvas.itemconfig(self.grid_window_id, width=event.width)
         if getattr(self, '_last_canvas_width', None) == event.width:
             return
         self._last_canvas_width = event.width
-        # Throttle the redraw so it doesn't crash while actively dragging the window edge
         if hasattr(self, '_resize_timer'):
             self.root.after_cancel(self._resize_timer)
         self._resize_timer = self.root.after(200, self.draw_grid_view)
@@ -1511,27 +1456,23 @@ class AAXManagerApp:
     def draw_grid_view(self):
         if getattr(self, 'current_view_mode', 'list') != "grid": return
         
-        # Clear the current grid
         for widget in self.grid_inner.winfo_children():
             widget.destroy()
 
-        # Initialize a RAM cache for images to fix the load lag
         if not hasattr(self, 'cover_cache'):
             self.cover_cache = {}
 
-        # Dynamically fetch the app's current theme colors
         style = ttk.Style()
         default_bg = style.lookup("TFrame", "background") or "#f0f0f0"
         default_fg = style.lookup("TLabel", "foreground") or "#000000"
-        select_bg = "#4a90e2" # Bright blue for the outer border
+        select_bg = "#4a90e2" 
 
         self.grid_canvas.config(bg=default_bg)
         self.grid_inner.config(bg=default_bg)
         
         canvas_width = self.grid_canvas.winfo_width()
         cols = max(1, canvas_width // 190)
-        
-        # Perfectly center the active columns
+
         for i in range(20): 
             self.grid_inner.columnconfigure(i, weight=0)
         for i in range(cols):
@@ -1539,20 +1480,13 @@ class AAXManagerApp:
         
         for idx, row_data in enumerate(getattr(self, '_current_filtered_data', [])):
             title, authors, series_str, duration_str, asin, status = row_data
-            
-            # --- THE MATTE FRAME TRICK ---
-            # 1. The Outer Frame (Handles the highlight color)
+
             outer_card = tk.Frame(self.grid_inner, bg=default_bg)
             outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
-            
-            # 2. The Inner Card (Holds the content, stays locked at 170x240)
+
             card = tk.Frame(outer_card, bg=default_bg, width=170, height=240, bd=0, highlightthickness=0)
             card.pack_propagate(False) 
-            # The 2px padding creates the "border" effect when outer_card changes color
             card.pack(padx=2, pady=2) 
-            # -----------------------------
-            
-            # Load from RAM Cache first to eliminate disk/CPU bottleneck
             img_obj = None
             if asin in self.cover_cache:
                 img_obj = self.cover_cache[asin]
@@ -1563,7 +1497,7 @@ class AAXManagerApp:
                         img = Image.open(cover_path)
                         img.thumbnail((150, 150))
                         img_obj = ImageTk.PhotoImage(img)
-                        self.cover_cache[asin] = img_obj # Save it to RAM for next time
+                        self.cover_cache[asin] = img_obj 
                     except: pass
                 
             img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0)
@@ -1574,14 +1508,12 @@ class AAXManagerApp:
             text_label.pack(pady=(5, 0))
             
             def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
-                # Deselect ONLY the previously selected outer card
+
                 if hasattr(self, '_last_selected_card_frame') and self._last_selected_card_frame.winfo_exists():
                     self._last_selected_card_frame.config(bg=default_bg)
                 
-                # Highlight the NEW selected outer card
                 oc.config(bg=select_bg)
                 
-                # Save this outer card so we know to deselect it next time
                 self._last_selected_card_frame = oc 
                 self._selected_grid_item = {'values': [t, "", "", "", a, s]}
                 self.on_item_select()
@@ -1589,7 +1521,6 @@ class AAXManagerApp:
                 on_card_click(e, oc, t, a, s)
                 self.master_play()
 
-            # Bind clicks to everything so it triggers no matter where you click
             outer_card.bind("<Button-1>", on_card_click)
             outer_card.bind("<Double-1>", on_card_double_click)
             card.bind("<Button-1>", on_card_click)
@@ -1598,8 +1529,7 @@ class AAXManagerApp:
             img_label.bind("<Double-1>", on_card_double_click)
             text_label.bind("<Button-1>", on_card_click)
             text_label.bind("<Double-1>", on_card_double_click)
-            
-        # Force Tkinter to recalculate heights and lock the vertical scroll region
+
         self.grid_inner.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
@@ -1624,8 +1554,7 @@ class AAXManagerApp:
                     data["status_var"].set("Canceling...")
             
             self.write_log("User initiated Cancel All Downloads.")
-            
-            # NEW: Clear the global download UI when canceling
+
             self.dl_status_var.set("Downloads Canceled")
             self.dl_progress_var.set(0)
             self.root.after(3000, lambda: self.dl_status_var.set("Idle"))
@@ -1641,7 +1570,6 @@ class AAXManagerApp:
             self.main_paned.forget(self.queue_frame)
 
     def add_queue_ui_row(self, asin, title):
-        # We use a standard tk.Frame here to accept the sv_ttk background color
         row_frame = tk.Frame(self.queue_inner, bg="#1c1c1c")
         row_frame.pack(fill="x", pady=2, padx=5)
 
@@ -1690,21 +1618,17 @@ class AAXManagerApp:
         if not save_dir:
             save_dir = getattr(self, 'base_dir', os.getcwd())
 
-        # 1. Open the UI Drawer
         self.root.after(0, lambda: self.toggle_queue_drawer(True))
-        
-        # 2. Build all the UI rows immediately so you can see the queue
+
         for item in missing_items:
             asin = item.get("asin")
             title = item.get("title", "Unknown")
             self.root.after(0, self.add_queue_ui_row, asin, title)
-        
-        # 3. Process the downloads
+
         for idx, item in enumerate(missing_items):
             title = item.get("title", "Unknown")
             asin = item.get("asin")
-            
-            # If the user clicked the "X" cancel button before we got to this book, skip it
+
             if asin in self.active_downloads and self.active_downloads[asin]["cancel_flag"]:
                 self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
                 continue
@@ -1742,12 +1666,10 @@ class AAXManagerApp:
         local_titles = {data["title"]: data for path, data in self.local_library.items()}
         cloud_titles = []
         rows_to_insert = []
-        
-        # --- NEW: Database to dynamically track all used tags ---
+
         all_unique_shelves = set()
         shelves_db = self.settings.get("shelves_db", {})
 
-        # 1. Compile Cloud Data
         for item in getattr(self, 'cloud_items', []):
             title = item.get("title", "Unknown")
             cloud_titles.append(title)
@@ -1772,11 +1694,9 @@ class AAXManagerApp:
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             
             rows_to_insert.append((title, authors, series_str, duration_str, asin, status))
-            
-            # Record any tags attached to this book
+
             all_unique_shelves.update(shelves_db.get(asin, []))
 
-        # 2. Compile Orphaned Local Data (Files not found in the cloud cache)
         for path, data in self.local_library.items():
             if data["title"] not in cloud_titles:
                 
@@ -1795,45 +1715,36 @@ class AAXManagerApp:
                 rows_to_insert.append((data["title"], loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
-        # --- NEW: Dynamically update the dropdown options ---
         shelf_list = ["All Shelves"] + sorted(list(all_unique_shelves))
         if hasattr(self, 'shelf_combo'):
             self.shelf_combo.config(values=shelf_list)
-            # If the user deleted a tag they were filtering by, reset to 'All'
             if current_shelf not in shelf_list:
                 self.shelf_filter_var.set("All Shelves")
                 current_shelf = "All Shelves"
 
-        # 3. Apply Filters and Insert
         filtered_rows = []
         for row in rows_to_insert:
             title, authors, series_str, duration_str, asin, status = row
 
-            # Status Filter Check
             if current_filter == "Downloaded" and "Downloaded" not in status:
                 continue
             if current_filter == "Cloud Only" and status != "Cloud Only":
                 continue
 
-            # --- NEW: Shelf Filter Check ---
             if current_shelf != "All Shelves":
                 book_shelves = shelves_db.get(asin, [])
                 if current_shelf not in book_shelves:
                     continue
 
-            # Search Query Check (Searches Title, Author, and Series simultaneously)
             if search_query:
                 search_target = f"{title} {authors} {series_str}".lower()
                 if search_query not in search_target:
                     continue
 
-            # If it passes all checks, queue it for drawing
             filtered_rows.append(row)
 
-        # Store the filtered data so the Grid view can access it
         self._current_filtered_data = filtered_rows
-        
-        # Route the rendering based on the active view
+
         if self.current_view_mode == "list":
             for row in filtered_rows:
                 self.library_tree.insert("", "end", values=row)
@@ -1856,7 +1767,6 @@ class AAXManagerApp:
         title = item['values'][0]
         asin = item['values'][4]
 
-        # Check if we have it locally
         local_path = None
         for path, data in self.local_library.items():
             if data["title"] == title:
@@ -1890,7 +1800,6 @@ class AAXManagerApp:
                         return
 
                 self.write_log(f"Queuing download for {title}. Post-action: {action_type}")
-                # Pass the intended action to the worker
                 threading.Thread(target=self.download_worker, args=(asin, title, save_dir, False, action_type), daemon=True).start()
 
     def start_scrape_thread(self, filepath):
@@ -1955,7 +1864,6 @@ class AAXManagerApp:
 
     def apply_scraped_metadata(self, filepath, asin):
         try:
-            # 1. Fetch JSON data directly from Audible (ADDED series and product_attrs)
             client = audible.Client(auth=self.auth_object)
             resp = client.get(f"1.0/catalog/products/{asin}", response_groups="product_desc,product_attrs,contributors,media,series")
             product = resp.get("product", {})
@@ -1976,8 +1884,7 @@ class AAXManagerApp:
             series_str = ", ".join(series_list) if series_list else ""
             
             duration_min = product.get("runtime_length_min", 0)
-            
-            # 2. Fetch High-Res Cover Image
+
             cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
             images = product.get("product_images", {})
             img_url = images.get("500") or images.get("252")
@@ -1987,8 +1894,7 @@ class AAXManagerApp:
                 if img_resp.status_code == 200:
                     with open(cover_path, "wb") as f:
                         f.write(img_resp.content)
-            
-            # 3. Update TomeBox Local Library Database
+
             data = self.local_library.get(filepath, {})
             data["title"] = title
             data["authors"] = authors
@@ -1997,8 +1903,7 @@ class AAXManagerApp:
             data["asin"] = asin
             self.local_library[filepath] = data
             self.save_local_db()
-            
-            # 4. Embed directly into the local file
+
             ext = data.get("format", "").upper()
             if ext in ["M4B", "MP3"]:
                 self.root.after(0, lambda: self.dl_status_var.set("Embedding tags..."))
@@ -2034,8 +1939,7 @@ class AAXManagerApp:
 
             self.root.after(0, lambda: messagebox.showinfo("Success", "Metadata scraped and applied!"))
             self.root.after(0, self.refresh_library_ui)
-            
-            # Force the UI to immediately reflect the new artwork and title
+
             if getattr(self, 'file_path', "") == filepath:
                 self.root.after(0, lambda: self.load_specific_file(filepath))
                 
@@ -2069,18 +1973,15 @@ class AAXManagerApp:
 
     def setup_ui(self):
         self.build_menu_bar() # NEW
-        
-        # Configure root grid for dynamic resizing
+
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # Main vertical container
         main_vbox = tk.Frame(self.root)
         main_vbox.pack(fill="both", expand=True, padx=10, pady=10)
         main_vbox.rowconfigure(0, weight=1)
         main_vbox.columnconfigure(0, weight=1)
 
-        # Top section: Split pane for Library (Left) and Settings/File (Right)
         top_split = ttk.PanedWindow(main_vbox, orient=tk.HORIZONTAL)
         top_split.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
 
@@ -2090,7 +1991,6 @@ class AAXManagerApp:
         top_split.add(left_panel, weight=3)
         top_split.add(right_panel, weight=1)
 
-        # Bottom section: Full width player
         bottom_panel = tk.Frame(main_vbox)
         bottom_panel.grid(row=1, column=0, sticky="ew")
 
@@ -2393,8 +2293,7 @@ class AAXManagerApp:
         try:
             self.write_log("Querying Audible Library API...")
             client = audible.Client(auth=self.auth_object)
-            
-            # ADDED 'media' to response_groups to get cover art URLs in bulk
+
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
             
             self.cloud_items = response.get("items", [])
@@ -2404,8 +2303,7 @@ class AAXManagerApp:
 
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-            
-            # Trigger the silent background cover downloader
+
             threading.Thread(target=self.background_cover_downloader, daemon=True).start()
             
         except Exception as e:
@@ -2424,7 +2322,7 @@ class AAXManagerApp:
                 
             cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
             if os.path.exists(cover_path):
-                continue # Skip if we already have it
+                continue 
                 
             images = item.get("product_images", {})
             img_url = images.get("500") or images.get("252")
@@ -2440,7 +2338,7 @@ class AAXManagerApp:
                     
         if covers_downloaded > 0:
             self.write_log(f"Downloaded {covers_downloaded} new covers.")
-            # If the user is currently looking at the grid view, refresh it to show the new covers
+
             if getattr(self, 'current_view_mode', 'list') == 'grid':
                 self.root.after(0, self.refresh_library_ui)
 
@@ -2498,8 +2396,7 @@ class AAXManagerApp:
             client = audible.Client(auth=self.auth_object)
             
             self.write_log(f"Requesting AAXC license and download link for ASIN: {asin}")
-            
-            # 1. Request the license and download URL
+
             body = {
                 "drm_type": "Adrm", 
                 "consumption_type": "Download"
@@ -2508,8 +2405,7 @@ class AAXManagerApp:
                 f"1.0/content/{asin}/licenserequest",
                 body=body
             )
-            
-            # 2. Extract Download URL using a recursive search
+
             def find_url(d):
                 if isinstance(d, dict):
                     if "offline_url" in d: return d["offline_url"]
@@ -2527,11 +2423,9 @@ class AAXManagerApp:
             if not download_link:
                 raise Exception("Could not find the offline download URL in the API response.")
 
-            # 3. Decrypt the Voucher using the audible library's built-in tool
             self.write_log("Decrypting AAXC voucher...")
             decrypted_voucher = decrypt_voucher_from_licenserequest(self.auth_object, lic_resp)
-            
-            # Extract the raw hex strings
+
             def find_key_iv(d):
                 k, i = None, None
                 if isinstance(d, dict):
@@ -2551,8 +2445,7 @@ class AAXManagerApp:
                 raise Exception("Decrypted voucher did not contain 'key' and 'iv'.")
 
             self.write_log(f"Extracted AAXC Key: {a_key}")
-            
-            # 4. Download the AAXC file
+
             safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
             filepath = os.path.join(save_dir, f"{safe_title}.aaxc")
             
@@ -2566,7 +2459,7 @@ class AAXManagerApp:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 last_log_percent = 0
-                last_ui_percent = -1 # Track this so we don't spam the UI
+                last_ui_percent = -1 
                 
                 while True:
                     if is_queue and asin in self.active_downloads:
@@ -2581,8 +2474,7 @@ class AAXManagerApp:
                         downloaded += len(chunk)
                         percent_float = (downloaded / total_size) * 100
                         percent_int = int(percent_float)
-                        
-                        # Only push updates to the UI if the integer percentage has actually changed
+
                         if percent_int > last_ui_percent:
                             self.root.after(0, self.dl_progress_var.set, percent_float)
                             
@@ -2591,8 +2483,7 @@ class AAXManagerApp:
                                 self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{percent_int}%")
                                 
                             last_ui_percent = percent_int
-                        
-                        # Log updates every 10%
+
                         if percent_int >= last_log_percent + 10:
                             self.write_log(f"Download Progress: {percent_int}%")
                             last_log_percent = percent_int
@@ -2608,7 +2499,7 @@ class AAXManagerApp:
                 "path": filepath,
                 "audible_key": a_key,
                 "audible_iv": a_iv,
-                "asin": asin  # NEW: Save ASIN for metadata fetching
+                "asin": asin  
             }
             self.save_local_db()
             self.root.after(0, self.refresh_library_ui)
@@ -2627,7 +2518,6 @@ class AAXManagerApp:
             error_trace = traceback.format_exc()
             error_msg = str(e)
             
-            # NEW: Clean up partial files if the user canceled
             if "canceled by user" in error_msg.lower() and filepath and os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -2635,7 +2525,6 @@ class AAXManagerApp:
                 except OSError as cleanup_error:
                     self.write_log(f"Failed to clean up partial file: {cleanup_error}")
             else:
-                # Only log the full error trace if it was a genuine crash, not a normal cancel
                 self.write_log(f"DOWNLOAD ERROR:\n{error_trace}")
 
             if not is_queue:
@@ -2681,19 +2570,15 @@ class AAXManagerApp:
         data = self.local_library.get(filepath, {})
         a_key = data.get("audible_key")
         a_iv = data.get("audible_iv")
-        
-        # 1. AAXC Files (Already Multi-User Safe)
+
         if a_key and a_iv:
             return ["-audible_key", a_key, "-audible_iv", a_iv]
-            
-        # 2. Legacy AAX Files (Requires dynamic activation bytes)
+
         owner = data.get("owner", self.active_profile)
         
-        # If the active profile owns it, use the bytes already loaded in memory
         if owner == self.active_profile and self.auth_bytes.get().strip():
             return ["-activation_bytes", self.auth_bytes.get().strip()]
             
-        # If someone else owns it, quietly load their auth file to decrypt it
         owner_auth_path = os.path.join(self.base_dir, f"auth_{owner}.json")
         if os.path.exists(owner_auth_path):
             try:
@@ -2704,7 +2589,6 @@ class AAXManagerApp:
             except Exception as e:
                 self.write_log(f"Failed to dynamically load auth for {owner}: {e}")
         
-        # Ultimate fallback
         return ["-activation_bytes", self.auth_bytes.get().strip()]
             
     def add_local_file(self):
@@ -2717,15 +2601,13 @@ class AAXManagerApp:
         title = filename
         authors = "Unknown Author"
         
-        # --- Read embedded ID3 tags using ffprobe ---
         if ext in ["M4B", "MP3"]:
             try:
                 cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
                 res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 data = json.loads(res.stdout)
                 tags = data.get("format", {}).get("tags", {})
-                
-                # Extract Title and Artist (M4B usually uses 'artist' or 'album_artist')
+
                 if "title" in tags: 
                     title = tags["title"]
                 if "artist" in tags: 
@@ -2735,7 +2617,6 @@ class AAXManagerApp:
                     
             except Exception as e:
                 self.write_log(f"Failed to read tags for {filename}: {e}")
-        # -------------------------------------------------
 
         self.local_library[filepath] = {
             "title": title, 
@@ -2757,7 +2638,6 @@ class AAXManagerApp:
         item = self.library_tree.item(selected)
         title = item['values'][0]
         
-        # Look up the local path by title
         local_path = None
         for path, data in self.local_library.items():
             if data["title"] == title:
@@ -2777,7 +2657,6 @@ class AAXManagerApp:
             self.sleep_menu_popup.destroy()
             return
 
-        # 1. Create a borderless popup tool window
         self.sleep_menu_popup = tk.Toplevel(self.root)
         self.sleep_menu_popup.wm_overrideredirect(True)
         
@@ -2785,7 +2664,6 @@ class AAXManagerApp:
         bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
         self.sleep_menu_popup.config(bg=bg_color, highlightbackground="#4a90e2", highlightthickness=1)
 
-        # 2. Position it directly underneath the Sleep button
         x = self.timer_btn.winfo_rootx()
         y = self.timer_btn.winfo_rooty() + self.timer_btn.winfo_height() + 2
         self.sleep_menu_popup.geometry(f"+{x}+{y}")
@@ -2801,7 +2679,6 @@ class AAXManagerApp:
 
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
 
-        # 4. Add Custom Minute Input
         custom_time_frame = ttk.Frame(inner)
         custom_time_frame.pack(fill="x", pady=2)
         ttk.Label(custom_time_frame, text="Mins:").pack(side=tk.LEFT)
@@ -2809,7 +2686,6 @@ class AAXManagerApp:
         ttk.Entry(custom_time_frame, textvariable=min_var, width=5).pack(side=tk.LEFT, padx=(5, 2))
         ttk.Button(custom_time_frame, text="Set", width=4, command=lambda: self.set_sleep_timer("time", min_var.get())).pack(side=tk.LEFT)
 
-        # 5. Add Custom Chapter Input
         custom_chap_frame = ttk.Frame(inner)
         custom_chap_frame.pack(fill="x", pady=2)
         ttk.Label(custom_chap_frame, text="Chaps:").pack(side=tk.LEFT)
@@ -2819,17 +2695,14 @@ class AAXManagerApp:
 
         self.sleep_menu_popup.update_idletasks()
         popup_height = self.sleep_menu_popup.winfo_reqheight()
-        
-        # Get button coordinates
+
         x = self.timer_btn.winfo_rootx()
         y = self.timer_btn.winfo_rooty()
-        
-        # Position it directly ABOVE the button instead of below it
+
         self.sleep_menu_popup.geometry(f"+{x}+{y - popup_height - 2}")
 
-        # 6. Auto-close if the user clicks away
         def on_focus_out(event):
-            # Check if the new focus is completely outside the popup
+
             if self.sleep_menu_popup.focus_get() is None or not str(self.sleep_menu_popup.focus_get()).startswith(str(self.sleep_menu_popup)):
                 self.sleep_menu_popup.destroy()
                 
@@ -2837,7 +2710,7 @@ class AAXManagerApp:
         self.sleep_menu_popup.focus_set()
 
     def set_sleep_timer(self, mode, value=0):
-        # Clear existing timer loops
+
         if hasattr(self, '_sleep_timer_id'):
             self.root.after_cancel(self._sleep_timer_id)
             
@@ -2902,7 +2775,6 @@ class AAXManagerApp:
                 if self.debug_mode.get():
                     self.write_log(f"Volume change error: {e}")
         else:
-            # Mac and Linux Fallback: Restart the process with the new volume
             if self.is_playing:
                 self.pause_audio()
                 self.is_paused = False
@@ -2916,8 +2788,7 @@ class AAXManagerApp:
     
     def on_sleep_timer_set(self, event=None):
         val = self.sleep_time_var.get()
-        
-        # Clear any existing background timer to prevent duplicate countdowns
+
         if hasattr(self, '_sleep_timer_id'):
             self.root.after_cancel(self._sleep_timer_id)
             
@@ -2929,27 +2800,22 @@ class AAXManagerApp:
         mins = int(val.replace("m", ""))
         self.sleep_timer_seconds = mins * 60
         self.sleep_timer_active = True
-        
-        # self.format_time already exists in your code for the playback bar
+
         self.timer_countdown_var.set(self.format_time(self.sleep_timer_seconds))
         
         self.sleep_timer_tick()
 
         
     def _on_grid_scroll(self, event):
-        # Don't do anything if we are in list mode
         if getattr(self, 'current_view_mode', 'list') != "grid":
             return
-            
-        # Ensure the mouse is actually hovering over the grid canvas or its children
+
         if str(self.grid_canvas) not in str(event.widget):
             return
 
-        # Safely get the scroll direction (handles both Windows/Mac and Linux X11 inputs)
         num = getattr(event, 'num', 0)
         delta = getattr(event, 'delta', 0)
 
-        # Scroll Up
         if num == 4 or delta > 0:
             self.grid_canvas.yview_scroll(-1, "units")
         # Scroll Down
@@ -2957,11 +2823,9 @@ class AAXManagerApp:
             self.grid_canvas.yview_scroll(1, "units")
 
     def master_play(self, event=None):
-        # 1. Grab the selected item based on the current view mode
         if getattr(self, 'current_view_mode', 'list') == "list":
             selected = self.library_tree.focus()
             if not selected:
-                # Fallback: if nothing is selected but a file is loaded, resume it
                 if self.file_path:
                     self.play_chapter()
                 else:
@@ -2978,14 +2842,12 @@ class AAXManagerApp:
             item = self._selected_grid_item
 
         title = item['values'][0]
-        status = item['values'][5]  # Index 5 is the status string
+        status = item['values'][5]  
 
-        # 2. Check if the file is actually local
         if "Downloaded" not in status:
             messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")
             return
 
-        # 3. Find the matching filepath in the local database
         local_path = None
         for path, data in self.local_library.items():
             if data.get("title") == title:
@@ -2996,15 +2858,12 @@ class AAXManagerApp:
             messagebox.showerror("File Error", "The audio file could not be found on your disk.")
             return
 
-        # 4. If it's already the active file, just resume playback
         if self.file_path == local_path:
             self.play_chapter()
             return
 
-        # 5. If it's a new file, stop the current audio and route through your action handler
         self.stop_audio()
-        
-        # Run metadata fetch in a background thread so it doesn't freeze the UI
+
         threading.Thread(target=self.fetch_metadata_worker, args=(local_path,), daemon=True).start()
         
         self.handle_action_on_selected("play")
@@ -3063,29 +2922,25 @@ class AAXManagerApp:
             messagebox.showwarning("No File", "Please load an audiobook first.")
             return
 
-        # Pause playback while typing so you don't miss anything
         was_playing = self.is_playing
         if was_playing:
             self.pause_audio()
 
         current_time = getattr(self, 'current_play_time', 0.0)
         chapter_idx = getattr(self, 'current_chapter_idx', 0)
-        
-        # Calculate absolute time for sorting purposes
+
         abs_time = current_time
         if self.chapters:
             abs_time += float(self.chapters[chapter_idx].get("start_time", 0))
 
         note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.format_time(current_time)}:")
-        
-        # Resume automatically
+
         if was_playing:
             self.is_paused = False
             self.resume_playback()
             
         if not note: return 
-        
-        # Save to database
+
         local_data = self.local_library.get(self.file_path, {})
         if "bookmarks" not in local_data:
             local_data["bookmarks"] = []
@@ -3110,22 +2965,19 @@ class AAXManagerApp:
         
         local_data = self.local_library.get(self.file_path, {})
         bookmarks = local_data.get("bookmarks", [])
-        
-        # Sort sequentially by timestamp
+
         bookmarks.sort(key=lambda x: x.get("abs_time", 0))
         
         for idx, bm in enumerate(bookmarks):
             chap_idx = bm.get("chapter_idx", 0)
-            
-            # Pull the actual chapter title if available
+
             chap_title = f"Chapter {chap_idx + 1}"
             if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
                 chap_title = self.chapters[chap_idx].get("tags", {}).get("title", chap_title)
                 
             t_str = self.format_time(bm.get("time", 0))
             display_time = f"{chap_title} - {t_str}"
-            
-            # Save the list index as the iid so we can look it up on double-click
+
             self.bm_tree.insert("", "end", iid=str(idx), values=(display_time, bm.get("note", "")))
 
     def jump_to_bookmark(self, event=None):
@@ -3190,7 +3042,6 @@ class AAXManagerApp:
             output_dir = filedialog.askdirectory(title=f"Select Folder to Extract Chapters For: {os.path.basename(self.file_path)}")
             if not output_dir: 
                 return
-            # CHANGED
             self.dl_status_var.set("Splitting into chapters... Please wait.")
             threading.Thread(target=self.split_worker, args=(self.file_path, output_dir), daemon=True).start()
         else:
@@ -3201,17 +3052,14 @@ class AAXManagerApp:
             )
             if not output_file: 
                 return
-            # CHANGED
             self.dl_status_var.set("Converting to .m4b... Please wait.")
             threading.Thread(target=self.convert_worker, args=(self.file_path, output_file), daemon=True).start()
 
     def convert_worker(self, input_path, output_path):
         total_duration = 0
-        # 1. Try to get duration from memory first
         if hasattr(self, 'chapters') and self.chapters:
             total_duration = float(self.chapters[-1].get("end_time", 0))
             
-        # 2. Fallback to probing the file directly
         if total_duration == 0:
             try:
                 probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
@@ -3220,12 +3068,10 @@ class AAXManagerApp:
             except Exception:
                 total_duration = 0
 
-        # --- NEW: Gather Metadata and Cover Art ---
         original_data = self.local_library.get(input_path, {})
         title = original_data.get("title", os.path.basename(output_path))
         asin = original_data.get("asin", "")
 
-        # Resolve Authors from the cloud cache
         authors = ""
         for item in getattr(self, 'cloud_items', []):
             if item.get("asin") == asin:
@@ -3234,16 +3080,13 @@ class AAXManagerApp:
                 break
 
         cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-        # ------------------------------------------
 
-        # Build the base conversion command
         cmd = ["ffmpeg", "-y"]
         if input_path.endswith(".aax") or input_path.endswith(".aaxc"):
             cmd.extend(self.get_drm_flags(input_path))
             
         cmd.extend(["-i", input_path])
-        
-        # --- NEW: Inject the Cover Art Stream ---
+
         if asin and os.path.exists(cover_path):
             cmd.extend([
                 "-i", cover_path, 
@@ -3252,9 +3095,7 @@ class AAXManagerApp:
                 "-c:v", "mjpeg", 
                 "-disposition:v", "attached_pic"
             ])
-        # ----------------------------------------
-        
-        # --- NEW: Inject the Text Metadata Tags ---
+
         cmd.extend([
             "-c:a", "copy",
             "-metadata", f"title={title}",
@@ -3267,23 +3108,20 @@ class AAXManagerApp:
                 "-metadata", f"artist={authors}",
                 "-metadata", f"album_artist={authors}"
             ])
-        # ------------------------------------------
 
-        # Explicitly ask for machine-readable progress on the main output pipe
         cmd.extend(["-progress", "pipe:1", output_path])
         
         try:
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, # Throw all the diagnostic spam into a black hole so it never freezes
+                stderr=subprocess.DEVNULL, 
                 universal_newlines=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
 
             last_percent = -1
 
-            # Read the clean, uninterrupted progress stream
             for line in process.stdout:
                 line = line.strip()
                 if line.startswith("out_time_us=") and total_duration > 0:
@@ -3291,12 +3129,9 @@ class AAXManagerApp:
                         val = line.split("=")[1]
                         if val != "N/A":
                             out_time_us = int(val)
-                            # Ignore negative timestamps that sometimes happen at the start
                             if out_time_us > 0:
                                 current_time_sec = out_time_us / 1000000.0
                                 percent = int((current_time_sec / total_duration) * 100)
-                                
-                                # Throttle the UI to only update on whole numbers
                                 if percent > last_percent and percent <= 100:
                                     self.root.after(0, self.dl_progress_var.set, percent)
                                     last_percent = percent
@@ -3343,7 +3178,6 @@ class AAXManagerApp:
             os.makedirs(target_dir, exist_ok=True)
             
             for idx, chapter in enumerate(self.chapters):
-                # CHANGED: Now pushes progress to the global download progress bar
                 self.root.after(0, lambda p=((idx + 1) / total_chaps) * 100: self.dl_progress_var.set(p))
                 
                 chap_title = chapter.get("tags", {}).get("title", f"Chapter {idx + 1}")
@@ -3424,29 +3258,23 @@ class AAXManagerApp:
             "-ss", str(actual_start_time), "-t", str(remaining_duration)
         ]
         
-        # Apply the static volume flag ONLY for Mac and Linux
         if os.name != 'nt':
             vol_int = int(self.volume_var.get())
             cmd.extend(["-volume", str(vol_int)])
         
         audio_filters = []
         
-        # 1. Speed
         speed_val = float(self.playback_speed.get().replace("x", ""))
         if speed_val != 1.0:
             audio_filters.append(f"atempo={speed_val}")
             
-        # 2. Voice Boost (Dynamic Range Compression)
         if getattr(self, 'voice_boost_var', None) and self.voice_boost_var.get():
-            # Softens loud peaks and boosts quiet whispers
             audio_filters.append("acompressor=threshold=-15dB:ratio=3:makeup=5dB")
-            
-        # 3. Skip Silence
+
         if getattr(self, 'skip_silence_var', None) and self.skip_silence_var.get():
-            # Strips any dead air longer than 0.5 seconds
+
             audio_filters.append("silenceremove=stop_periods=-1:stop_duration=0.5:stop_threshold=-40dB")
 
-        # Chain them all together with commas for FFmpeg
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
         
@@ -3463,7 +3291,6 @@ class AAXManagerApp:
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
         
-        # Only trigger the pycaw volume injection on Windows
         if os.name == 'nt':
             self.root.after(500, self.on_volume_change)
             
@@ -3520,11 +3347,9 @@ class AAXManagerApp:
                 self.write_log(f"[PLAYER ERROR]: {line.strip()}")
         
         proc.wait()
-        
-        # Only take action if this thread's process is still the active one
+
         if self.player_process == proc and self.is_playing:
             if proc.returncode == 0:
-                # Chapter finished cleanly, trigger the next chapter
                 self.root.after(0, self.next_chapter)
             else:
                 self.write_log(f"[CRITICAL]: Player crashed with code {proc.returncode}.")
@@ -3537,7 +3362,6 @@ class AAXManagerApp:
             self.current_chapter_idx += 1
             self.current_play_time = 0
 
-            # --- NEW: Chapter Sleep Timer Hook ---
             if getattr(self, 'sleep_mode', None) == "chapters":
                 self.sleep_chapters_remaining -= 1
                 if self.sleep_chapters_remaining <= 0:
@@ -3545,8 +3369,7 @@ class AAXManagerApp:
                     self.timer_btn.config(text="Sleep: Off")
                     self.write_log("Sleep timer (chapters) finished. Pausing playback.")
                     self.is_paused = True 
-                    
-                    # Ensure the UI ticks over to the new chapter title, but stay paused
+
                     chapter = self.chapters[self.current_chapter_idx]
                     start_time = float(chapter.get("start_time", 0))
                     end_time = float(chapter.get("end_time", 0))
@@ -3562,10 +3385,9 @@ class AAXManagerApp:
                         self.player_process.terminate()
                         self.player_process = None
                         
-                    return # Halt here, do not start the audio
+                    return 
                 else:
                     self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
-            # -------------------------------------
 
             self.is_paused = False
             self.play_chapter()
@@ -3610,7 +3432,6 @@ if __name__ == "__main__":
         import sv_ttk
         sv_ttk.set_theme("dark") 
     else:
-        # Load the custom classic palette if in classic mode
         saved_palette = app.settings.get("classic_palette", "light")
         app.apply_classic_palette(saved_palette)
         
