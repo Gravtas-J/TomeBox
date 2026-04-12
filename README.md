@@ -28,7 +28,10 @@ TomeBox is designed to be completely portable and requires zero technical config
 ![TomeBox Light mode](lightmode.png)
 *Oooooooo*
 ![TomeBox Terminal mode](terminal_mode.png)
+![TomeBox Cyberpunk mode](cyberpunk.png)
+![TomeBox Solarized mode](solarized_dark.png)
 *Ahhhhhhh!*
+
 ### Modern Engine Support
 ![TomeBox Modern mode](modern_mode.png)
 *Woooooow*
