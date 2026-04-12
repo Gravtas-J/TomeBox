@@ -122,7 +122,7 @@ oLink.TargetPath = "{pyw_exec}"
 oLink.Arguments = "{MAIN_SCRIPT}"
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
-oLink.IconLocation = "{base_dir}\\tomebox.png"
+oLink.IconLocation = "{base_dir}\\tomebox.ico"
 oLink.Save
 """
         with open(vbs_path, "w") as f:
