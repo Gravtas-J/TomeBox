@@ -110,6 +110,20 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
     
+    def has_enough_disk_space(self, target_dir, required_bytes):
+        import shutil
+        try:
+            # If the directory doesn't exist yet, check the drive it belongs to
+            check_dir = target_dir
+            while not os.path.exists(check_dir) and os.path.dirname(check_dir) != check_dir:
+                check_dir = os.path.dirname(check_dir)
+                
+            total, used, free = shutil.disk_usage(check_dir)
+            return free > required_bytes
+        except Exception as e:
+            self.write_log(f"Disk space check failed: {e}")
+            return True # Fail open so we don't accidentally block valid operations
+
     def add_stat(self, stat_name, amount=1):
         stats = self.settings.get("stats", {})
         stats[stat_name] = stats.get(stat_name, 0) + amount
@@ -646,6 +660,32 @@ class AAXManagerApp:
         self.root.bind_all("<Button-4>", self._on_grid_scroll)    
         self.root.bind_all("<Button-5>", self._on_grid_scroll)    
         self.root.bind_all("<Button-3>", self.show_context_menu)
+
+        self.empty_state_frame = tk.Frame(tree_frame)
+        self.empty_state_img_label = ttk.Label(self.empty_state_frame)
+        self.empty_state_img_label.pack(pady=(80, 20))
+        
+        # try:
+        #     img_path = os.path.join(self.base_dir, "assets", "Inital_Load.png")
+        #     if os.path.exists(img_path):
+        #         from PIL import Image, ImageTk
+        #         empty_img = Image.open(img_path)
+        #         empty_img.thumbnail((350, 350), Image.Resampling.LANCZOS)
+        #         self.empty_photo = ImageTk.PhotoImage(empty_img)
+        #         self.empty_state_img_label.config(image=self.empty_photo)
+        #     else:
+        #         self.empty_state_img_label.config(text="[ Missing Asset: assets/Inital_Load.png ]", font=("Segoe UI", 12))
+        # except Exception as e:
+        #     self.write_log(f"Failed to load empty state image: {e}")
+
+        empty_text = (
+            "Your library is completely empty.\n\n"
+            "To get started:\n"
+            "1. Navigate to 'File -> Authentication & Profiles' to link your Audible account.\n"
+            "2. Download your library or drag and drop .aax or .m4b files directly into this window to import local media."
+        )
+        ttk.Label(self.empty_state_frame, text=empty_text, justify="center", font=("Segoe UI", 12)).pack()
+
         for col in self.library_tree["columns"]:
             self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
             
@@ -921,7 +961,15 @@ class AAXManagerApp:
         if not to_convert:
             messagebox.showinfo("Convert All", "No AAX or AAXC files found to convert.")
             return
-            
+        required_bytes = sum(os.path.getsize(p) for p in to_convert if os.path.exists(p))
+        if not self.has_enough_disk_space(self.base_dir, required_bytes + (500 * 1024 * 1024)): # Add 500MB padding
+            required_gb = required_bytes / (1024**3)
+            messagebox.showerror(
+                "Insufficient Storage", 
+                f"Batch conversion requires at least {required_gb:.2f} GB of free space on your drive.\n\n"
+                "Please free up space and try again."
+            )
+            return
         if not messagebox.askyesno("Convert All", f"Found {len(to_convert)} files to convert.\nThis will process sequentially in the background. Proceed?"):
             return
             
@@ -1619,7 +1667,9 @@ class AAXManagerApp:
             self.current_view_mode = "grid"
             self.view_btn.config(text="List View")
             self.library_tree.pack_forget()
-            self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+            
+            if self.cloud_items or self.local_library:
+                self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
             
             if scroll_bar:
                 scroll_bar.config(command=self.grid_canvas.yview)
@@ -1628,7 +1678,9 @@ class AAXManagerApp:
             self.current_view_mode = "list"
             self.view_btn.config(text="Grid View")
             self.grid_canvas.pack_forget()
-            self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            
+            if self.cloud_items or self.local_library:
+                self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
             
             if scroll_bar:
                 scroll_bar.config(command=self.library_tree.yview)
@@ -1800,7 +1852,18 @@ class AAXManagerApp:
         if not missing_items:
             messagebox.showinfo("Up to Date", "Your local library already has all cloud items downloaded.")
             return
-
+        save_dir = getattr(self, 'default_download_dir', self.base_dir)
+        estimated_bytes_per_book = 500 * 1024 * 1024 # 500 MB
+        total_required_bytes = len(missing_items) * estimated_bytes_per_book
+        
+        if not self.has_enough_disk_space(save_dir, total_required_bytes):
+            required_gb = total_required_bytes / (1024**3)
+            messagebox.showerror(
+                "Insufficient Storage", 
+                f"Downloading {len(missing_items)} books requires approximately {required_gb:.2f} GB of free space in your target folder.\n\n"
+                "Please change your download directory or free up space."
+            )
+            return
         if messagebox.askyesno("Download All", f"Found {len(missing_items)} missing audiobooks.\n\nDo you want to batch download them all now? This may take a while depending on your internet connection."):
             self.dl_all_btn.config(state=tk.DISABLED)
             threading.Thread(target=self.download_all_worker, args=(missing_items,), daemon=True).start()
@@ -1938,6 +2001,24 @@ class AAXManagerApp:
             filtered_rows.append(row)
 
         self._current_filtered_data = filtered_rows
+
+        is_completely_empty = (not self.cloud_items) and (not self.local_library)
+
+        if is_completely_empty:
+            self.library_tree.pack_forget()
+            self.grid_canvas.pack_forget()
+            self.empty_state_frame.pack(fill="both", expand=True)
+        else:
+            self.empty_state_frame.pack_forget()
+            if self.current_view_mode == "list":
+                self.grid_canvas.pack_forget()
+                self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+                for row in filtered_rows:
+                    self.library_tree.insert("", "end", values=row)
+            else:
+                self.library_tree.pack_forget()
+                self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+                self.draw_grid_view()
 
         if self.current_view_mode == "list":
             for row in filtered_rows:
