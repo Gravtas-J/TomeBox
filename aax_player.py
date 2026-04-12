@@ -655,6 +655,7 @@ class AAXManagerApp:
         ttk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
         ttk.Button(controls_frame, text="Next Chapter >>", width=14, command=self.next_chapter).pack(side=tk.LEFT, padx=2)
         ttk.Button(controls_frame, text="🔖 Bookmark", width=12, command=self.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Button(controls_frame, text="📑 Chapters", command=self.open_chapter_window).pack(side=tk.LEFT, padx=(15, 2))
 
         self.playback_speed = tk.StringVar(value="1.0x")
         speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
@@ -720,6 +721,96 @@ class AAXManagerApp:
         btn_frame = ttk.Frame(self.bm_frame)
         btn_frame.pack(fill="x", pady=(5, 0))
         ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
+
+    def open_chapter_window(self):
+        # Ensure a book is loaded and has chapter data
+        if not hasattr(self, 'chapters') or not self.chapters:
+            messagebox.showinfo("Chapters", "No chapter data available. Please load an audiobook first.")
+            return
+
+        # Prevent spam-opening multiple windows
+        if hasattr(self, 'chapter_win') and self.chapter_win.winfo_exists():
+            self.chapter_win.lift()
+            self.chapter_win.focus_set()
+            return
+
+        self.chapter_win = tk.Toplevel(self.root)
+        self.chapter_win.title("Select Chapter")
+        self.chapter_win.geometry("450x500")
+        self.chapter_win.transient(self.root) # Keeps it floating above the main window
+        
+        # Match theme colors
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        self.chapter_win.configure(bg=bg_color)
+        
+        main_frame = ttk.Frame(self.chapter_win, padding=10)
+        main_frame.pack(fill="both", expand=True)
+        
+        ttk.Label(main_frame, text="Table of Contents", font=("Segoe UI", 14, "bold")).pack(pady=(0, 10))
+
+        # Build the Treeview
+        columns = ("Index", "Title", "Start Time")
+        tree = ttk.Treeview(main_frame, columns=columns, show="headings", selectmode="browse")
+        
+        tree.heading("Index", text="#")
+        tree.column("Index", width=40, anchor="center")
+        
+        tree.heading("Title", text="Chapter Title")
+        tree.column("Title", width=250, anchor="w")
+        
+        tree.heading("Start Time", text="Start Time")
+        tree.column("Start Time", width=100, anchor="center")
+
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill="y")
+
+        # Populate Data
+        for i, chap in enumerate(self.chapters):
+            # Handle standard ffprobe chapter format dictionaries
+            start_sec = float(chap.get('start_time', 0))
+            
+            # Format to HH:MM:SS
+            h, m = divmod(start_sec, 3600)
+            m, s = divmod(m, 60)
+            time_str = f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
+
+            # Fallback for titles if metadata is missing
+            title = chap.get('tags', {}).get('title', f"Chapter {i+1}")
+
+            tree.insert("", "end", values=(i+1, title, time_str))
+
+        # Double-click binding
+        tree.bind("<Double-1>", lambda e: self.on_chapter_select(tree))
+
+    def on_chapter_select(self, tree):
+        selected = tree.focus()
+        if not selected:
+            return
+            
+        item = tree.item(selected)
+        # The index in the Treeview is 1-based, so subtract 1 for the 0-based list
+        target_idx = int(item['values'][0]) - 1 
+
+        if 0 <= target_idx < len(self.chapters):
+            # Close the window
+            self.chapter_win.destroy()
+            
+            # Stop current playback
+            if hasattr(self, 'stop_audio'):
+                self.stop_audio()
+                
+            # Update internal state
+            self.current_chapter_index = target_idx
+            self.current_play_time = float(self.chapters[target_idx].get('start_time', 0))
+            
+            # Restart playback from the new position
+            # (Use whatever your primary play method is named)
+            self.play_chapter()
 
     def start_convert_all_thread(self):
         to_convert = [path for path, data in self.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]

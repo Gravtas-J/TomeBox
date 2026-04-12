@@ -88,6 +88,15 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 ### UI Engine Replacement: 
 Migrating the frontend away from Tkinter.
 
+## Drag and drop
+Be able to drag files into application
+
+## Viewable chapters 
+A window to be able to skip to chapter from list of avlaible chapters. 
+
+## Add context menu support 
+all the options from the buttons 
+
 ## Phase 2: The Ecosystem Shift
 
 ### Multi-Provider Support: 
