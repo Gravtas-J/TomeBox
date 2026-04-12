@@ -14,8 +14,9 @@ import csv
 try:
     import audible
     from tkinterdnd2 import DND_FILES, TkinterDnD
+    from wakepy import keep
 except ImportError:
-    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow tkinterdnd2")
+    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow tkinterdnd2 wakepy")
     exit()
 import pystray
 from pystray import MenuItem as item
@@ -110,6 +111,22 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
     
+    def toggle_system_sleep(self, prevent_sleep=True):
+        if os.name != 'nt':
+            return # Only implemented for Windows
+
+        try:
+            import ctypes
+            # 0x80000000 = ES_CONTINUOUS, 0x00000001 = ES_SYSTEM_REQUIRED
+            if prevent_sleep:
+                self.write_log("Applying sleep prevention for active background task.")
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+            else:
+                self.write_log("Releasing system sleep prevention.")
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        except Exception as e:
+            self.write_log(f"Failed to toggle sleep state: {e}")
+
     def has_enough_disk_space(self, target_dir, required_bytes):
         import shutil
         try:
@@ -1025,44 +1042,46 @@ class AAXManagerApp:
     def convert_all_worker(self, file_list):
         total = len(file_list)
         
-        for idx, filepath in enumerate(file_list, 1):
-            if not os.path.exists(filepath):
-                continue
-                
-            data = self.local_library.get(filepath, {})
-            title = data.get("title", "Unknown")
-            
-            self.root.after(0, lambda i=idx, t=title: self.dl_status_var.set(f"Converting {i}/{total}: {t}"))
-            
-            base_name, _ = os.path.splitext(filepath)
-            out_path = f"{base_name}.m4b"
-            
-            drm_flags = self.get_drm_flags(filepath)
-            
-            cmd = ["ffmpeg", "-y"] + drm_flags + ["-i", filepath, "-c", "copy", out_path]
-            
-            try:
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                
-                if res.returncode == 0:
-                    self.local_library[out_path] = data
-                    self.local_library[out_path]["format"] = "M4B"
-                    self.local_library[out_path]["path"] = out_path
+        try:
+            with keep.running():
+                for idx, filepath in enumerate(file_list, 1):
+                    if not os.path.exists(filepath):
+                        continue
+                        
+                    data = self.local_library.get(filepath, {})
+                    title = data.get("title", "Unknown")
                     
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                    del self.local_library[filepath]
-                    self.save_local_db()
+                    self.root.after(0, lambda i=idx, t=title: self.dl_status_var.set(f"Converting {i}/{total}: {t}"))
                     
-                    self.root.after(0, self.refresh_library_ui)
-                else:
-                    self.write_log(f"Batch Convert Error on {title}: {res.stderr}")
+                    base_name, _ = os.path.splitext(filepath)
+                    out_path = f"{base_name}.m4b"
                     
-            except Exception as e:
-                self.write_log(f"Batch Convert Exception on {title}: {e}")
-                
-        self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-        self.root.after(0, lambda: messagebox.showinfo("Convert All", "Batch conversion complete!"))
+                    drm_flags = self.get_drm_flags(filepath)
+                    
+                    cmd = ["ffmpeg", "-y"] + drm_flags + ["-i", filepath, "-c", "copy", out_path]
+                    
+                    try:
+                        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        
+                        if res.returncode == 0:
+                            self.local_library[out_path] = data
+                            self.local_library[out_path]["format"] = "M4B"
+                            self.local_library[out_path]["path"] = out_path
+                            
+                            if os.path.exists(filepath):
+                                os.remove(filepath)
+                            del self.local_library[filepath]
+                            self.save_local_db()
+                            
+                            self.root.after(0, self.refresh_library_ui)
+                        else:
+                            self.write_log(f"Batch Convert Error on {title}: {res.stderr}")
+                            
+                    except Exception as e:
+                        self.write_log(f"Batch Convert Exception on {title}: {e}")
+        finally:
+            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(0, lambda: messagebox.showinfo("Convert All", "Batch conversion complete!"))
 
     def manage_shelves_prompt(self):
         if getattr(self, 'current_view_mode', 'list') == "list":
@@ -1410,20 +1429,38 @@ class AAXManagerApp:
             self.root.after(0, lambda: self.dl_progress_var.set(0))
 
     def download_queue_worker(self, items, save_dir):
-        for item in items:
-            title = item[0]
-            asin = item[3]
-            
-            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
-            if os.path.exists(os.path.join(save_dir, f"{safe_title}.aaxc")) or os.path.exists(os.path.join(save_dir, f"{safe_title}.aax")):
-                self.write_log(f"Skipping {title}, file already exists.")
-                continue
+        try:
+            # 1. Use the new cross-platform wakepy context manager
+            with keep.running():
+                for item in items:
+                    title = item[0]
+                    asin = item[3]
+                    
+                    # 2. Check if the user hit the "Cancel All" button
+                    if asin in getattr(self, 'active_downloads', {}) and self.active_downloads[asin].get("cancel_flag"):
+                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
+                        continue
+                    
+                    safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+                    if os.path.exists(os.path.join(save_dir, f"{safe_title}.aaxc")) or os.path.exists(os.path.join(save_dir, f"{safe_title}.aax")):
+                        self.write_log(f"Skipping {title}, file already exists.")
+                        # Optionally update the UI so it doesn't get stuck saying "Waiting..."
+                        if asin in getattr(self, 'active_downloads', {}):
+                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Skipped"))
+                        continue
 
-            self.download_worker(asin, title, save_dir, is_queue=True)
-                
-        self.root.after(0, lambda: self.dl_status_var.set("All downloads completed."))
-        self.root.after(0, lambda: self.dl_progress_var.set(0))
-        self.root.after(0, lambda: messagebox.showinfo("Download Queue Finished", "Finished processing all titles."))
+                    # 3. Isolate each download so one failure doesn't kill the whole queue
+                    try:
+                        self.download_worker(asin, title, save_dir, is_queue=True)
+                    except Exception as e:
+                        self.write_log(f"Failed to queue download for {title}: {e}")
+                        if asin in getattr(self, 'active_downloads', {}):
+                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
+                        
+        finally:
+            self.root.after(0, lambda: self.dl_status_var.set("All downloads completed."))
+            self.root.after(0, lambda: self.dl_progress_var.set(0))
+            self.root.after(0, lambda: messagebox.showinfo("Download Queue Finished", "Finished processing all titles."))
     
     def execute_download(self, asin, title, save_dir):
         self.root.after(0, lambda: self.dl_status_var.set(f"Downloading: {title}"))
@@ -1882,34 +1919,36 @@ class AAXManagerApp:
             title = item.get("title", "Unknown")
             self.root.after(0, self.add_queue_ui_row, asin, title)
 
-        for idx, item in enumerate(missing_items):
-            title = item.get("title", "Unknown")
-            asin = item.get("asin")
+        try:
+            with keep.running():
+                for idx, item in enumerate(missing_items):
+                    title = item.get("title", "Unknown")
+                    asin = item.get("asin")
 
-            if asin in self.active_downloads and self.active_downloads[asin]["cancel_flag"]:
-                self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
-                continue
+                    if asin in getattr(self, 'active_downloads', {}) and self.active_downloads[asin].get("cancel_flag"):
+                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
+                        continue
+                    
+                    self.root.after(0, lambda i=idx+1, t=total, name=title: self.dl_status_var.set(f"Batch Downloading ({i}/{t}): {name}..."))
+                    
+                    if asin in getattr(self, 'active_downloads', {}):
+                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Starting..."))
+                    
+                    try:
+                        self.download_worker(asin, title, save_dir, is_queue=True)
+                    except Exception as e:
+                        self.write_log(f"Failed to batch download {title}: {e}")
+                        if asin in getattr(self, 'active_downloads', {}):
+                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
+        finally:
+            self.root.after(0, lambda: self.dl_status_var.set("Batch Download Complete"))
+            self.root.after(0, lambda: self.dl_progress_var.set(0))
+            self.root.after(0, self.refresh_library_ui)
+            if hasattr(self, 'dl_all_btn'):
+                self.root.after(0, lambda: self.dl_all_btn.config(state=tk.NORMAL))
             
-            self.root.after(0, lambda i=idx+1, t=total, name=title: self.dl_status_var.set(f"Batch Downloading ({i}/{t}): {name}..."))
-            
-            if asin in self.active_downloads:
-                self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Starting..."))
-            
-            try:
-                self.download_worker(asin, title, save_dir, is_queue=True)
-            except Exception as e:
-                self.write_log(f"Failed to batch download {title}: {e}")
-                if asin in self.active_downloads:
-                    self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
-                
-        self.root.after(0, lambda: self.dl_status_var.set("Batch Download Complete"))
-        self.root.after(0, lambda: self.dl_progress_var.set(0))
-        self.root.after(0, self.refresh_library_ui)
-        self.root.after(0, lambda: self.dl_all_btn.config(state=tk.NORMAL))
-        
-        # Close the drawer automatically 5 seconds after everything finishes
-        self.root.after(5000, lambda: self.toggle_queue_drawer(False))
-        self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(5000, lambda: self.toggle_queue_drawer(False))
+            self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def refresh_library_ui(self, *args):
         # Clear the current treeview
