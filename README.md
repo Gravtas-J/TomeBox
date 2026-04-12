@@ -19,10 +19,12 @@ TomeBox is designed to be completely portable and requires zero technical config
 
 ### Unified List View
 ![TomeBox List View](assets/list_view.png)
-*Managing cloud and local files in the classic list view.*
+![TomeBox List View](assets/list_view_Context.png)
+*Managing cloud and local files in the classic list view. Now with Context Menues!*
 
 ### Dynamic Grid View
 ![TomeBox Grid View](assets/grid_view.png)
+![TomeBox Grid View](assets/grid_view_context.png)
 *Browsing the library with fetched high-res cover art.*
 
 ### Colour Pallets
@@ -51,6 +53,10 @@ TomeBox is designed to be completely portable and requires zero technical config
 * **Custom Shelves:** Create custom, comma-separated tags to organize your library, filterable via the main navigation bar.
 * **Direct Metadata Scraper:** Easily fix orphaned local files. TomeBox queries the Audible catalog to pull missing high-res cover art, series data, and authors, embedding them directly into your local `.m4b` or `.mp3` files via ID3 tags.
 * **Silent Background Polling:** A daemon thread queries the Audible API every 15 minutes to detect new purchases, updating the cache without interrupting the UI.
+* **Interactive Chapter Navigation:** A table of contents window that displays parsed chapter metadata and timestamps, allowing users to jump directly to specific sections via double-click.
+* **Context Menus:** Native right-click menus integrated into both the list and grid views, providing immediate access to playback controls, timeline seeking, bookmarking, and file operations.
+* **Drag-and-Drop Import:** Direct OS-level drag-and-drop support for adding files to the library, utilizing a background worker to extract metadata via ffprobe without freezing the interface.
+* **Live Cover Previews:** Single-click integration on library items that dynamically fetches and displays high-resolution cover art in the side panel without triggering audio playback.
 
 ### Multi-User Authentication & Decryption
 * **Dynamic Key Swapping:** Share a single `library.json` and download folder with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
@@ -61,6 +67,7 @@ TomeBox is designed to be completely portable and requires zero technical config
 * **Piped Conversion:** Bypasses temporary file creation by piping decrypted streams directly into standard `.m4b` container formats.
 * **Chapter Extraction:** Parses metadata to allow splitting a single audiobook into multiple, sequentially numbered files based on chapter timestamps.
 * **Throttled UI Streaming:** Downloads utilize 32KB chunk streams with throttled UI progress updates, preventing interface lockups on gigabit connections.
+* **Batch Conversion:** A dedicated process that scans the local library for encrypted files and sequentially converts them into standard m4b format in a background thread.
 
 ### Progression System
 * **LitRPG Achievement Tracker:** A persistent background tracker logs your total seconds listened, books downloaded, and books finished.
