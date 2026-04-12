@@ -24,7 +24,7 @@ class AAXManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("TomeBox")
-        self.root.geometry("1150x780")
+        self.root.geometry("1550x850")
 
         self.enforce_single_instance()
         
@@ -519,6 +519,7 @@ class AAXManagerApp:
         self.queue_canvas = tk.Canvas(self.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
         queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
         
+
         # sv_ttk background color applied to the inner frame
         self.queue_inner = tk.Frame(self.queue_canvas, bg="#1c1c1c")
 
@@ -571,7 +572,7 @@ class AAXManagerApp:
 
         self.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status"), show="headings", yscrollcommand=scroll.set)
         scroll.config(command=self.library_tree.yview)
-
+        self.library_tree.bind("<<TreeviewSelect>>", self.on_item_select)
         
         self.current_view_mode = "list"
         self.grid_images_ref = [] # Prevents Python garbage collection from deleting the images
@@ -608,6 +609,7 @@ class AAXManagerApp:
         ttk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Convert All", command=self.start_convert_all_thread).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Manage Shelves", command=self.manage_shelves_prompt).pack(side=tk.LEFT, padx=5)
 
         local_btn_frame = ttk.Frame(lib_frame)
@@ -725,6 +727,119 @@ class AAXManagerApp:
         btn_frame = ttk.Frame(self.bm_frame)
         btn_frame.pack(fill="x", pady=(5, 0))
         ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
+
+    def start_convert_all_thread(self):
+        # Scan local library for unconverted DRM files
+        to_convert = [path for path, data in self.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
+        
+        if not to_convert:
+            messagebox.showinfo("Convert All", "No AAX or AAXC files found to convert.")
+            return
+            
+        if not messagebox.askyesno("Convert All", f"Found {len(to_convert)} files to convert.\nThis will process sequentially in the background. Proceed?"):
+            return
+            
+        threading.Thread(target=self.convert_all_worker, args=(to_convert,), daemon=True).start()
+
+    def on_item_select(self, event=None):
+        # 1. Identify what was clicked based on the active view
+        if getattr(self, 'current_view_mode', 'list') == "list":
+            selected = self.library_tree.focus()
+            if not selected: return
+            item = self.library_tree.item(selected)
+            title = item['values'][0]
+            authors = item['values'][1]
+            asin = item['values'][4]
+        else:
+            if not getattr(self, '_selected_grid_item', None): return
+            item = self._selected_grid_item
+            title = item['values'][0]
+            authors = item['values'][1]
+            asin = item['values'][4]
+
+        # 2. Update the Side Panel Text
+        if hasattr(self, 'author_label'):
+            self.author_label.config(text=authors)
+        
+        # 3. Resolve the Cover Art Path
+        cover_path = None
+        covers_dir = getattr(self, 'covers_dir', self.base_dir)
+        
+        # Try finding the high-res Audnexus/Audible cover first
+        if asin and asin != "Unknown":
+            test_path = os.path.join(covers_dir, f"{asin}.jpg")
+            if os.path.exists(test_path):
+                cover_path = test_path
+                
+        # If no ASIN cover, check if it's a local file with extracted ID3 art
+        if not cover_path:
+            for p, d in getattr(self, 'local_library', {}).items():
+                if d.get("title") == title:
+                    test_local = os.path.splitext(p)[0] + "_cover.jpg"
+                    if os.path.exists(test_local):
+                        cover_path = test_local
+                    break
+
+        # 4. Paint the Image to the UI
+        if cover_path and hasattr(self, 'cover_label'):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(cover_path)
+                img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.cover_label.config(image=photo, text="")
+                self.current_cover_photo = photo # Prevent garbage collection
+            except Exception:
+                self.cover_label.config(image="", text=title)
+        elif hasattr(self, 'cover_label'):
+            self.cover_label.config(image="", text=title)
+
+    def convert_all_worker(self, file_list):
+        total = len(file_list)
+        
+        for idx, filepath in enumerate(file_list, 1):
+            if not os.path.exists(filepath):
+                continue
+                
+            data = self.local_library.get(filepath, {})
+            title = data.get("title", "Unknown")
+            
+            # Update UI progress
+            self.root.after(0, lambda i=idx, t=title: self.dl_status_var.set(f"Converting {i}/{total}: {t}"))
+            
+            base_name, _ = os.path.splitext(filepath)
+            out_path = f"{base_name}.m4b"
+            
+            # Fetch the dynamic or static DRM keys using your existing method
+            drm_flags = self.get_drm_flags(filepath)
+            
+            cmd = ["ffmpeg", "-y"] + drm_flags + ["-i", filepath, "-c", "copy", out_path]
+            
+            try:
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                
+                if res.returncode == 0:
+                    # Update the database to point to the new M4B file
+                    self.local_library[out_path] = data
+                    self.local_library[out_path]["format"] = "M4B"
+                    self.local_library[out_path]["path"] = out_path
+                    
+                    # Delete the original encrypted file and its old database entry
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                    del self.local_library[filepath]
+                    self.save_local_db()
+                    
+                    # Force a UI refresh so the list updates live as files finish
+                    self.root.after(0, self.refresh_library_ui)
+                else:
+                    self.write_log(f"Batch Convert Error on {title}: {res.stderr}")
+                    
+            except Exception as e:
+                self.write_log(f"Batch Convert Exception on {title}: {e}")
+                
+        self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+        self.root.after(0, lambda: messagebox.showinfo("Convert All", "Batch conversion complete!"))
 
     def manage_shelves_prompt(self):
         # Grab the selected item based on the active view
@@ -950,7 +1065,7 @@ class AAXManagerApp:
         if os.path.exists(cover_path):
             try:
                 img = Image.open(cover_path)
-                img.thumbnail((250, 250))
+                img.thumbnail((400, 400))
                 photo = ImageTk.PhotoImage(img)
                 
                 def update_ui_local():
@@ -1469,7 +1584,7 @@ class AAXManagerApp:
                 # Save this outer card so we know to deselect it next time
                 self._last_selected_card_frame = oc 
                 self._selected_grid_item = {'values': [t, "", "", "", a, s]}
-                
+                self.on_item_select()
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
                 on_card_click(e, oc, t, a, s)
                 self.master_play()
@@ -1908,7 +2023,7 @@ class AAXManagerApp:
                     temp_path
                 ])
                 
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 if res.returncode == 0:
                     import shutil
                     shutil.move(temp_path, filepath)
@@ -2606,7 +2721,7 @@ class AAXManagerApp:
         if ext in ["M4B", "MP3"]:
             try:
                 cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
-                res = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 data = json.loads(res.stdout)
                 tags = data.get("format", {}).get("tags", {})
                 
@@ -3046,7 +3161,7 @@ class AAXManagerApp:
         cmd.extend(self.get_drm_flags(filepath))
         cmd.extend(["-i", filepath, "-t", "0.1", "-f", "null", "-"])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             if result.returncode != 0:
                 return False, result.stderr if result.stderr else "FFmpeg rejected the file."
             return True, ""
@@ -3100,7 +3215,7 @@ class AAXManagerApp:
         if total_duration == 0:
             try:
                 probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
-                res = subprocess.run(probe_cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                res = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 total_duration = float(res.stdout.strip())
             except Exception:
                 total_duration = 0
@@ -3258,7 +3373,7 @@ class AAXManagerApp:
     def extract_chapters(self, filepath):
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", filepath]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             data = json.loads(result.stdout)
             return data.get("chapters", [])
         except Exception:
@@ -3344,7 +3459,7 @@ class AAXManagerApp:
             self.write_log(f"Starting player: {' '.join(cmd)}")
 
         self.player_process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
         

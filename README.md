@@ -24,6 +24,14 @@ TomeBox is designed to be completely portable and requires zero technical config
 ![TomeBox Grid View](grid_view.png)
 *Browsing the library with fetched high-res cover art.*
 
+### Colour Pallets
+![TomeBox Light mode](lightmode.png)
+*Oooooooo*
+![TomeBox Terminal mode](terminal_mode.png)
+*Ahhhhhhh!*
+![TomeBox Modern mode](modern_mode.png)
+*Woooooow*
+
 ## Features
 
 ### Advanced Playback Engine
@@ -57,6 +65,7 @@ TomeBox is designed to be completely portable and requires zero technical config
 ### User Interface & Export
 * **Dual Engine Architecture:** Switch between the modern Windows 11 style (`sv_ttk`) and the classic engine (featuring 8 hardcoded developer themes like Solarized, Dracula, Cyberpunk, and Nordic Slate).
 * **Data Export:** Dump your library to a flattened CSV file or generate an offline, CSS-styled HTML gallery of your collection.
+* **System Tray Intergration:** Minimizes to system tray for neat and clean runtime. 
 
 ## Application Data
 
