@@ -17,23 +17,23 @@ TomeBox is designed to be completely portable and requires zero technical config
 ## Screenshots
 
 ### Unified List View
-![TomeBox List View](list_view.png)
+![TomeBox List View](assets/list_view.png)
 *Managing cloud and local files in the classic list view.*
 
 ### Dynamic Grid View
-![TomeBox Grid View](grid_view.png)
+![TomeBox Grid View](assets/grid_view.png)
 *Browsing the library with fetched high-res cover art.*
 
 ### Colour Pallets
-![TomeBox Light mode](lightmode.png)
+![TomeBox Light mode](assets/lightmode.png)
 *Oooooooo*
-![TomeBox Terminal mode](terminal_mode.png)
-![TomeBox Cyberpunk mode](cyberpunk.png)
-![TomeBox Solarized mode](solarized_dark.png)
+![TomeBox Terminal mode](assets/terminal_mode.png)
+![TomeBox Cyberpunk mode](assets/cyberpunk.png)
+![TomeBox Solarized mode](assets/solarized_dark.png)
 *Ahhhhhhh!*
 
 ### Modern Engine Support
-![TomeBox Modern mode](modern_mode.png)
+![TomeBox Modern mode](assets/modern_mode.png)
 *Woooooow*
 
 ## Features
