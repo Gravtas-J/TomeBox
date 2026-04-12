@@ -81,6 +81,27 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 * `aax_manager.log`: Output log for debugging and process tracking.
 * `.tomebox_version`: Local hash file used by the auto-updater.
 
+# Roadmap
+
+## Phase 1: Ui changes
+
+### UI Engine Replacement: 
+Migrating the frontend away from Tkinter.
+
+## Phase 2: The Ecosystem Shift
+
+### Multi-Provider Support: 
+Abstract the Audible API logic to support adding modules for Soundbooth Theater or other DRM-free stores.
+
+## Phase 3: Community and Gamification
+
+Hidden Interactions (Keystroke easter eggs)
+
+## Phase 4: Self hosting 
+
+### implementing self hosting
+create a fastapi and migrate to sqlite to enable streaming from server instance to networked devices. 
+
 ## Acknowledgments
 
 TomeBox stands on the shoulders of giants. This project is only possible thanks to the incredible work of the open-source community. A massive thank you to the maintainers and contributors of the following projects:
