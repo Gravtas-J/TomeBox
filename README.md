@@ -10,8 +10,9 @@ TomeBox is designed to be completely portable and requires zero technical config
 2. **Windows:** Double-click `setup.bat`. 
    * *If Python is missing, it will silently download and install it. It will also fetch portable FFmpeg binaries and drop a shortcut on your desktop.*
 3. **Mac/Linux:** Open your terminal, navigate to the folder, and run `bash setup.command`.
-4. **Launch:** Use the newly created desktop shortcut to open the application!
-
+4. **Launch:** Use the newly created desktop shortcut to open the application.
+5. **Login** Go to File -> Authentication & Profiles, follow the prompts to log in and begin downlaoding.
+   
 *(Note: TomeBox includes a built-in auto-updater. Launching the app via the shortcut will silently check GitHub for updates and pull the latest code before booting).*
 
 ## Screenshots
