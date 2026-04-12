@@ -2,88 +2,68 @@
 
 TomeBox is a desktop application for managing, downloading, playing, and converting Audible audiobooks. It provides a unified interface for your cloud library and local files, built-in DRM decryption, and chapter-aware playback.
 
-## Get Started
+## Get Started (Zero-Config Installation)
 
-### 1. 
-#### Download and extract the TomeBox folder.
+TomeBox is designed to be completely portable and requires zero technical configuration. The automated setup scripts handle Python installation, dependency management, and FFmpeg binary acquisition seamlessly.
 
-### 2. 
-#### If you are on Windows, double-click setup.bat.
+1. **Download and Extract** the TomeBox repository folder.
+2. **Windows:** Double-click `setup.bat`. 
+   * *If Python is missing, it will silently download and install it. It will also fetch portable FFmpeg binaries and drop a shortcut on your desktop.*
+3. **Mac/Linux:** Open your terminal, navigate to the folder, and run `bash setup.command`.
+4. **Launch:** Use the newly created desktop shortcut to open the application!
 
-### 3. 
-#### If you are on Mac/Linux, double-click setup.command (Note: Mac/Linux users may need to right-click -> properties -> allow executing as program depending on their security settings).
+*(Note: TomeBox includes a built-in auto-updater. Launching the app via the shortcut will silently check GitHub for updates and pull the latest code before booting).*
 
-### 4. 
-#### The script will install everything, check for FFmpeg, and drop a TomeBox shortcut right on your desktop!
+## Screenshots
+
+### Unified List View
+![TomeBox List View](list_view.png)
+*Managing cloud and local files in the classic list view.*
+
+### Dynamic Grid View
+![TomeBox Grid View](grid_view.png)
+*Browsing the library with fetched high-res cover art.*
 
 ## Features
 
-### Core Library & Synchronization
-* **Unified Data View:** Merges Audible API cloud data with local file system paths into a single `ttk.Treeview`, preventing duplicate entries.
-* **Silent Background Polling:** A daemon thread queries the Audible API every 15 minutes to detect new purchases, updating the cache and UI without interrupting user actions.
-* **Dynamic Hard Drive Monitoring:** A localized worker thread checks the integrity of `library.json` and the physical files every 2 seconds. If a user deletes an `.m4b` file via the OS file explorer, TomeBox drops it from the UI instantly.
-* **Cover Art & Metadata:** Asynchronous workers fetch 500px resolution cover art and extended author/series metadata from the Audible catalog API upon file selection.
+### Advanced Playback Engine
+* **Persistent State Memory:** Auto-saves the exact timestamp and current chapter index on exit, pause, or skip.
+* **Audio Filters:** Toggle real-time dynamic range compression (Voice Boost) and silence-skipping via native FFplay injection.
+* **Smart Sleep Timer:** Set countdowns by exact minutes or trigger an auto-pause at the end of the current chapter.
+* **Manual Bookmarking:** Drop timestamped pins with custom text notes while listening. Double-click a bookmark in the side-panel to instantly jump back to that moment.
+* **Dynamic Speed Control:** Adjust playback from 0.8x to 3.0x on the fly without modifying the source file.
 
-### Authentication & Decryption
-* **Dual Authentication Paths:** Supports intercepting browser-based OAuth callbacks or loading pre-existing `.json` authorization files. 
+### Library & Organization
+* **Unified Data View:** Merges Audible API cloud data with local file system paths into a single grid or list view.
+* **Custom Shelves:** Create custom, comma-separated tags to organize your library, filterable via the main navigation bar.
+* **Direct Metadata Scraper:** Easily fix orphaned local files. TomeBox queries the Audible catalog to pull missing high-res cover art, series data, and authors, embedding them directly into your local `.m4b` or `.mp3` files via ID3 tags.
+* **Silent Background Polling:** A daemon thread queries the Audible API every 15 minutes to detect new purchases, updating the cache without interrupting the UI.
+
+### Multi-User Authentication & Decryption
+* **Dynamic Key Swapping:** Share a single `library.json` and download folder with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
+* **Native DRM Handling:** Automatically requests the `Adrm` content license via the API to extract offline AAXC encryption keys (`audible_key` and `audible_iv`).
 * **Multi-Region Support:** Built-in locale switching (US, UK, AU, CA, DE, FR, JP) for accurate catalog querying.
-* **Native DRM Handling:** Automatically requests the `Adrm` content license via the API to extract the offline AAXC encryption keys (`audible_key` and `audible_iv`) required for decryption.
 
-### Downloading & Conversion Engine
-* **Throttled UI Streaming:** Downloads utilize 32KB chunk streams. UI progress updates are throttled to only fire on integer percentage changes, preventing the Tkinter event loop from deadlocking on high-speed connections.
-* **Batch Queue Manager:** A custom `tk.Canvas` drawer handles multiple downloads with individual progress tracking, status updates, and cancellation flags.
-* **FFmpeg Piped Conversion:** Bypasses temporary file creation by piping the decrypted stream directly into a standard `.m4b` container format.
-* **Chapter Extraction:** Parses metadata to allow splitting a single audiobook into multiple, sequentially numbered `.m4b` files based on chapter timestamps.
+### Downloading & Conversion
+* **Piped Conversion:** Bypasses temporary file creation by piping decrypted streams directly into standard `.m4b` container formats.
+* **Chapter Extraction:** Parses metadata to allow splitting a single audiobook into multiple, sequentially numbered files based on chapter timestamps.
+* **Throttled UI Streaming:** Downloads utilize 32KB chunk streams with throttled UI progress updates, preventing interface lockups on gigabit connections.
 
-### Playback System
-* **Persistent State Memory:** Auto-saves the exact timestamp and current chapter index to `library.json` on exit, pause, or skip.
-* **Dynamic Speed Control:** Injects the `-af atempo=X` filter into the `ffplay` subprocess, allowing playback speeds from 0.8x to 3.0x without modifying the source file.
-* **OS-Level Audio Hooks:** On Windows, utilizes `pycaw` to hook directly into the Windows Volume Mixer, adjusting the specific `ffplay.exe` session volume independently of the master system volume. (Uses process restarts on macOS/Linux).
+### Progression System
+* **LitRPG Achievement Tracker:** A persistent background tracker logs your total seconds listened, books downloaded, and books finished.
+* **Milestone Toasts:** Unlocking an achievement triggers a borderless, non-intrusive notification in the corner of your screen.
+* **Status Dashboard:** View your locked and unlocked milestones, complete with progress bars, in the dedicated "My Achievements" window.
 
-### User Interface & Theming
-* **Dual Engine Architecture:** Supports switching between the modern `sv_ttk` (Windows 11 style) engine and the classic `ttk` engine (requires application restart to flush memory).
-* **Recursive Container Painting:** In Classic Mode, a recursive function traverses the Tkinter widget tree to manually paint every raw `tk.Frame`, eliminating the default white structural borders.
-* **Developer Palettes:** Eight hardcoded custom themes for the Classic Engine, including Solarized, Dracula, Cyberpunk, and Nordic Slate.
-* **Custom Menu Bar:** Strips the native Win32 OS menu bar and replaces it with a styled `ttk.Menubutton` layout to ensure edge-to-edge dark mode consistency.
-
-### Data Export
-* **CSV Dumps:** Flattens the unified library dictionary into a standard comma-separated variable file including Title, Author, Series, Duration, ASIN, and Local Path.
-* **Interactive HTML Gallery:** Generates an offline, CSS-styled grid layout of the user's library, embedding fetched cover art URLs and status tags directly into the DOM.
-
-## Prerequisites
-
-**1. FFmpeg (Required)**
-TomeBox relies on FFmpeg and FFplay for media probing, playback, and conversion.
-* Download and install FFmpeg.
-* Ensure the `ffmpeg` and `ffplay` executables are added to your system's `PATH` environment variable.
-
-**2. Python Dependencies**
-Install the required Python packages using pip:
-```bash
-pip install audible requests pillow sv-ttk rsa
-```
-
-*(Windows Only)* For native volume mixer control during playback, install `pycaw`:
-```bash
-pip install pycaw comtypes
-```
-
-## Installation & Usage
-
-1.  Clone or download the repository.
-2.  Run the application:
-    ```bash
-    python aax_player.py
-    ```
-3.  **Authentication:** Navigate to the "Audible Authentication" panel on the right. Select your region and click **Browser Login**. Follow the prompts to authenticate via your web browser and paste the resulting URL back into the application.
-4.  **Downloading:** Select a "Cloud Only" title from the library list and click **Download Selected**. You will be prompted to select a save directory if a default is not set in the `File` menu.
-5.  **Playback & Conversion:** Double-click a downloaded title to begin playback, or select it and use the **Convert Selected** button to extract the audio to `.m4b`.
+### User Interface & Export
+* **Dual Engine Architecture:** Switch between the modern Windows 11 style (`sv_ttk`) and the classic engine (featuring 8 hardcoded developer themes like Solarized, Dracula, Cyberpunk, and Nordic Slate).
+* **Data Export:** Dump your library to a flattened CSV file or generate an offline, CSS-styled HTML gallery of your collection.
 
 ## Application Data
 
-TomeBox generates the following local files in its root directory to manage state and settings:
-* `library.json`: Tracks local file paths, metadata, and playback history.
+TomeBox respects your system and does not bury files in hidden AppData folders. It generates the following local files directly in its root directory:
+* `library.json`: Tracks local file paths, metadata, custom shelves, and playback history.
 * `cloud_cache.json`: Caches your Audible library metadata to reduce API calls.
-* `my_audible_auth.json`: Stores your active Audible session data.
-* `settings.json`: Stores application preferences (UI theme, default download directory).
+* `auth_[ProfileName].json`: Stores your active Audible session data.
+* `settings.json`: Stores application preferences, UI themes, and your achievement/stats database.
 * `aax_manager.log`: Output log for debugging and process tracking.
+* `.tomebox_version`: Local hash file used by the auto-updater.
