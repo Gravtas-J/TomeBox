@@ -86,7 +86,78 @@ class AAXManagerApp:
         self.root.after(900000, self.run_background_sync)
 
         threading.Thread(target=self.db_monitor_worker, daemon=True).start()
+
+        if "stats" not in self.settings:
+            self.settings["stats"] = {
+                "seconds_listened": 0, 
+                "books_finished": 0, 
+                "books_downloaded": 0, 
+                "unlocked_achievements": []
+            }
+        
+        self.session_listen_buffer = 0.0
+        
+        self.achievements = {
+            "first_dl": {"title": "System Integration Complete", "desc": "Download your first audiobook.", "type": "books_downloaded", "threshold": 1},
+            "hoarder_1": {"title": "Spatial Expansion", "desc": "Download 10 audiobooks.", "type": "books_downloaded", "threshold": 10},
+            "first_finish": {"title": "Core Consumed", "desc": "Finish an audiobook.", "type": "books_finished", "threshold": 1},
+            "finish_5": {"title": "Path Advancement", "desc": "Finish 5 audiobooks.", "type": "books_finished", "threshold": 5},
+            "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
+            "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
+        }
     
+    def add_stat(self, stat_name, amount=1):
+        stats = self.settings.get("stats", {})
+        stats[stat_name] = stats.get(stat_name, 0) + amount
+        self.settings["stats"] = stats
+        self.save_settings()
+        self.check_achievements()
+
+    def check_achievements(self):
+        stats = self.settings.get("stats", {})
+        unlocked = stats.get("unlocked_achievements", [])
+        
+        for ach_id, data in self.achievements.items():
+            if ach_id not in unlocked:
+                current_val = stats.get(data["type"], 0)
+                if current_val >= data["threshold"]:
+                    unlocked.append(ach_id)
+                    self.settings["stats"]["unlocked_achievements"] = unlocked
+                    self.save_settings()
+                    self.show_achievement_toast(data["title"], data["desc"])
+
+    def show_achievement_toast(self, title, desc):
+        toast = tk.Toplevel(self.root)
+        toast.wm_overrideredirect(True)
+        toast.attributes('-topmost', True)
+        
+        # Pull colors dynamically to match the current theme
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#2b2b2b"
+        fg_color = style.lookup("TLabel", "foreground") or "#f0f0f0"
+        accent_color = "#f39c12" # Legendary gold
+        
+        toast.configure(bg=accent_color)
+        
+        inner = tk.Frame(toast, bg=bg_color, highlightthickness=0)
+        inner.pack(fill="both", expand=True, padx=2, pady=2) # 2px padding creates the gold border
+        
+        tk.Label(inner, text="🏆 Achievement Unlocked!", font=("Segoe UI", 9, "bold"), bg=bg_color, fg=accent_color).pack(anchor="w", padx=15, pady=(10, 0))
+        tk.Label(inner, text=title, font=("Segoe UI", 11, "bold"), bg=bg_color, fg=fg_color).pack(anchor="w", padx=15)
+        tk.Label(inner, text=desc, font=("Segoe UI", 9), bg=bg_color, fg=fg_color).pack(anchor="w", padx=15, pady=(0, 10))
+        
+        # Force render to get accurate dimensions
+        toast.update_idletasks()
+        w = toast.winfo_width()
+        h = toast.winfo_height()
+        
+        # Position in the bottom right corner of the primary monitor
+        x = self.root.winfo_screenwidth() - w - 20
+        y = self.root.winfo_screenheight() - h - 60
+        toast.geometry(f"+{x}+{y}")
+        
+        self.root.after(5000, toast.destroy)
+
     def enforce_single_instance(self):
         self.lock_port = 43128 # Unique port just for TomeBox
         self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -357,6 +428,11 @@ class AAXManagerApp:
         self.help_menubutton.config(menu=self.help_menu)
         
         self.help_menu.add_command(label="Support the Developer ☕", command=self.open_support_link)
+
+        #Achievement menu
+        self.file_menu.add_command(label="My Achievements", command=self.open_achievements_window)
+        self.file_menu.add_separator()
+
     def build_info_components(self, parent):
         self.cover_frame = ttk.Frame(parent)
         self.cover_frame.pack(fill="x", padx=5, pady=10)
@@ -694,6 +770,108 @@ class AAXManagerApp:
             
             self.refresh_library_ui()
 
+
+    def open_achievements_window(self):
+        # Prevent opening multiple instances
+        if hasattr(self, 'ach_window') and self.ach_window.winfo_exists():
+            self.ach_window.lift()
+            self.ach_window.focus_set()
+            return
+
+        self.ach_window = tk.Toplevel(self.root)
+        self.ach_window.title("My Achievements")
+        self.ach_window.geometry("450x600")
+        self.ach_window.transient(self.root)
+        
+        # Pull colors dynamically to match the current theme
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        fg_color = style.lookup("TLabel", "foreground") or "#000000"
+        self.ach_window.configure(bg=bg_color)
+        
+        main_frame = ttk.Frame(self.ach_window, padding=10)
+        main_frame.pack(fill="both", expand=True)
+        
+        ttk.Label(main_frame, text="TomeBox Achievements", font=("Segoe UI", 16, "bold")).pack(pady=(0, 15))
+        
+        # Create a scrollable canvas for the achievement cards
+        canvas = tk.Canvas(main_frame, bg=bg_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=bg_color)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        
+        # Make the inner frame expand to the width of the canvas
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfig(canvas_window, width=e.width)
+        )
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Fetch current progress
+        stats = self.settings.get("stats", {})
+        unlocked = stats.get("unlocked_achievements", [])
+        
+        # Build the cards
+        for ach_id, data in getattr(self, 'achievements', {}).items():
+            is_unlocked = ach_id in unlocked
+            
+            # Styling based on unlock status
+            border_color = "#4a90e2" if is_unlocked else "#555555"
+            status_icon = "🏆" if is_unlocked else "🔒"
+            text_color = fg_color if is_unlocked else "#888888"
+            
+            card = tk.Frame(scrollable_frame, bg=bg_color, highlightbackground=border_color, highlightthickness=1)
+            card.pack(fill="x", pady=5, padx=5)
+            
+            header_frame = tk.Frame(card, bg=bg_color)
+            header_frame.pack(fill="x", padx=10, pady=(10, 0))
+            
+            tk.Label(header_frame, text=status_icon, font=("Segoe UI", 16), bg=bg_color).pack(side=tk.LEFT, padx=(0, 10))
+            tk.Label(header_frame, text=data["title"], font=("Segoe UI", 12, "bold"), fg=text_color, bg=bg_color).pack(side=tk.LEFT)
+            
+            tk.Label(card, text=data["desc"], font=("Segoe UI", 9), fg=text_color, bg=bg_color).pack(anchor="w", padx=45, pady=(0, 5))
+            
+            # Calculate and display progress
+            current_val = stats.get(data["type"], 0)
+            threshold = data["threshold"]
+            
+            if data["type"] == "seconds_listened":
+                curr_h = int(current_val // 3600)
+                thresh_h = int(threshold // 3600)
+                prog_text = f"Progress: {curr_h}h / {thresh_h}h"
+                percent = min(100, (current_val / threshold) * 100) if threshold > 0 else 0
+            else:
+                prog_text = f"Progress: {int(current_val)} / {threshold}"
+                percent = min(100, (current_val / threshold) * 100) if threshold > 0 else 0
+                
+            if is_unlocked:
+                prog_text = "Completed!"
+                percent = 100
+                
+            # Progress text and bar
+            bottom_frame = tk.Frame(card, bg=bg_color)
+            bottom_frame.pack(fill="x", padx=10, pady=(0, 10))
+            
+            tk.Label(bottom_frame, text=prog_text, font=("Segoe UI", 8, "italic"), fg=text_color, bg=bg_color).pack(side=tk.RIGHT)
+            
+            # Custom drawn progress bar so we can control the color easily
+            bar_bg = "#333333" if is_unlocked else "#d3d3d3"
+            bar_canvas = tk.Canvas(bottom_frame, height=6, bg=bar_bg, highlightthickness=0)
+            bar_canvas.pack(side=tk.LEFT, fill="x", expand=True, padx=(35, 10))
+            
+            if percent > 0:
+                bar_canvas.update_idletasks()
+                bar_canvas.bind("<Configure>", lambda e, p=percent, c=bar_canvas, b=border_color: c.create_rectangle(0, 0, e.width * (p/100), e.height, fill=b, outline=""))
+                
     def save_tray_setting(self):
         self.settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
         self.save_settings()
@@ -2308,7 +2486,7 @@ class AAXManagerApp:
                 self.root.after(0, self.active_downloads[asin]["status_var"].set, "Complete")
             
             self.write_log(f"Download complete: {safe_title}.aaxc")
-            
+            self.add_stat("books_downloaded", 1)
             self.local_library[filepath] = {
                 "title": title, 
                 "format": "AAXC", 
@@ -3210,6 +3388,12 @@ class AAXManagerApp:
         
         speed_val = float(self.playback_speed.get().replace("x", ""))
         self.current_play_time += (delta * speed_val)
+
+        real_time_delta = delta * speed_val
+        self.session_listen_buffer += real_time_delta
+        if self.session_listen_buffer >= 60.0:
+            self.add_stat("seconds_listened", self.session_listen_buffer)
+            self.session_listen_buffer = 0.0
         
         if self.current_play_time > self.chapter_duration:
             self.current_play_time = self.chapter_duration
@@ -3282,6 +3466,7 @@ class AAXManagerApp:
             self.play_chapter()
         else:
             self.stop_audio()
+            self.add_stat("books_finished", 1)
             self.info_label.config(text="Finished Book")
 
     def prev_chapter(self):
