@@ -1,12 +1,17 @@
+# --- Core UI & Graphics ---
+Pillow
+tkinterdnd2
+pystray
+
+# --- Audible API & Decryption ---
 audible
 requests
-Pillow
-# sv-ttk
 rsa
-pystray
-tkinterdnd2
+
+# --- Companion Web Server ---
+fastapi
+uvicorn
+
+# --- System Utilities ---
 wakepy
-# Optional: Windows-specific volume control dependencies
-# (Safe to ignore or remove if running exclusively on Mac/Linux)
 pycaw
-comtypes
