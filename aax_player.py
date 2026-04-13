@@ -33,34 +33,30 @@ class AAXManagerApp:
 
         self.enforce_single_instance()
         
+        # 1. Setup Base Paths FIRST
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.local_db_path = os.path.join(self.base_dir, "library.json")
         self.last_db_mtime = 0
-        self.auth_save_path = os.path.join(self.base_dir, "my_audible_auth.json")
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
         self.covers_dir = os.path.join(self.base_dir, "covers")
         os.makedirs(self.covers_dir, exist_ok=True)
         self.settings_path = os.path.join(self.base_dir, "settings.json")
+        
+        # 2. Load Settings BEFORE applying any variables
         self.settings = self.load_settings()
         
-        self.default_download_dir = self.settings.get("download_dir", "")
+        # 3. Apply Settings
         self.active_profile = self.settings.get("active_profile", "Main")
-        
-        # Dynamically named based on the profile
-        self.auth_save_path = os.path.join(self.base_dir, f"auth_{self.active_profile}.json")
-        self.cloud_cache_path = os.path.join(self.base_dir, f"cloud_{self.active_profile}.json")
-        self.auth_object = None
-        self.local_library = self.load_local_db()
-        self.cloud_items = [] 
-        
-        self.settings = self.load_settings()
         self.minimize_to_tray_var = tk.BooleanVar(value=self.settings.get("minimize_to_tray", True))
         self.default_download_dir = self.settings.get("download_dir", "")
-        self.cloud_cache_path = os.path.join(self.base_dir, "cloud_cache.json")
         
+        # 4. Setup Profile-Specific Paths
+        self.auth_save_path = os.path.join(self.base_dir, f"auth_{self.active_profile}.json")
+        self.cloud_cache_path = os.path.join(self.base_dir, f"cloud_{self.active_profile}.json")
+        
+        # 5. Load Memory
         self.auth_object = None
         self.local_library = self.load_local_db()
-        self.cloud_library = []
         self.cloud_items = self.load_cloud_cache()
 
         self.file_path = ""
@@ -135,10 +131,12 @@ class AAXManagerApp:
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 120px; }
                 header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 10px; }
                 
-                .header-controls { display: flex; gap: 10px; width: 100%; }
-                #search-box { flex-grow: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 1rem; outline: none; min-width: 0; }
-                #shelf-filter { padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 0.9rem; outline: none; }
-                #search-box:focus, #shelf-filter:focus { border-color: var(--accent); }
+                .header-controls { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+                #search-box { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 1rem; outline: none; box-sizing: border-box; }
+                
+                .filter-row { display: flex; gap: 10px; width: 100%; }
+                .ui-select { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 0.9rem; outline: none; }
+                #search-box:focus, .ui-select:focus { border-color: var(--accent); }
 
                 #library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px; }
                 .book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; }
@@ -171,18 +169,14 @@ class AAXManagerApp:
                 #progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
                 #progress-fill { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; }
 
-                /* Modals */
                 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
                 .modal-content { background: var(--card); width: 90%; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #444; }
                 .modal-header { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2rem; }
                 .modal-body { overflow-y: auto; flex-grow: 1; }
                 .close-btn { color: #aaa; font-size: 1.5rem; }
-                
                 .list-item { padding: 15px; border-bottom: 1px solid #333; color: #ccc; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
                 .list-item:active { background-color: #2a2a2a; }
                 .list-item.active { color: var(--accent); font-weight: bold; }
-                
-                /* Custom Sleep Input Row */
                 .custom-sleep-row { cursor: default; }
                 .custom-sleep-row:active { background-color: transparent; }
                 .sleep-input-group { display: flex; align-items: center; gap: 10px; }
@@ -195,10 +189,13 @@ class AAXManagerApp:
             <header>
                 <div>TomeBox Library</div>
                 <div class="header-controls">
-                    <input type="text" id="search-box" placeholder="Search..." onkeyup="filterLibrary()">
-                    <select id="shelf-filter" onchange="filterLibrary()">
-                        <option value="all">All Shelves</option>
-                    </select>
+                    <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
+                    <div class="filter-row">
+                        <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
+                            <option value="all">All Shelves</option>
+                        </select>
+                        <select id="profile-selector" class="ui-select" onchange="changeProfile()"></select>
+                    </div>
                 </div>
             </header>
             
@@ -208,14 +205,12 @@ class AAXManagerApp:
                 <div id="progress-container" onclick="seekAudio(event)">
                     <div id="progress-fill"></div>
                 </div>
-                
                 <div class="player-top-row">
                     <div class="player-info">
                         <p id="now-playing-title">Select a book</p>
                         <p id="now-playing-author">...</p>
                     </div>
                 </div>
-
                 <div class="player-bottom-row">
                     <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
                     <div class="main-controls">
@@ -244,7 +239,6 @@ class AAXManagerApp:
                         <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
                         <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
                         <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
-                        
                         <div class="list-item custom-sleep-row">
                             <div class="sleep-input-group">
                                 <span>After</span>
@@ -253,7 +247,6 @@ class AAXManagerApp:
                             </div>
                             <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
                         </div>
-                        
                         <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
                     </div>
                 </div>
@@ -265,8 +258,7 @@ class AAXManagerApp:
                         <span>Chapters</span>
                         <button class="close-btn" onclick="closeModals()">✕</button>
                     </div>
-                    <div class="modal-body" id="chapter-list">
-                        </div>
+                    <div class="modal-body" id="chapter-list"></div>
                 </div>
             </div>
 
@@ -280,76 +272,113 @@ class AAXManagerApp:
                 let allBooks = []; 
                 let currentPath = null;
                 let currentChapters = [];
-
-                // --- Sleep Timer Variables ---
                 let sleepMode = null; 
                 let sleepTimeout = null;
                 let sleepTargetTime = null;
+                
+                let currentProfile = "Main";
+                let rawLibraryData = {};
+
+                async function initializeApp() {
+                    try {
+                        const profRes = await fetch('/api/profiles');
+                        const profiles = await profRes.json();
+                        const profSelect = document.getElementById('profile-selector');
+                        profSelect.innerHTML = '';
+                        profiles.forEach(p => { profSelect.innerHTML += `<option value="${p}">${p}</option>`; });
+                        currentProfile = profiles[0] || "Main";
+                    } catch (e) { console.error("Profile fetch failed", e); }
+                    loadLibrary();
+                }
 
                 async function loadLibrary() {
                     try {
                         const response = await fetch('/api/library');
-                        const library = await response.json();
-                        const grid = document.getElementById('library-grid');
-                        const shelfFilter = document.getElementById('shelf-filter');
+                        rawLibraryData = await response.json();
+                        renderGrid();
+                    } catch (e) { console.error("Failed to load library", e); }
+                }
+
+                function renderGrid() {
+                    const grid = document.getElementById('library-grid');
+                    const shelfFilter = document.getElementById('shelf-filter');
+                    
+                    grid.innerHTML = '';
+                    allBooks = [];
+                    let uniqueShelves = new Set();
+
+                    for (const [path, data] of Object.entries(rawLibraryData)) {
+                        if (data.format !== 'M4B' && data.format !== 'MP3') continue;
+
+                        let authorStr = data.authors || 'Unknown Author';
+                        const titleStr = data.title || "Unknown Title";
+                        const asin = data.asin || "Unknown";
+                        const bookShelves = data.shelves || [];
+                        bookShelves.forEach(s => uniqueShelves.add(s));
                         
-                        grid.innerHTML = '';
-                        allBooks = [];
-                        let uniqueShelves = new Set();
-
-                        for (const [path, data] of Object.entries(library)) {
-                            if (data.format !== 'M4B' && data.format !== 'MP3') continue;
-
-                            let authorStr = 'Unknown Author';
-                            if (typeof data.authors === 'string') {
-                                authorStr = data.authors;
-                            } else if (Array.isArray(data.authors)) {
-                                authorStr = data.authors.map(a => a.name || a).join(', ');
-                            }
-                            
-                            const titleStr = data.title || "Unknown Title";
-                            const asin = data.asin || "Unknown";
-                            const resumePos = data.last_position || 0;
-                            const bookShelves = data.shelves || [];
-                            
-                            bookShelves.forEach(s => uniqueShelves.add(s));
-                            
-                            let timePill = "";
-                            if (resumePos > 60) {
-                                const hrs = Math.floor(resumePos / 3600);
-                                const mins = Math.floor((resumePos % 3600) / 60);
-                                timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
-                            }
-
-                            const coverHtml = asin !== "Unknown" 
-                                ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
-                                : `<div class="cover-placeholder">📖</div>`;
-
-                            const card = document.createElement('div');
-                            card.className = 'book-card';
-                            card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
-                            
-                            card.innerHTML = `
-                                ${coverHtml}
-                                <p class="book-title">${titleStr}</p>
-                                <p class="book-author">${authorStr}</p>
-                                ${timePill}
-                            `;
-                            grid.appendChild(card);
-                            
-                            allBooks.push({
-                                element: card,
-                                searchString: `${titleStr} ${authorStr}`.toLowerCase(),
-                                shelves: bookShelves
-                            });
+                        // Get profile-specific timestamp
+                        let resumePos = 0;
+                        if (data.progress && data.progress[currentProfile] !== undefined) {
+                            resumePos = data.progress[currentProfile];
+                        } else if (data.last_position) {
+                            resumePos = data.last_position;
+                        }
+                        
+                        let timePill = "";
+                        if (resumePos > 60) {
+                            const hrs = Math.floor(resumePos / 3600);
+                            const mins = Math.floor((resumePos % 3600) / 60);
+                            timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
                         }
 
-                        shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
-                        Array.from(uniqueShelves).sort().forEach(shelf => {
-                            shelfFilter.innerHTML += `<option value="${shelf}">${shelf}</option>`;
-                        });
+                        const coverHtml = asin !== "Unknown" 
+                            ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+                            : `<div class="cover-placeholder">📖</div>`;
 
-                    } catch (e) { console.error("Failed to load library", e); }
+                        const card = document.createElement('div');
+                        card.className = 'book-card';
+                        card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
+                        
+                        card.innerHTML = `
+                            ${coverHtml}
+                            <p class="book-title">${titleStr}</p>
+                            <p class="book-author">${authorStr}</p>
+                            ${timePill}
+                        `;
+                        grid.appendChild(card);
+                        
+                        allBooks.push({ path: path, element: card, searchString: `${titleStr} ${authorStr}`.toLowerCase(), shelves: bookShelves });
+                    }
+
+                    const currentShelfSelection = shelfFilter.value;
+                    shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
+                    Array.from(uniqueShelves).sort().forEach(shelf => {
+                        const selected = shelf === currentShelfSelection ? "selected" : "";
+                        shelfFilter.innerHTML += `<option value="${shelf}" ${selected}>${shelf}</option>`;
+                    });
+                    
+                    filterLibrary();
+                }
+
+                // FIX: Changing profiles now forces a fresh database pull so timestamps never get stale
+                async function changeProfile() {
+                    currentProfile = document.getElementById('profile-selector').value;
+                    await loadLibrary(); 
+                    
+                    if (currentPath && rawLibraryData[currentPath]) {
+                        const data = rawLibraryData[currentPath];
+                        let newPos = 0;
+                        if (data.progress && data.progress[currentProfile] !== undefined) {
+                            newPos = data.progress[currentProfile];
+                        } else if (data.last_position) {
+                            newPos = data.last_position;
+                        }
+                        
+                        // Move the audio player to the new profile's position
+                        if (Math.abs(audio.currentTime - newPos) > 2) {
+                            audio.currentTime = newPos;
+                        }
+                    }
                 }
 
                 function filterLibrary() {
@@ -370,13 +399,11 @@ class AAXManagerApp:
                     
                     audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
                     audio.playbackRate = currentSpeed; 
-                    
                     audio.currentTime = startPosition;
                     audio.play().catch(err => console.error("Audio play failed:", err));
                     
                     playerBar.classList.add('active');
                     playBtn.innerText = '⏸';
-                    
                     setSleepOff(); 
 
                     try {
@@ -386,9 +413,7 @@ class AAXManagerApp:
 
                     if ('mediaSession' in navigator) {
                         const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
-                        navigator.mediaSession.metadata = new MediaMetadata({ 
-                            title: title, artist: author, album: 'TomeBox', artwork: artworkUrl 
-                        });
+                        navigator.mediaSession.metadata = new MediaMetadata({ title: title, artist: author, album: 'TomeBox', artwork: artworkUrl });
                         navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
                         navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
                         navigator.mediaSession.setActionHandler('previoustrack', () => skipChapter(-1));
@@ -396,10 +421,7 @@ class AAXManagerApp:
                     }
                 }
 
-                function closeModals(e) {
-                    document.getElementById('sleep-modal').style.display = 'none';
-                    document.getElementById('chapter-modal').style.display = 'none';
-                }
+                function closeModals(e) { document.getElementById('sleep-modal').style.display = 'none'; document.getElementById('chapter-modal').style.display = 'none'; }
                 function openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
                 
                 function formatTime(sec) {
@@ -424,17 +446,12 @@ class AAXManagerApp:
                         const div = document.createElement('div');
                         div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
                         div.innerHTML = `<span>${ch.title}</span> <span>${formatTime(ch.start)}</span>`;
-                        div.onclick = () => { 
-                            audio.currentTime = ch.start; 
-                            if(audio.paused) togglePlay(); 
-                            closeModals(); 
-                        };
+                        div.onclick = () => { audio.currentTime = ch.start; if(audio.paused) togglePlay(); closeModals(); };
                         list.appendChild(div);
                     });
                     document.getElementById('chapter-modal').style.display = 'flex';
                 }
 
-                // --- Sleep Timer Logic ---
                 function setSleepTimer(mins) {
                     clearTimeout(sleepTimeout);
                     sleepMode = 'time';
@@ -445,41 +462,26 @@ class AAXManagerApp:
                     closeModals();
                 }
                 
-                // Helper to capture the custom input
                 function setCustomSleepChapter() {
                     const inputElem = document.getElementById('custom-chapter-input');
                     let count = parseInt(inputElem.value, 10);
-                    
-                    // Fallback to 1 if they type something invalid
-                    if (isNaN(count) || count < 1) {
-                        count = 1;
-                        inputElem.value = 1;
-                    }
+                    if (isNaN(count) || count < 1) { count = 1; inputElem.value = 1; }
                     setSleepChapter(count);
                 }
 
                 function setSleepChapter(chapterCount) {
                     clearTimeout(sleepTimeout);
-                    if (!currentChapters.length) {
-                        alert("No chapter data available for this book.");
-                        return;
-                    }
+                    if (!currentChapters.length) { alert("No chapter data available for this book."); return; }
                     
                     sleepMode = 'chapter';
-                    
                     const now = audio.currentTime;
                     let currentIdx = currentChapters.findIndex(c => c.start > now) - 1;
-                    
                     if (currentIdx < 0 && now >= currentChapters[0].start) currentIdx = currentChapters.length - 1;
                     if (currentIdx === -2) currentIdx = 0; 
 
                     let targetIdx = currentIdx + chapterCount;
-                    
-                    if (targetIdx < currentChapters.length) {
-                        sleepTargetTime = currentChapters[targetIdx].start;
-                    } else {
-                        sleepTargetTime = audio.duration;
-                    }
+                    if (targetIdx < currentChapters.length) { sleepTargetTime = currentChapters[targetIdx].start; } 
+                    else { sleepTargetTime = audio.duration; }
 
                     document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
                     closeModals();
@@ -506,12 +508,20 @@ class AAXManagerApp:
                     }
                 }
 
+                // FIX: Update local JS memory instantly so the purple pills stay accurate
                 setInterval(() => {
                     if (!audio.paused && currentPath) {
+                        const pos = audio.currentTime;
+                        
+                        if (rawLibraryData[currentPath]) {
+                            if (!rawLibraryData[currentPath].progress) rawLibraryData[currentPath].progress = {};
+                            rawLibraryData[currentPath].progress[currentProfile] = pos;
+                        }
+
                         fetch('/api/progress', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ path: currentPath, position: audio.currentTime })
+                            body: JSON.stringify({ path: currentPath, position: pos, profile: currentProfile })
                         }).catch(() => {});
                     }
                 }, 10000);
@@ -540,36 +550,22 @@ class AAXManagerApp:
                 }
 
                 audio.addEventListener('timeupdate', () => {
-                    if (audio.duration) {
-                        progressFill.style.width = `${(audio.currentTime / audio.duration) * 100}%`;
-                    }
+                    if (audio.duration) { progressFill.style.width = `${(audio.currentTime / audio.duration) * 100}%`; }
                     
                     if (sleepMode === 'chapter' && sleepTargetTime !== null) {
                         if (audio.currentTime >= sleepTargetTime - 1) {
                             audio.pause();
                             playBtn.innerText = '▶';
-                            
-                            if (sleepTargetTime < audio.duration) {
-                                audio.currentTime = sleepTargetTime;
-                            }
-                            
+                            if (sleepTargetTime < audio.duration) { audio.currentTime = sleepTargetTime; }
                             setSleepOff();
                         }
                     }
                 });
 
-                audio.addEventListener('ended', () => {
-                    playBtn.innerText = '▶';
-                    progressFill.style.width = '0%';
-                });
+                audio.addEventListener('ended', () => { playBtn.innerText = '▶'; progressFill.style.width = '0%'; });
+                function seekAudio(e) { if (!audio.duration) return; const rect = e.target.getBoundingClientRect(); audio.currentTime = (e.clientX - rect.left) / rect.width * audio.duration; }
 
-                function seekAudio(e) {
-                    if (!audio.duration) return;
-                    const rect = e.target.getBoundingClientRect();
-                    audio.currentTime = (e.clientX - rect.left) / rect.width * audio.duration;
-                }
-
-                loadLibrary();
+                initializeApp();
             </script>
         </body>
         </html>
@@ -602,27 +598,52 @@ class AAXManagerApp:
                 def web_interface():
                     return HTMLResponse(content=self._get_mobile_html())
 
-                # --- UPDATED: Shelf Integration ---
+                @api.get("/api/profiles")
+                def get_profiles():
+                    profs = self.settings.get("profiles")
+                    if not profs or not isinstance(profs, list):
+                        return ["Main"]
+                    return profs
+
                 @api.get("/api/library")
                 def get_web_library():
                     enriched_lib = {}
-                    # Pull the user's custom shelves from the desktop settings
                     shelves_db = self.settings.get("shelves_db", {})
                     
+                    master_metadata = {}
+                    for f in os.listdir(self.base_dir):
+                        if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
+                            try:
+                                with open(os.path.join(self.base_dir, f), "r") as file:
+                                    for item in json.load(file):
+                                        if item.get("asin"): master_metadata[item["asin"]] = item
+                                        if item.get("title"): master_metadata[item["title"]] = item
+                            except Exception:
+                                pass
+
+                    for item in getattr(self, 'cloud_items', []):
+                        if item.get("asin"): master_metadata[item["asin"]] = item
+                        if item.get("title"): master_metadata[item["title"]] = item
+
                     for path, data in self.local_library.items():
                         item_copy = dict(data)
                         asin = item_copy.get("asin")
-                        
-                        # Attach the shelf array to the web payload
                         item_copy["shelves"] = shelves_db.get(asin, [])
                         
-                        for cloud_item in getattr(self, 'cloud_items', []):
-                            if cloud_item.get("asin") == asin or cloud_item.get("title") == item_copy.get("title"):
-                                raw_authors = cloud_item.get("authors", [])
-                                item_copy["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                                if not asin:
-                                    item_copy["asin"] = cloud_item.get("asin")
-                                break
+                        if "progress" not in item_copy:
+                            item_copy["progress"] = {}
+                            
+                        existing_auth = item_copy.get("authors", "")
+                        if isinstance(existing_auth, list):
+                            item_copy["authors"] = ", ".join([a.get("name", "") if isinstance(a, dict) else str(a) for a in existing_auth])
+                        
+                        meta = master_metadata.get(asin) or master_metadata.get(item_copy.get("title"), {})
+                        if meta:
+                            if not item_copy.get("authors") or item_copy.get("authors") in ["Unknown", "Unknown Author"]:
+                                raw_authors = meta.get("authors", [])
+                                item_copy["authors"] = ", ".join([a.get("name", "") if isinstance(a, dict) else str(a) for a in raw_authors])
+                            if not asin:
+                                item_copy["asin"] = meta.get("asin")
                                 
                         enriched_lib[path] = item_copy
                     return enriched_lib
@@ -640,8 +661,15 @@ class AAXManagerApp:
                         data = await request.json()
                         path = data.get("path")
                         position = data.get("position")
+                        profile = data.get("profile", "Main")
+
                         if path and path in self.local_library:
+                            if "progress" not in self.local_library[path]:
+                                self.local_library[path]["progress"] = {}
+                                
+                            self.local_library[path]["progress"][profile] = position
                             self.local_library[path]["last_position"] = position
+                                
                             self.root.after(0, self.save_local_db)
                     except Exception:
                         pass
@@ -663,7 +691,6 @@ class AAXManagerApp:
                             chapters.append({"start": start_time, "title": title})
                         return chapters
                     except Exception as e:
-                        self.write_log(f"Failed to parse chapters for {path}: {e}")
                         return []
 
                 @api.get("/api/stream")
@@ -675,11 +702,7 @@ class AAXManagerApp:
                     range_header = request.headers.get("Range")
 
                     if not range_header:
-                        headers = {
-                            "Accept-Ranges": "bytes",
-                            "Content-Length": str(file_size),
-                            "Content-Type": "audio/mp4",
-                        }
+                        headers = {"Accept-Ranges": "bytes", "Content-Length": str(file_size), "Content-Type": "audio/mp4"}
                         def full_file_iterator():
                             with open(path, "rb") as f: yield from f
                         return StreamingResponse(full_file_iterator(), headers=headers)
@@ -704,13 +727,7 @@ class AAXManagerApp:
                                 bytes_left -= len(data)
                                 yield data
 
-                    headers = {
-                        "Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}",
-                        "Accept-Ranges": "bytes",
-                        "Content-Length": str(chunk_size),
-                        "Content-Type": "audio/mp4", 
-                    }
-
+                    headers = {"Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}", "Accept-Ranges": "bytes", "Content-Length": str(chunk_size), "Content-Type": "audio/mp4"}
                     return StreamingResponse(chunk_generator(), status_code=206, headers=headers)
 
                 config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_level="error")
@@ -718,16 +735,9 @@ class AAXManagerApp:
                 threading.Thread(target=self.web_server.run, daemon=True).start()
                 
                 self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server")
-                
                 local_ip = self.get_local_ip()
-                msg = (
-                    "Companion Server is now running in the background!\n\n"
-                    "To access your library from your phone or another PC, "
-                    "open this exact address in your browser:\n\n"
-                    f"http://{local_ip}:8000"
-                )
                 self.write_log(f"Server started on http://{local_ip}:8000")
-                messagebox.showinfo("Server Active", msg)
+                messagebox.showinfo("Server Active", f"Companion Server is now running!\n\nAccess it at:\nhttp://{local_ip}:8000")
                 
             except ImportError:
                 messagebox.showerror("Missing Libraries", "Please install the required server packages first:\n\npip install fastapi uvicorn")
@@ -2615,7 +2625,6 @@ class AAXManagerApp:
             self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def refresh_library_ui(self, *args):
-        # Clear the current treeview
         for row in self.library_tree.get_children():
             self.library_tree.delete(row)
 
@@ -2629,6 +2638,23 @@ class AAXManagerApp:
 
         all_unique_shelves = set()
         shelves_db = self.settings.get("shelves_db", {})
+
+        # --- FIXED: Master Metadata Dictionary ---
+        master_metadata = {}
+        for f in os.listdir(self.base_dir):
+            if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
+                try:
+                    with open(os.path.join(self.base_dir, f), "r") as file:
+                        for item in json.load(file):
+                            if item.get("title"):
+                                master_metadata[item["title"]] = item
+                except Exception:
+                    pass
+
+        for item in getattr(self, 'cloud_items', []):
+            if item.get("title"):
+                master_metadata[item["title"]] = item
+        # -----------------------------------------
 
         for item in getattr(self, 'cloud_items', []):
             title = item.get("title", "Unknown")
@@ -2654,25 +2680,39 @@ class AAXManagerApp:
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             
             rows_to_insert.append((title, authors, series_str, duration_str, asin, status))
-
             all_unique_shelves.update(shelves_db.get(asin, []))
 
         for path, data in self.local_library.items():
             if data["title"] not in cloud_titles:
-                
-                loc_authors = data.get("authors", "Local File")
-                loc_series = data.get("series", "N/A")
-                
-                duration_min = data.get("duration_min", 0)
+                title = data["title"]
+                asin = data.get("asin", "Unknown")
+                meta = master_metadata.get(title, {})
+
+                # Extract rich metadata safely
+                if meta.get("authors"):
+                    raw_authors = meta.get("authors")
+                    loc_authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                else:
+                    loc_authors = data.get("authors", "Local File")
+
+                if meta.get("series"):
+                    raw_series = meta.get("series")
+                    series_list = [f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")]
+                    loc_series = ", ".join(series_list)
+                else:
+                    loc_series = data.get("series", "N/A")
+
+                duration_min = meta.get("runtime_length_min") or data.get("duration_min", 0)
                 if duration_min > 0:
                     hours, mins = divmod(duration_min, 60)
                     loc_duration = f"{hours}h {mins}m"
                 else:
                     loc_duration = "N/A"
-                    
-                asin = data.get("asin", "Unknown")
-                
-                rows_to_insert.append((data["title"], loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
+
+                if asin == "Unknown" and meta.get("asin"):
+                    asin = meta.get("asin")
+
+                rows_to_insert.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
         shelf_list = ["All Shelves"] + sorted(list(all_unique_shelves))

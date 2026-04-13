@@ -79,6 +79,38 @@ TomeBox is designed to be completely portable and requires zero technical config
 * **Data Export:** Dump your library to a flattened CSV file or generate an offline, CSS-styled HTML gallery of your collection.
 * **System Tray Intergration:** Minimizes to system tray for neat and clean runtime. 
 
+### Local Companion Web Server
+* **Embedded Daemon:** FastAPI server runs in a background thread inside the Tkinter process, avoiding GUI blocking.
+
+* **Menu Integration:** Toggleable via the desktop File menu; automatically retrieves and displays the host machine's local IP address.
+
+* **Chunked Audio Streaming:** Implements HTTP 206 Partial Content endpoints to stream .m4b files in 64KB chunks, allowing timeline scrubbing without loading full files into memory.
+
+* **Metadata Hydration:** API dynamically merges library.json data with the cloud_cache and local .jpg directory to serve complete book profiles (authors, shelves, covers) to the frontend.
+
+### Web Player Interface
+* **Mobile-First SPA:** Responsive single-page application built in vanilla HTML/CSS/JS without build steps or heavy frameworks.
+
+* **Live Filtering:*** Client-side grid filtering by search query (title/author) and custom desktop shelves.
+
+* **MediaSession Hook:** Pushes cover art, title, and author data to OS-level media controllers (lock screens, smartwatches, Bluetooth car displays).
+
+### Playback & Controls
+* **Dynamic Chapter Parsing:** Executes ffprobe on demand to extract MP4 chapter markers, generating an interactive chapter selection menu.
+
+* **Hardware Skip Integration:** Maps physical OS media buttons (previous/next track) to audiobook chapter skips and 15-second jumps.
+
+* **Playback Speed:** Cycles through 1.0x to 2.0x speeds, maintaining state across track changes.
+
+* **Advanced Sleep Timer:** Configurable by raw minutes (15/30/60) or custom chapter counts. Chapter-based sleep calculates the exact future timestamp and pauses precisely on the chapter boundary.
+
+### Progress Sync & Multi-User Tracking
+* **Profile Integration:** Fetches desktop user profiles and isolates playback progress within the database, preventing multiple users from overriding each other.
+
+* **Heartbeat Sync:** Browser posts the current timestamp to the backend every 10 seconds during active playback.
+
+* **Bi-Directional Format Translation:** Desktop GUI translates absolute time (from the web) into chapter-relative time (for ffplay), allowing seamless resuming between PC and mobile devices.
+
 ## Application Data
 
 TomeBox respects your system and does not bury files in hidden AppData folders. It generates the following local files directly in its root directory:
@@ -91,7 +123,7 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 
 # Roadmap
 
-## Phase 1: Ui changes
+## Ui changes
 
 ### UI Engine Replacement: 
 Migrating the frontend away from Tkinter.
@@ -101,10 +133,6 @@ Migrating the frontend away from Tkinter.
 ### Multi-Provider Support: 
 Abstract the Audible API logic to support adding modules for Soundbooth Theater or other DRM-free stores.
 
-## Phase 3: Self hosting 
-
-### implementing self hosting
-create a FastAPI and migrate to SQlite to enable streaming from server instance to networked devices. 
 
 ## Acknowledgments
 
