@@ -132,41 +132,142 @@ class AAXManagerApp:
             <title>TomeBox</title>
             <style>
                 :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #bb86fc; }
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 90px; }
-                header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 120px; }
+                header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 10px; }
                 
-                #library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; padding: 15px; }
+                .header-controls { display: flex; gap: 10px; width: 100%; }
+                #search-box { flex-grow: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 1rem; outline: none; min-width: 0; }
+                #shelf-filter { padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 0.9rem; outline: none; }
+                #search-box:focus, #shelf-filter:focus { border-color: var(--accent); }
+
+                #library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px; }
                 .book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; }
                 .book-card:active { transform: scale(0.98); }
+                .cover-image { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; margin-bottom: 10px; background-color: #333; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
                 .cover-placeholder { width: 100%; aspect-ratio: 1; background-color: #333; border-radius: 4px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #555; }
                 .book-title { font-weight: bold; font-size: 0.9rem; margin: 0 0 5px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
                 .book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
+                .progress-pill { font-size: 0.7rem; color: var(--accent); background: #333; padding: 2px 6px; border-radius: 10px; margin-top: 5px; display: inline-block; }
 
-                #player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 20px; display: flex; align-items: center; gap: 15px; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
+                #player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 15px 20px 15px; display: flex; flex-direction: column; gap: 10px; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
                 #player-bar.active { transform: translateY(0); }
-                .player-info { flex-grow: 1; overflow: hidden; }
+                
+                .player-top-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+                .player-info { flex-grow: 1; overflow: hidden; text-align: center; }
                 #now-playing-title { font-weight: bold; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 #now-playing-author { font-size: 0.8rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .play-btn { background: none; border: none; color: var(--accent); font-size: 2rem; cursor: pointer; padding: 0; outline: none; }
                 
-                #progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 4px; background-color: #444; cursor: pointer; }
+                .player-bottom-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+                .main-controls { display: flex; align-items: center; gap: 15px; justify-content: center; flex-grow: 1; }
+                .side-tools { display: flex; gap: 10px; min-width: 60px; justify-content: flex-end; }
+                
+                button { background: none; border: none; color: var(--text); cursor: pointer; padding: 5px; outline: none; display: flex; align-items: center; justify-content: center; }
+                .play-btn { color: var(--accent); font-size: 2.5rem; width: 50px; height: 50px; }
+                .skip-btn { font-size: 1.5rem; color: #ccc; }
+                .chapter-btn { font-size: 1.2rem; color: #888; }
+                .speed-btn { font-size: 1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 4px; padding: 5px 10px; min-width: 50px; }
+                .tool-btn { font-size: 1.4rem; color: #aaa; transition: color 0.2s; }
+                
+                #progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
                 #progress-fill { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; }
+
+                /* Modals */
+                .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+                .modal-content { background: var(--card); width: 90%; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #444; }
+                .modal-header { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2rem; }
+                .modal-body { overflow-y: auto; flex-grow: 1; }
+                .close-btn { color: #aaa; font-size: 1.5rem; }
+                
+                .list-item { padding: 15px; border-bottom: 1px solid #333; color: #ccc; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+                .list-item:active { background-color: #2a2a2a; }
+                .list-item.active { color: var(--accent); font-weight: bold; }
+                
+                /* Custom Sleep Input Row */
+                .custom-sleep-row { cursor: default; }
+                .custom-sleep-row:active { background-color: transparent; }
+                .sleep-input-group { display: flex; align-items: center; gap: 10px; }
+                .sleep-input { width: 50px; background: #222; color: white; border: 1px solid #444; border-radius: 6px; padding: 5px; text-align: center; font-size: 1rem; outline: none; }
+                .sleep-input:focus { border-color: var(--accent); }
+                .sleep-set-btn { background: var(--accent); color: var(--bg); font-weight: bold; border-radius: 6px; padding: 5px 15px; font-size: 0.9rem; }
             </style>
         </head>
         <body>
-            <header>TomeBox Library</header>
+            <header>
+                <div>TomeBox Library</div>
+                <div class="header-controls">
+                    <input type="text" id="search-box" placeholder="Search..." onkeyup="filterLibrary()">
+                    <select id="shelf-filter" onchange="filterLibrary()">
+                        <option value="all">All Shelves</option>
+                    </select>
+                </div>
+            </header>
+            
             <main id="library-grid"></main>
 
             <div id="player-bar">
                 <div id="progress-container" onclick="seekAudio(event)">
                     <div id="progress-fill"></div>
                 </div>
-                <div class="player-info">
-                    <p id="now-playing-title">Select a book</p>
-                    <p id="now-playing-author">...</p>
+                
+                <div class="player-top-row">
+                    <div class="player-info">
+                        <p id="now-playing-title">Select a book</p>
+                        <p id="now-playing-author">...</p>
+                    </div>
                 </div>
-                <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+
+                <div class="player-bottom-row">
+                    <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
+                    <div class="main-controls">
+                        <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
+                        <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
+                        <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+                        <button class="skip-btn" onclick="skipAudio(15)">↻</button>
+                        <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
+                    </div>
+                    <div class="side-tools">
+                        <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
+                        <button class="tool-btn" onclick="openChapterMenu()">📑</button>
+                    </div>
+                </div>
                 <audio id="main-audio"></audio>
+            </div>
+
+            <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span>Sleep Timer</span>
+                        <button class="close-btn" onclick="closeModals()">✕</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
+                        <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
+                        <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
+                        <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
+                        
+                        <div class="list-item custom-sleep-row">
+                            <div class="sleep-input-group">
+                                <span>After</span>
+                                <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
+                                <span>Chapters</span>
+                            </div>
+                            <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
+                        </div>
+                        
+                        <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span>Chapters</span>
+                        <button class="close-btn" onclick="closeModals()">✕</button>
+                    </div>
+                    <div class="modal-body" id="chapter-list">
+                        </div>
+                </div>
             </div>
 
             <script>
@@ -174,13 +275,27 @@ class AAXManagerApp:
                 const playBtn = document.getElementById('play-pause-btn');
                 const progressFill = document.getElementById('progress-fill');
                 const playerBar = document.getElementById('player-bar');
+                const speedBtn = document.getElementById('speed-btn');
+
+                let allBooks = []; 
+                let currentPath = null;
+                let currentChapters = [];
+
+                // --- Sleep Timer Variables ---
+                let sleepMode = null; 
+                let sleepTimeout = null;
+                let sleepTargetTime = null;
 
                 async function loadLibrary() {
                     try {
                         const response = await fetch('/api/library');
                         const library = await response.json();
                         const grid = document.getElementById('library-grid');
+                        const shelfFilter = document.getElementById('shelf-filter');
+                        
                         grid.innerHTML = '';
+                        allBooks = [];
+                        let uniqueShelves = new Set();
 
                         for (const [path, data] of Object.entries(library)) {
                             if (data.format !== 'M4B' && data.format !== 'MP3') continue;
@@ -193,57 +308,253 @@ class AAXManagerApp:
                             }
                             
                             const titleStr = data.title || "Unknown Title";
+                            const asin = data.asin || "Unknown";
+                            const resumePos = data.last_position || 0;
+                            const bookShelves = data.shelves || [];
+                            
+                            bookShelves.forEach(s => uniqueShelves.add(s));
+                            
+                            let timePill = "";
+                            if (resumePos > 60) {
+                                const hrs = Math.floor(resumePos / 3600);
+                                const mins = Math.floor((resumePos % 3600) / 60);
+                                timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
+                            }
+
+                            const coverHtml = asin !== "Unknown" 
+                                ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+                                : `<div class="cover-placeholder">📖</div>`;
 
                             const card = document.createElement('div');
                             card.className = 'book-card';
-                            card.onclick = () => startPlayback(path, titleStr, authorStr);
+                            card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
                             
                             card.innerHTML = `
-                                <div class="cover-placeholder">📖</div>
+                                ${coverHtml}
                                 <p class="book-title">${titleStr}</p>
                                 <p class="book-author">${authorStr}</p>
+                                ${timePill}
                             `;
                             grid.appendChild(card);
+                            
+                            allBooks.push({
+                                element: card,
+                                searchString: `${titleStr} ${authorStr}`.toLowerCase(),
+                                shelves: bookShelves
+                            });
                         }
-                    } catch (e) {
-                        console.error("Failed to load library", e);
-                    }
+
+                        shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
+                        Array.from(uniqueShelves).sort().forEach(shelf => {
+                            shelfFilter.innerHTML += `<option value="${shelf}">${shelf}</option>`;
+                        });
+
+                    } catch (e) { console.error("Failed to load library", e); }
                 }
 
-                function startPlayback(filePath, title, author) {
+                function filterLibrary() {
+                    const query = document.getElementById('search-box').value.toLowerCase();
+                    const selectedShelf = document.getElementById('shelf-filter').value;
+                    
+                    allBooks.forEach(book => {
+                        const matchesSearch = book.searchString.includes(query);
+                        const matchesShelf = selectedShelf === 'all' || book.shelves.includes(selectedShelf);
+                        book.element.style.display = (matchesSearch && matchesShelf) ? 'flex' : 'none';
+                    });
+                }
+
+                async function startPlayback(filePath, title, author, startPosition, asin) {
+                    currentPath = filePath;
                     document.getElementById('now-playing-title').innerText = title;
                     document.getElementById('now-playing-author').innerText = author;
                     
                     audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
+                    audio.playbackRate = currentSpeed; 
+                    
+                    audio.currentTime = startPosition;
                     audio.play().catch(err => console.error("Audio play failed:", err));
                     
                     playerBar.classList.add('active');
                     playBtn.innerText = '⏸';
+                    
+                    setSleepOff(); 
+
+                    try {
+                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
+                        currentChapters = await res.json();
+                    } catch(e) { currentChapters = []; }
 
                     if ('mediaSession' in navigator) {
-                        navigator.mediaSession.metadata = new MediaMetadata({
-                            title: title,
-                            artist: author,
-                            album: 'TomeBox'
+                        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                        navigator.mediaSession.metadata = new MediaMetadata({ 
+                            title: title, artist: author, album: 'TomeBox', artwork: artworkUrl 
                         });
+                        navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
+                        navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
+                        navigator.mediaSession.setActionHandler('previoustrack', () => skipChapter(-1));
+                        navigator.mediaSession.setActionHandler('nexttrack', () => skipChapter(1));
                     }
                 }
 
+                function closeModals(e) {
+                    document.getElementById('sleep-modal').style.display = 'none';
+                    document.getElementById('chapter-modal').style.display = 'none';
+                }
+                function openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
+                
+                function formatTime(sec) {
+                    const h = Math.floor(sec / 3600);
+                    const m = Math.floor((sec % 3600) / 60);
+                    const s = Math.floor(sec % 60);
+                    if (h > 0) return `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+                    return `${m}:${s.toString().padStart(2,'0')}`;
+                }
+
+                function openChapterMenu() {
+                    if (!currentChapters.length) return alert("No chapters found for this audiobook.");
+                    const list = document.getElementById('chapter-list');
+                    list.innerHTML = '';
+                    const now = audio.currentTime;
+                    
+                    let activeIdx = currentChapters.findIndex(c => c.start > now) - 1;
+                    if (activeIdx < 0 && now >= currentChapters[0].start) activeIdx = currentChapters.length - 1;
+                    if (activeIdx === -2) activeIdx = currentChapters.length - 1;
+
+                    currentChapters.forEach((ch, idx) => {
+                        const div = document.createElement('div');
+                        div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
+                        div.innerHTML = `<span>${ch.title}</span> <span>${formatTime(ch.start)}</span>`;
+                        div.onclick = () => { 
+                            audio.currentTime = ch.start; 
+                            if(audio.paused) togglePlay(); 
+                            closeModals(); 
+                        };
+                        list.appendChild(div);
+                    });
+                    document.getElementById('chapter-modal').style.display = 'flex';
+                }
+
+                // --- Sleep Timer Logic ---
+                function setSleepTimer(mins) {
+                    clearTimeout(sleepTimeout);
+                    sleepMode = 'time';
+                    sleepTargetTime = null;
+                    const ms = mins * 60000;
+                    sleepTimeout = setTimeout(() => { audio.pause(); playBtn.innerText = '▶'; setSleepOff(); }, ms);
+                    document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
+                    closeModals();
+                }
+                
+                // Helper to capture the custom input
+                function setCustomSleepChapter() {
+                    const inputElem = document.getElementById('custom-chapter-input');
+                    let count = parseInt(inputElem.value, 10);
+                    
+                    // Fallback to 1 if they type something invalid
+                    if (isNaN(count) || count < 1) {
+                        count = 1;
+                        inputElem.value = 1;
+                    }
+                    setSleepChapter(count);
+                }
+
+                function setSleepChapter(chapterCount) {
+                    clearTimeout(sleepTimeout);
+                    if (!currentChapters.length) {
+                        alert("No chapter data available for this book.");
+                        return;
+                    }
+                    
+                    sleepMode = 'chapter';
+                    
+                    const now = audio.currentTime;
+                    let currentIdx = currentChapters.findIndex(c => c.start > now) - 1;
+                    
+                    if (currentIdx < 0 && now >= currentChapters[0].start) currentIdx = currentChapters.length - 1;
+                    if (currentIdx === -2) currentIdx = 0; 
+
+                    let targetIdx = currentIdx + chapterCount;
+                    
+                    if (targetIdx < currentChapters.length) {
+                        sleepTargetTime = currentChapters[targetIdx].start;
+                    } else {
+                        sleepTargetTime = audio.duration;
+                    }
+
+                    document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
+                    closeModals();
+                }
+
+                function setSleepOff() {
+                    clearTimeout(sleepTimeout);
+                    sleepMode = null;
+                    sleepTargetTime = null;
+                    document.getElementById('sleep-btn-ui').style.color = '#aaa';
+                    closeModals();
+                }
+
+                function skipChapter(direction) {
+                    if (!currentChapters.length) { skipAudio(direction * 180); return; }
+                    const now = audio.currentTime;
+                    if (direction === 1) { 
+                        const nextCh = currentChapters.find(c => c.start > now + 2);
+                        if (nextCh) audio.currentTime = nextCh.start;
+                    } else { 
+                        const prevCh = [...currentChapters].reverse().find(c => c.start < now - 3);
+                        if (prevCh) audio.currentTime = prevCh.start;
+                        else audio.currentTime = 0;
+                    }
+                }
+
+                setInterval(() => {
+                    if (!audio.paused && currentPath) {
+                        fetch('/api/progress', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: currentPath, position: audio.currentTime })
+                        }).catch(() => {});
+                    }
+                }, 10000);
+
                 function togglePlay() {
                     if (!audio.src) return;
-                    if (audio.paused) {
-                        audio.play();
-                        playBtn.innerText = '⏸';
-                    } else {
-                        audio.pause();
-                        playBtn.innerText = '▶';
+                    if (audio.paused) { audio.play(); playBtn.innerText = '⏸'; } 
+                    else { audio.pause(); playBtn.innerText = '▶'; }
+                }
+
+                function skipAudio(seconds) {
+                    if (audio.src && audio.duration) {
+                        audio.currentTime = Math.min(Math.max(audio.currentTime + seconds, 0), audio.duration);
                     }
+                }
+
+                const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
+                let speedIndex = 0;
+                let currentSpeed = 1.0;
+
+                function toggleSpeed() {
+                    speedIndex = (speedIndex + 1) % speeds.length;
+                    currentSpeed = speeds[speedIndex];
+                    audio.playbackRate = currentSpeed;
+                    speedBtn.innerText = currentSpeed.toFixed(1) + 'x';
                 }
 
                 audio.addEventListener('timeupdate', () => {
                     if (audio.duration) {
-                        const percent = (audio.currentTime / audio.duration) * 100;
-                        progressFill.style.width = `${percent}%`;
+                        progressFill.style.width = `${(audio.currentTime / audio.duration) * 100}%`;
+                    }
+                    
+                    if (sleepMode === 'chapter' && sleepTargetTime !== null) {
+                        if (audio.currentTime >= sleepTargetTime - 1) {
+                            audio.pause();
+                            playBtn.innerText = '▶';
+                            
+                            if (sleepTargetTime < audio.duration) {
+                                audio.currentTime = sleepTargetTime;
+                            }
+                            
+                            setSleepOff();
+                        }
                     }
                 });
 
@@ -276,8 +587,14 @@ class AAXManagerApp:
                 from fastapi import FastAPI, Request, HTTPException, status
                 import uvicorn
                 import threading
-                from fastapi.responses import HTMLResponse, StreamingResponse
+                from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
                 import os
+                import subprocess, json
+                
+                import sys
+                import asyncio
+                if sys.platform == 'win32':
+                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
                 api = FastAPI()
 
@@ -285,9 +602,69 @@ class AAXManagerApp:
                 def web_interface():
                     return HTMLResponse(content=self._get_mobile_html())
 
+                # --- UPDATED: Shelf Integration ---
                 @api.get("/api/library")
                 def get_web_library():
-                    return self.local_library
+                    enriched_lib = {}
+                    # Pull the user's custom shelves from the desktop settings
+                    shelves_db = self.settings.get("shelves_db", {})
+                    
+                    for path, data in self.local_library.items():
+                        item_copy = dict(data)
+                        asin = item_copy.get("asin")
+                        
+                        # Attach the shelf array to the web payload
+                        item_copy["shelves"] = shelves_db.get(asin, [])
+                        
+                        for cloud_item in getattr(self, 'cloud_items', []):
+                            if cloud_item.get("asin") == asin or cloud_item.get("title") == item_copy.get("title"):
+                                raw_authors = cloud_item.get("authors", [])
+                                item_copy["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                                if not asin:
+                                    item_copy["asin"] = cloud_item.get("asin")
+                                break
+                                
+                        enriched_lib[path] = item_copy
+                    return enriched_lib
+
+                @api.get("/api/cover/{asin}")
+                def get_cover(asin: str):
+                    cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+                    if os.path.exists(cover_path):
+                        return FileResponse(cover_path)
+                    raise HTTPException(status_code=404, detail="Cover not found")
+
+                @api.post("/api/progress")
+                async def update_progress(request: Request):
+                    try:
+                        data = await request.json()
+                        path = data.get("path")
+                        position = data.get("position")
+                        if path and path in self.local_library:
+                            self.local_library[path]["last_position"] = position
+                            self.root.after(0, self.save_local_db)
+                    except Exception:
+                        pass
+                    return {"status": "success"}
+
+                @api.get("/api/chapters")
+                def get_chapters(path: str):
+                    import subprocess, json
+                    if not path or not os.path.exists(path): return []
+                    try:
+                        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
+                        result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        data = json.loads(result.stdout)
+                        
+                        chapters = []
+                        for ch in data.get("chapters", []):
+                            start_time = float(ch.get("start_time", 0))
+                            title = ch.get("tags", {}).get("title", f"Chapter {ch.get('id', 0) + 1}")
+                            chapters.append({"start": start_time, "title": title})
+                        return chapters
+                    except Exception as e:
+                        self.write_log(f"Failed to parse chapters for {path}: {e}")
+                        return []
 
                 @api.get("/api/stream")
                 def stream_audio(path: str, request: Request):
@@ -304,8 +681,7 @@ class AAXManagerApp:
                             "Content-Type": "audio/mp4",
                         }
                         def full_file_iterator():
-                            with open(path, "rb") as f:
-                                yield from f
+                            with open(path, "rb") as f: yield from f
                         return StreamingResponse(full_file_iterator(), headers=headers)
 
                     byte_range = range_header.replace("bytes=", "").split("-")
@@ -324,8 +700,7 @@ class AAXManagerApp:
                             while bytes_left > 0:
                                 read_size = min(65536, bytes_left) 
                                 data = f.read(read_size)
-                                if not data:
-                                    break
+                                if not data: break
                                 bytes_left -= len(data)
                                 yield data
 
@@ -1542,9 +1917,17 @@ class AAXManagerApp:
         self.root.destroy()
 
     def save_playback_state(self):
-        if self.file_path and self.file_path in self.local_library:
-            self.local_library[self.file_path]["last_chapter"] = getattr(self, 'current_chapter_idx', 0)
-            self.local_library[self.file_path]["last_time"] = getattr(self, 'current_play_time', 0.0)
+        if getattr(self, 'file_path', None) and self.file_path in self.local_library:
+            chap_idx = getattr(self, 'current_chapter_idx', 0)
+            rel_time = getattr(self, 'current_play_time', 0.0)
+            
+            self.local_library[self.file_path]["last_chapter"] = chap_idx
+            self.local_library[self.file_path]["last_time"] = rel_time
+            
+            if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
+                abs_time = float(self.chapters[chap_idx].get("start_time", 0)) + rel_time
+                self.local_library[self.file_path]["last_position"] = abs_time
+                
             self.save_local_db()
 
 
@@ -3476,27 +3859,46 @@ class AAXManagerApp:
         self.file_path = filepath
         is_encrypted = filepath.endswith(".aax") or filepath.endswith(".aaxc")
         
-        
         self.dl_status_var.set("Analyzing...")
         self.root.update()
         
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
-                
                 self.dl_status_var.set("Verification Failed")
                 messagebox.showerror("Audio Processing Error", f"Failed to process the file. Reason:\n\n{error_msg}")
                 self.file_path = ""
                 return
 
-        
         self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
         self.chapters = self.extract_chapters(self.file_path)
         
         if self.chapters:
             local_data = self.local_library.get(filepath, {})
-            self.current_chapter_idx = local_data.get("last_chapter", 0)
-            self.current_play_time = local_data.get("last_time", 0.0)
+            
+            # The Web Player tracks absolute time (last_position). 
+            # The PC Player tracks chapter index + relative time.
+            abs_pos = local_data.get("last_position")
+            
+            if abs_pos is not None:
+                # Translate Web's absolute time to PC's chapter format
+                found_chap = 0
+                for i, chap in enumerate(self.chapters):
+                    start = float(chap.get("start_time", 0))
+                    end = float(chap.get("end_time", 0))
+                    if start <= abs_pos < end:
+                        found_chap = i
+                        break
+                    # Catch-all if position somehow overshoots the last chapter
+                    if i == len(self.chapters) - 1 and abs_pos >= end:
+                        found_chap = i
+                        
+                self.current_chapter_idx = found_chap
+                self.current_play_time = max(0.0, abs_pos - float(self.chapters[found_chap].get("start_time", 0)))
+            else:
+                # Fallback to standard PC tracking if no web data exists
+                self.current_chapter_idx = local_data.get("last_chapter", 0)
+                self.current_play_time = local_data.get("last_time", 0.0)
             
             if self.current_chapter_idx >= len(self.chapters):
                 self.current_chapter_idx = 0
@@ -3948,7 +4350,15 @@ class AAXManagerApp:
         curr_str = self.format_time(self.current_play_time)
         dur_str = self.format_time(self.chapter_duration)
         self.time_label.config(text=f"{curr_str} / {dur_str}")
-        
+
+        # Save to database every 10 seconds so the web server stays updated
+        if not hasattr(self, '_last_disk_save_time'):
+            self._last_disk_save_time = now
+            
+        if now - self._last_disk_save_time > 10:
+            self.save_playback_state()
+            self._last_disk_save_time = now
+
         self.root.after(500, self.update_playback_progress, active_proc)
 
     def monitor_player_output(self, proc):
