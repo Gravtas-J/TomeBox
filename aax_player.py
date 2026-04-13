@@ -118,6 +118,7 @@ class AAXManagerApp:
             return ip
         except Exception:
             return "127.0.0.1" # Fallback to localhost if disconnected from Wi-Fi
+        
     def _get_mobile_html(self):
         return """
         <!DOCTYPE html>
@@ -128,7 +129,7 @@ class AAXManagerApp:
             <title>TomeBox</title>
             <style>
                 :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #bb86fc; }
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 120px; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 150px; }
                 header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 10px; }
                 
                 .header-controls { display: flex; flex-direction: column; gap: 10px; width: 100%; }
@@ -147,23 +148,24 @@ class AAXManagerApp:
                 .book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
                 .progress-pill { font-size: 0.7rem; color: var(--accent); background: #333; padding: 2px 6px; border-radius: 10px; margin-top: 5px; display: inline-block; }
 
-                #player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 15px 20px 15px; display: flex; flex-direction: column; gap: 10px; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
+                #player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 15px 20px 15px; display: flex; flex-direction: column; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
                 #player-bar.active { transform: translateY(0); }
                 
-                .player-top-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-                .player-info { flex-grow: 1; overflow: hidden; text-align: center; }
+                .player-top-row { display: flex; justify-content: center; align-items: center; width: 100%; margin-bottom: 5px; }
+                .player-info { width: 100%; overflow: hidden; text-align: center; }
                 #now-playing-title { font-weight: bold; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 #now-playing-author { font-size: 0.8rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 
-                .player-bottom-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-                .main-controls { display: flex; align-items: center; gap: 15px; justify-content: center; flex-grow: 1; }
-                .side-tools { display: flex; gap: 10px; min-width: 60px; justify-content: flex-end; }
+                .player-secondary-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 5px; }
+                .player-main-row { display: flex; justify-content: center; align-items: center; gap: 25px; width: 100%; margin-top: 10px; }
+                
+                .side-tools { display: flex; gap: 15px; justify-content: flex-end; }
                 
                 button { background: none; border: none; color: var(--text); cursor: pointer; padding: 5px; outline: none; display: flex; align-items: center; justify-content: center; }
-                .play-btn { color: var(--accent); font-size: 2.5rem; width: 50px; height: 50px; }
-                .skip-btn { font-size: 1.5rem; color: #ccc; }
-                .chapter-btn { font-size: 1.2rem; color: #888; }
-                .speed-btn { font-size: 1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 4px; padding: 5px 10px; min-width: 50px; }
+                .play-btn { color: var(--accent); font-size: 2.8rem; width: 50px; height: 50px; }
+                .skip-btn { font-size: 1.6rem; color: #ccc; }
+                .chapter-btn { font-size: 1.4rem; color: #888; }
+                .speed-btn { font-size: 1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 4px; padding: 5px 12px; }
                 .tool-btn { font-size: 1.4rem; color: #aaa; transition: color 0.2s; }
                 
                 #progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
@@ -205,26 +207,30 @@ class AAXManagerApp:
                 <div id="progress-container" onclick="seekAudio(event)">
                     <div id="progress-fill"></div>
                 </div>
+                
                 <div class="player-top-row">
                     <div class="player-info">
                         <p id="now-playing-title">Select a book</p>
                         <p id="now-playing-author">...</p>
                     </div>
                 </div>
-                <div class="player-bottom-row">
+
+                <div class="player-secondary-row">
                     <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
-                    <div class="main-controls">
-                        <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
-                        <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
-                        <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
-                        <button class="skip-btn" onclick="skipAudio(15)">↻</button>
-                        <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
-                    </div>
                     <div class="side-tools">
                         <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
                         <button class="tool-btn" onclick="openChapterMenu()">📑</button>
                     </div>
                 </div>
+
+                <div class="player-main-row">
+                    <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
+                    <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
+                    <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+                    <button class="skip-btn" onclick="skipAudio(15)">↻</button>
+                    <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
+                </div>
+                
                 <audio id="main-audio"></audio>
             </div>
 
@@ -288,7 +294,9 @@ class AAXManagerApp:
                         profiles.forEach(p => { profSelect.innerHTML += `<option value="${p}">${p}</option>`; });
                         currentProfile = profiles[0] || "Main";
                     } catch (e) { console.error("Profile fetch failed", e); }
-                    loadLibrary();
+                    
+                    await loadLibrary();
+                    await cueLastPlayedBook();
                 }
 
                 async function loadLibrary() {
@@ -316,7 +324,6 @@ class AAXManagerApp:
                         const bookShelves = data.shelves || [];
                         bookShelves.forEach(s => uniqueShelves.add(s));
                         
-                        // Get profile-specific timestamp
                         let resumePos = 0;
                         if (data.progress && data.progress[currentProfile] !== undefined) {
                             resumePos = data.progress[currentProfile];
@@ -360,25 +367,65 @@ class AAXManagerApp:
                     filterLibrary();
                 }
 
-                // FIX: Changing profiles now forces a fresh database pull so timestamps never get stale
+                // --- NEW: Cue Last Played Helper ---
+                async function cueLastPlayedBook() {
+                    try {
+                        const res = await fetch(`/api/last_played/${currentProfile}`);
+                        const data = await res.json();
+                        if (data.path && rawLibraryData[data.path]) {
+                            const book = rawLibraryData[data.path];
+                            let authorStr = book.authors || 'Unknown Author';
+                            const titleStr = book.title || "Unknown Title";
+                            const asin = book.asin || "Unknown";
+                            
+                            let resumePos = 0;
+                            if (book.progress && book.progress[currentProfile] !== undefined) {
+                                resumePos = book.progress[currentProfile];
+                            } else if (book.last_position) {
+                                resumePos = book.last_position;
+                            }
+                            
+                            // Cue the track without autoplaying it
+                            currentPath = data.path;
+                            document.getElementById('now-playing-title').innerText = titleStr;
+                            document.getElementById('now-playing-author').innerText = authorStr;
+                            
+                            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
+                            audio.playbackRate = currentSpeed; 
+                            audio.currentTime = resumePos;
+                            
+                            playerBar.classList.add('active');
+                            playBtn.innerText = '▶';
+                            setSleepOff(); 
+
+                            try {
+                                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}`);
+                                currentChapters = await chapRes.json();
+                            } catch(e) { currentChapters = []; }
+
+                            if ('mediaSession' in navigator) {
+                                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                                navigator.mediaSession.metadata = new MediaMetadata({ title: titleStr, artist: authorStr, album: 'TomeBox', artwork: artworkUrl });
+                                navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
+                                navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
+                                navigator.mediaSession.setActionHandler('previoustrack', () => skipChapter(-1));
+                                navigator.mediaSession.setActionHandler('nexttrack', () => skipChapter(1));
+                            }
+                        }
+                    } catch (e) { console.error("Failed to cue last played", e); }
+                }
+
                 async function changeProfile() {
                     currentProfile = document.getElementById('profile-selector').value;
                     await loadLibrary(); 
                     
-                    if (currentPath && rawLibraryData[currentPath]) {
-                        const data = rawLibraryData[currentPath];
-                        let newPos = 0;
-                        if (data.progress && data.progress[currentProfile] !== undefined) {
-                            newPos = data.progress[currentProfile];
-                        } else if (data.last_position) {
-                            newPos = data.last_position;
-                        }
-                        
-                        // Move the audio player to the new profile's position
-                        if (Math.abs(audio.currentTime - newPos) > 2) {
-                            audio.currentTime = newPos;
-                        }
-                    }
+                    audio.pause();
+                    playBtn.innerText = '▶';
+                    currentPath = null;
+                    audio.src = '';
+                    playerBar.classList.remove('active');
+                    
+                    await cueLastPlayedBook();
                 }
 
                 function filterLibrary() {
@@ -508,7 +555,6 @@ class AAXManagerApp:
                     }
                 }
 
-                // FIX: Update local JS memory instantly so the purple pills stay accurate
                 setInterval(() => {
                     if (!audio.paused && currentPath) {
                         const pos = audio.currentTime;
@@ -601,9 +647,16 @@ class AAXManagerApp:
                 @api.get("/api/profiles")
                 def get_profiles():
                     profs = self.settings.get("profiles")
-                    if not profs or not isinstance(profs, list):
-                        return ["Main"]
+                    if not profs or not isinstance(profs, list): return ["Main"]
                     return profs
+
+                # --- NEW: Get Last Played Endpoint ---
+                @api.get("/api/last_played/{profile}")
+                def get_last_played(profile: str):
+                    path = self.settings.get(f"last_played_{profile}")
+                    if path and path in self.local_library:
+                        return {"path": path}
+                    return {"path": None}
 
                 @api.get("/api/library")
                 def get_web_library():
@@ -618,8 +671,7 @@ class AAXManagerApp:
                                     for item in json.load(file):
                                         if item.get("asin"): master_metadata[item["asin"]] = item
                                         if item.get("title"): master_metadata[item["title"]] = item
-                            except Exception:
-                                pass
+                            except Exception: pass
 
                     for item in getattr(self, 'cloud_items', []):
                         if item.get("asin"): master_metadata[item["asin"]] = item
@@ -630,8 +682,7 @@ class AAXManagerApp:
                         asin = item_copy.get("asin")
                         item_copy["shelves"] = shelves_db.get(asin, [])
                         
-                        if "progress" not in item_copy:
-                            item_copy["progress"] = {}
+                        if "progress" not in item_copy: item_copy["progress"] = {}
                             
                         existing_auth = item_copy.get("authors", "")
                         if isinstance(existing_auth, list):
@@ -651,8 +702,7 @@ class AAXManagerApp:
                 @api.get("/api/cover/{asin}")
                 def get_cover(asin: str):
                     cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-                    if os.path.exists(cover_path):
-                        return FileResponse(cover_path)
+                    if os.path.exists(cover_path): return FileResponse(cover_path)
                     raise HTTPException(status_code=404, detail="Cover not found")
 
                 @api.post("/api/progress")
@@ -669,10 +719,13 @@ class AAXManagerApp:
                                 
                             self.local_library[path]["progress"][profile] = position
                             self.local_library[path]["last_position"] = position
+                            
+                            # Update Web's Last Played File
+                            self.settings[f"last_played_{profile}"] = path
+                            self.save_settings()
                                 
                             self.root.after(0, self.save_local_db)
-                    except Exception:
-                        pass
+                    except Exception: pass
                     return {"status": "success"}
 
                 @api.get("/api/chapters")
@@ -683,15 +736,13 @@ class AAXManagerApp:
                         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
                         result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                         data = json.loads(result.stdout)
-                        
                         chapters = []
                         for ch in data.get("chapters", []):
                             start_time = float(ch.get("start_time", 0))
                             title = ch.get("tags", {}).get("title", f"Chapter {ch.get('id', 0) + 1}")
                             chapters.append({"start": start_time, "title": title})
                         return chapters
-                    except Exception as e:
-                        return []
+                    except Exception: return []
 
                 @api.get("/api/stream")
                 def stream_audio(path: str, request: Request):
@@ -1940,6 +1991,14 @@ class AAXManagerApp:
                 
             self.save_local_db()
 
+            # --- NEW: Save global last played for the profile ---
+            self.settings[f"last_played_{self.active_profile}"] = self.file_path
+            self.save_settings()
+
+    def cue_last_played(self):
+        last_path = self.settings.get(f"last_played_{self.active_profile}")
+        if last_path and last_path in self.local_library and os.path.exists(last_path):
+            self.load_specific_file(last_path)
 
     def fetch_metadata_worker(self, filepath):
         local_data = self.local_library.get(filepath, {})
