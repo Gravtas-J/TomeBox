@@ -5,7 +5,7 @@ import json
 
 # --- Configuration ---
 REPO_OWNER = "Gravtas-J"
-REPO_NAME = "Truely-Open-Audible"
+REPO_NAME = "TomeBox"
 BRANCH = "main"
 TARGET_FILE = "aax_player.py"
 VERSION_FILE = ".tomebox_version"
