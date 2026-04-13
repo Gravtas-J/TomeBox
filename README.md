@@ -1,6 +1,6 @@
 # TomeBox
 
-TomeBox is a desktop application for managing, downloading, playing, and converting Audible audiobooks. It provides a unified interface for your cloud library and local files, built-in DRM decryption, and chapter-aware playback.
+**TomeBox** is a local-first audiobook manager and self-hosted media server. It combines a powerful desktop application for downloading, converting, and playing your Audible library with a built-in companion web app for streaming to your mobile devices. Featuring on-the-fly DRM decryption, multi-user cross-device progress syncing, and native lock-screen controls, TomeBox gives you complete ownership of your audiobooks without relying on cloud subscriptions.
 
 ## Get Started (Zero-Config Installation)
 
@@ -35,10 +35,10 @@ TomeBox is designed to be completely portable and requires zero technical config
 *Oooooooo!*
 *Ahhhhhhh!*
 
-### Modern Engine Support
-![TomeBox Modern mode](assets/modern_mode.png)
-*Woooooow*
-
+### Web Player
+![TomeBox Web-player](assets\Web-player.png)
+![TomeBox Mobile-player](assets\Mobile-player.png)
+*Daaaaaammmmnnn*
 ## Features
 
 ### Advanced Playback Engine
