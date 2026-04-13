@@ -36,8 +36,9 @@ TomeBox is designed to be completely portable and requires zero technical config
 *Ahhhhhhh!*
 
 ### Web Player
-![TomeBox Web-player](assets\Web-player.png)
-![TomeBox Mobile-player](assets\Mobile-player.png)
+![TomeBox Web-player](assets/web-player.png)
+![TomeBox Mobile-player](assets/mobile-player.png)
+
 *Daaaaaammmmnnn*
 ## Features
 
