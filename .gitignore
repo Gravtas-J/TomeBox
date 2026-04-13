@@ -1,3 +1,6 @@
 *.json
 *.log
 /covers
+test_aax_player.py
+test_results_log.txt
+__pycache__
