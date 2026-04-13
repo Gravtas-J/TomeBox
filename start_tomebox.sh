@@ -1,3 +1,5 @@
 #!/bin/bash
-cd "E:\Coding\Github\WIP\Truely-Open-Audible"
-"C:\Users\Jesse\AppData\Local\Programs\Python\Python311\python.exe" aax_player.py
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+cd "$DIR"
+
+python3 aax_player.py
