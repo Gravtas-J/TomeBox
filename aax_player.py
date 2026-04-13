@@ -22,6 +22,7 @@ import pystray
 from pystray import MenuItem as item
 import sys
 import socket
+
 class AAXManagerApp:
     def __init__(self, root):
         self.root = root
@@ -82,7 +83,6 @@ class AAXManagerApp:
                 self.root.iconphoto(True, icon_img) # "True" applies it to all future dialog windows too
         except Exception as e:
             self.write_log(f"Could not load app icon: {e}")
-
         self.build_context_menu()
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
@@ -111,6 +111,255 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
     
+    def get_local_ip(self):
+        import socket
+        try:
+            # We don't actually send data, just forcing the OS to route to an external IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1" # Fallback to localhost if disconnected from Wi-Fi
+    def _get_mobile_html(self):
+        return """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <title>TomeBox</title>
+            <style>
+                :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #bb86fc; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 90px; }
+                header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; }
+                
+                #library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; padding: 15px; }
+                .book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; }
+                .book-card:active { transform: scale(0.98); }
+                .cover-placeholder { width: 100%; aspect-ratio: 1; background-color: #333; border-radius: 4px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #555; }
+                .book-title { font-weight: bold; font-size: 0.9rem; margin: 0 0 5px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
+
+                #player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 20px; display: flex; align-items: center; gap: 15px; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
+                #player-bar.active { transform: translateY(0); }
+                .player-info { flex-grow: 1; overflow: hidden; }
+                #now-playing-title { font-weight: bold; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                #now-playing-author { font-size: 0.8rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .play-btn { background: none; border: none; color: var(--accent); font-size: 2rem; cursor: pointer; padding: 0; outline: none; }
+                
+                #progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 4px; background-color: #444; cursor: pointer; }
+                #progress-fill { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; }
+            </style>
+        </head>
+        <body>
+            <header>TomeBox Library</header>
+            <main id="library-grid"></main>
+
+            <div id="player-bar">
+                <div id="progress-container" onclick="seekAudio(event)">
+                    <div id="progress-fill"></div>
+                </div>
+                <div class="player-info">
+                    <p id="now-playing-title">Select a book</p>
+                    <p id="now-playing-author">...</p>
+                </div>
+                <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+                <audio id="main-audio"></audio>
+            </div>
+
+            <script>
+                const audio = document.getElementById('main-audio');
+                const playBtn = document.getElementById('play-pause-btn');
+                const progressFill = document.getElementById('progress-fill');
+                const playerBar = document.getElementById('player-bar');
+
+                async function loadLibrary() {
+                    try {
+                        const response = await fetch('/api/library');
+                        const library = await response.json();
+                        const grid = document.getElementById('library-grid');
+                        grid.innerHTML = '';
+
+                        for (const [path, data] of Object.entries(library)) {
+                            if (data.format !== 'M4B' && data.format !== 'MP3') continue;
+
+                            let authorStr = 'Unknown Author';
+                            if (typeof data.authors === 'string') {
+                                authorStr = data.authors;
+                            } else if (Array.isArray(data.authors)) {
+                                authorStr = data.authors.map(a => a.name || a).join(', ');
+                            }
+                            
+                            const titleStr = data.title || "Unknown Title";
+
+                            const card = document.createElement('div');
+                            card.className = 'book-card';
+                            card.onclick = () => startPlayback(path, titleStr, authorStr);
+                            
+                            card.innerHTML = `
+                                <div class="cover-placeholder">📖</div>
+                                <p class="book-title">${titleStr}</p>
+                                <p class="book-author">${authorStr}</p>
+                            `;
+                            grid.appendChild(card);
+                        }
+                    } catch (e) {
+                        console.error("Failed to load library", e);
+                    }
+                }
+
+                function startPlayback(filePath, title, author) {
+                    document.getElementById('now-playing-title').innerText = title;
+                    document.getElementById('now-playing-author').innerText = author;
+                    
+                    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
+                    audio.play().catch(err => console.error("Audio play failed:", err));
+                    
+                    playerBar.classList.add('active');
+                    playBtn.innerText = '⏸';
+
+                    if ('mediaSession' in navigator) {
+                        navigator.mediaSession.metadata = new MediaMetadata({
+                            title: title,
+                            artist: author,
+                            album: 'TomeBox'
+                        });
+                    }
+                }
+
+                function togglePlay() {
+                    if (!audio.src) return;
+                    if (audio.paused) {
+                        audio.play();
+                        playBtn.innerText = '⏸';
+                    } else {
+                        audio.pause();
+                        playBtn.innerText = '▶';
+                    }
+                }
+
+                audio.addEventListener('timeupdate', () => {
+                    if (audio.duration) {
+                        const percent = (audio.currentTime / audio.duration) * 100;
+                        progressFill.style.width = `${percent}%`;
+                    }
+                });
+
+                audio.addEventListener('ended', () => {
+                    playBtn.innerText = '▶';
+                    progressFill.style.width = '0%';
+                });
+
+                function seekAudio(e) {
+                    if (!audio.duration) return;
+                    const rect = e.target.getBoundingClientRect();
+                    audio.currentTime = (e.clientX - rect.left) / rect.width * audio.duration;
+                }
+
+                loadLibrary();
+            </script>
+        </body>
+        </html>
+        """
+    
+    def toggle_web_server(self):
+        if hasattr(self, 'web_server') and self.web_server is not None:
+            self.write_log("Stopping companion server...")
+            self.web_server.should_exit = True
+            self.web_server = None
+            self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server")
+            messagebox.showinfo("Server Stopped", "The companion server has been safely disabled.")
+        else:
+            try:
+                from fastapi import FastAPI, Request, HTTPException, status
+                import uvicorn
+                import threading
+                from fastapi.responses import HTMLResponse, StreamingResponse
+                import os
+
+                api = FastAPI()
+
+                @api.get("/", response_class=HTMLResponse)
+                def web_interface():
+                    return HTMLResponse(content=self._get_mobile_html())
+
+                @api.get("/api/library")
+                def get_web_library():
+                    return self.local_library
+
+                @api.get("/api/stream")
+                def stream_audio(path: str, request: Request):
+                    if not path or not os.path.exists(path):
+                        raise HTTPException(status_code=404, detail="Audio file not found.")
+
+                    file_size = os.path.getsize(path)
+                    range_header = request.headers.get("Range")
+
+                    if not range_header:
+                        headers = {
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": str(file_size),
+                            "Content-Type": "audio/mp4",
+                        }
+                        def full_file_iterator():
+                            with open(path, "rb") as f:
+                                yield from f
+                        return StreamingResponse(full_file_iterator(), headers=headers)
+
+                    byte_range = range_header.replace("bytes=", "").split("-")
+                    start_byte = int(byte_range[0])
+                    end_byte = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else file_size - 1
+
+                    if start_byte >= file_size or end_byte >= file_size:
+                        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, detail="Invalid Range")
+
+                    chunk_size = (end_byte - start_byte) + 1
+
+                    def chunk_generator():
+                        with open(path, "rb") as f:
+                            f.seek(start_byte)
+                            bytes_left = chunk_size
+                            while bytes_left > 0:
+                                read_size = min(65536, bytes_left) 
+                                data = f.read(read_size)
+                                if not data:
+                                    break
+                                bytes_left -= len(data)
+                                yield data
+
+                    headers = {
+                        "Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}",
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(chunk_size),
+                        "Content-Type": "audio/mp4", 
+                    }
+
+                    return StreamingResponse(chunk_generator(), status_code=206, headers=headers)
+
+                config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_level="error")
+                self.web_server = uvicorn.Server(config)
+                threading.Thread(target=self.web_server.run, daemon=True).start()
+                
+                self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server")
+                
+                local_ip = self.get_local_ip()
+                msg = (
+                    "Companion Server is now running in the background!\n\n"
+                    "To access your library from your phone or another PC, "
+                    "open this exact address in your browser:\n\n"
+                    f"http://{local_ip}:8000"
+                )
+                self.write_log(f"Server started on http://{local_ip}:8000")
+                messagebox.showinfo("Server Active", msg)
+                
+            except ImportError:
+                messagebox.showerror("Missing Libraries", "Please install the required server packages first:\n\npip install fastapi uvicorn")
+            except Exception as e:
+                self.write_log(f"Failed to start server: {e}")
+                messagebox.showerror("Server Error", f"Could not start the server.\n\n{e}")
+
     def cleanup_orphaned_files(self):
         save_dir = self.settings.get("download_dir", "")
         if not save_dir or not os.path.exists(save_dir):
@@ -558,6 +807,8 @@ class AAXManagerApp:
 
         #Achievement menu
         self.file_menu.add_command(label="My Achievements", command=self.open_achievements_window)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Enable Web Server", command=self.toggle_web_server)
         self.file_menu.add_separator()
 
     def build_info_components(self, parent):
@@ -2092,6 +2343,7 @@ class AAXManagerApp:
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
                 self.draw_grid_view()
     
+
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
