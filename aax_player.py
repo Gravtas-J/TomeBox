@@ -730,7 +730,7 @@ class AAXManagerApp:
                     headers = {"Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}", "Accept-Ranges": "bytes", "Content-Length": str(chunk_size), "Content-Type": "audio/mp4"}
                     return StreamingResponse(chunk_generator(), status_code=206, headers=headers)
 
-                config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_level="error")
+                config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_config=None)
                 self.web_server = uvicorn.Server(config)
                 threading.Thread(target=self.web_server.run, daemon=True).start()
                 
