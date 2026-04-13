@@ -111,15 +111,12 @@ def create_shortcut(base_dir, bat_path, sh_path, py_exec):
         shortcut_path = desktop_dir / f"{APP_NAME}.lnk"
         vbs_path = base_dir / "create_shortcut.vbs"
         
-        # Use pythonw.exe to run without a terminal window
-        pyw_exec = str(py_exec).replace("python.exe", "pythonw.exe")
-        
+        # Point directly to the bat file, keep the custom icon
         vbs_content = f"""
 Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "{pyw_exec}"
-oLink.Arguments = "{MAIN_SCRIPT}"
+oLink.TargetPath = "{bat_path}"
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
 oLink.IconLocation = "{base_dir}\\tomebox.ico"
@@ -130,7 +127,7 @@ oLink.Save
             
         subprocess.run(["cscript.exe", "//Nologo", str(vbs_path)])
         os.remove(vbs_path)
-        print(f"  -> Created stealth Windows shortcut at {shortcut_path}")
+        print(f"  -> Created Windows shortcut pointing to start_tomebox.bat at {shortcut_path}")
 
     elif os_name == "Linux":
         shortcut_path = desktop_dir / f"{APP_NAME}.desktop"
