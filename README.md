@@ -19,7 +19,7 @@ TomeBox is designed to be completely portable and requires zero technical config
 
 ### Unified List View
 ![TomeBox List View](assets/list_view.png)
-![TomeBox List View](assets/list_view_Context.png)
+![TomeBox List View](assets/list_view_context.png)
 *Managing cloud and local files in the classic list view. Now with Context Menues!*
 
 ### Dynamic Grid View
