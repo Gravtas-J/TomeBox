@@ -35,6 +35,18 @@ class AAXManagerApp:
         
         # 1. Setup Base Paths FIRST
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        try:
+            import ctypes
+            # Tell Windows this is a unique app, not just a generic Python script
+            myappid = 'gravtas.tomebox.audiomanager.1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+
+        # Apply the icon to the window and taskbar
+        icon_path = os.path.join(self.base_dir, "tomebox.ico")
+        if os.path.exists(icon_path):
+            self.root.iconbitmap(icon_path)
         self.local_db_path = os.path.join(self.base_dir, "library.json")
         self.last_db_mtime = 0
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
@@ -4544,6 +4556,12 @@ class AAXManagerApp:
             self.info_label.config(text=f"Playing:\n{title}")
 
 if __name__ == "__main__":
+    import ctypes
+    try:
+        myappid = 'gravtas.tomebox.audiomanager.1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
     root = TkinterDnD.Tk()
     app = AAXManagerApp(root)
     
