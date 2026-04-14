@@ -2,6 +2,10 @@
 
 **TomeBox** is a local-first audiobook manager and self-hosted media server. It combines a powerful desktop application for downloading, converting, and playing your Audible library with a built-in companion web app for streaming to your mobile devices. Featuring on-the-fly DRM decryption, multi-user cross-device progress syncing, and native lock-screen controls, TomeBox gives you complete ownership of your audiobooks without relying on cloud subscriptions.
 
+# Community
+
+For users of **TomeBox** looking to report bugs, ask questions, submit feedback and request features, visit us at [R/Tomebox](https://www.reddit.com/r/TomeBox/).
+
 ## Get Started (Zero-Config Installation)
 
 TomeBox is designed to be completely portable and requires zero technical configuration. The automated setup scripts handle Python installation, dependency management, and FFmpeg binary acquisition seamlessly.
