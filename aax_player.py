@@ -22,7 +22,7 @@ import pystray
 from pystray import MenuItem as item
 import sys
 import socket
-#test
+#test 2
 class AAXManagerApp:
     def __init__(self, root):
         self.root = root
