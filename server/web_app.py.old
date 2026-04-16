@@ -38,7 +38,6 @@ def create_server_app(tomebox):
         master_metadata = {}
         data_dir = os.path.join(tomebox.base_dir, "data")
         
-        # Cloud caches remain JSON files, so we scrape them to build rich metadata
         if os.path.exists(data_dir):
             for f in os.listdir(data_dir):
                 if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
@@ -95,17 +94,19 @@ def create_server_app(tomebox):
                     
                 tomebox.local_library[path]["progress"][profile] = position
                 tomebox.local_library[path]["last_position"] = position
+                
                 tomebox.settings[f"last_played_{profile}"] = path
                 
+                # Save using your shiny new Database Manager
                 tomebox.db.save_settings(tomebox.settings)
                 tomebox.db.save_local_db(tomebox.local_library)
 
+                # Tap the PC on the shoulder to update its memory in real-time
                 if getattr(tomebox, 'file_path', None) == path:
                     tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")
-            
         return {"status": "success"}
 
     @api.get("/api/chapters")

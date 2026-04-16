@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import threading
 
 class DatabaseManager:
@@ -8,43 +9,103 @@ class DatabaseManager:
         self.data_dir = os.path.join(base_dir, "data")
         os.makedirs(self.data_dir, exist_ok=True)
         
-        self.local_db_path = os.path.join(self.data_dir, "library.json")
-        self.settings_path = os.path.join(self.data_dir, "settings.json")
+        self.db_path = os.path.join(self.data_dir, "tomebox.db")
         self.db_lock = threading.Lock()
         self.last_db_mtime = 0
+        
+        self._initialize_tables()
+
+    def _get_connection(self):
+        # check_same_thread=False allows FastAPI and Tkinter to share the connection safely
+        return sqlite3.connect(self.db_path, check_same_thread=False)
+
+    def _initialize_tables(self):
+        with self.db_lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Document-store approach: perfectly preserves existing structures
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS library (
+                    path TEXT PRIMARY KEY,
+                    data TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
 
     def load_settings(self):
+        settings_dict = {}
         with self.db_lock:
-            if os.path.exists(self.settings_path):
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM settings")
+            for key, value in cursor.fetchall():
                 try:
-                    with open(self.settings_path, "r") as f:
-                        return json.load(f)
-                except Exception: pass
-            return {}
+                    settings_dict[key] = json.loads(value)
+                except:
+                    settings_dict[key] = value
+            conn.close()
+        return settings_dict
 
     def save_settings(self, settings_dict):
         with self.db_lock:
-            with open(self.settings_path, "w") as f:
-                json.dump(settings_dict, f, indent=4)
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            for key, val in settings_dict.items():
+                cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(val)))
+            conn.commit()
+            conn.close()
 
     def load_local_db(self):
+        library = {}
         with self.db_lock:
-            if os.path.exists(self.local_db_path):
-                try:
-                    with open(self.local_db_path, "r") as f:
-                        raw_db = json.load(f)
-                    return {path: data for path, data in raw_db.items() if os.path.exists(path)}
-                except Exception: pass
-            return {}
+            if not os.path.exists(self.db_path):
+                return {}
+                
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT path, data FROM library")
+            for path, data_str in cursor.fetchall():
+                if os.path.exists(path):  # Clean up missing files on load
+                    try:
+                        library[path] = json.loads(data_str)
+                    except Exception:
+                        pass
+            conn.close()
+        return library
 
     def save_local_db(self, library_dict):
         with self.db_lock:
-            with open(self.local_db_path, "w") as f:
-                json.dump(library_dict, f, indent=4)
-            if os.path.exists(self.local_db_path):
-                self.last_db_mtime = os.path.getmtime(self.local_db_path)
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 1. Get current paths in DB to handle deletions
+            cursor.execute("SELECT path FROM library")
+            existing_paths = {row[0] for row in cursor.fetchall()}
+            
+            # 2. Delete items that are no longer in the dictionary
+            current_paths = set(library_dict.keys())
+            paths_to_delete = existing_paths - current_paths
+            for path in paths_to_delete:
+                cursor.execute("DELETE FROM library WHERE path = ?", (path,))
 
-    # --- New Methods to Centralize Profile Data ---
+            # 3. Insert or update current items
+            for path, data in library_dict.items():
+                cursor.execute("INSERT OR REPLACE INTO library (path, data) VALUES (?, ?)", (path, json.dumps(data)))
+                
+            conn.commit()
+            conn.close()
+            
+            if os.path.exists(self.db_path):
+                self.last_db_mtime = os.path.getmtime(self.db_path)
+
+    # Leave auth and cloud files as JSON so the Audible API and Web Server don't break
     def get_auth_path(self, profile_name):
         return os.path.join(self.data_dir, f"auth_{profile_name}.json")
 

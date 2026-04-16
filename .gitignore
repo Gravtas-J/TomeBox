@@ -13,3 +13,5 @@ start_tomebox.bat
 start_tomebox.vbs
 /data
 /unit_tests
+*.exe
+migrate_to_sqlite.py

@@ -262,17 +262,14 @@
                                 resumePos = book.last_position;
                             }
                             
+                            // Cue the track without autoplaying it
                             currentPath = data.path;
                             document.getElementById('now-playing-title').innerText = titleStr;
                             document.getElementById('now-playing-author').innerText = authorStr;
                             
                             audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
                             audio.playbackRate = currentSpeed; 
-                            
-                            // Wait for the file to connect before moving the playhead
-                            audio.onloadedmetadata = () => {
-                                audio.currentTime = resumePos;
-                            };
+                            audio.currentTime = resumePos;
                             
                             playerBar.classList.add('active');
                             playBtn.innerText = '▶';
@@ -319,32 +316,16 @@
                     });
                 }
 
-                async function startPlayback(filePath, title, author, fallbackPosition, asin) {
-                    // 1. Save the current book BEFORE we destroy the stream
-                    saveProgressToServer(); 
-                    
-                    // 2. Dynamically pull the absolute latest time for the NEW book
-                    let latestPosition = fallbackPosition;
-                    if (rawLibraryData[filePath]) {
-                        if (rawLibraryData[filePath].progress && rawLibraryData[filePath].progress[currentProfile] !== undefined) {
-                            latestPosition = rawLibraryData[filePath].progress[currentProfile];
-                        } else if (rawLibraryData[filePath].last_position) {
-                            latestPosition = rawLibraryData[filePath].last_position;
-                        }
-                    }
-
+                async function startPlayback(filePath, title, author, startPosition, asin) {
+                    saveProgressToServer();
                     currentPath = filePath;
                     document.getElementById('now-playing-title').innerText = title;
                     document.getElementById('now-playing-author').innerText = author;
                     
                     audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
                     audio.playbackRate = currentSpeed; 
-                    
-                    // 3. Wait for the audio stream to connect before skipping time
-                    audio.onloadedmetadata = () => {
-                        audio.currentTime = latestPosition;
-                        audio.play().catch(err => console.error("Audio play failed:", err));
-                    };
+                    audio.currentTime = startPosition;
+                    audio.play().catch(err => console.error("Audio play failed:", err));
                     
                     playerBar.classList.add('active');
                     playBtn.innerText = '⏸';
@@ -507,16 +488,8 @@
 
                 audio.addEventListener('ended', () => { playBtn.innerText = '▶'; progressFill.style.width = '0%'; });
                 function seekAudio(e) { if (!audio.duration) return; const rect = e.target.getBoundingClientRect(); audio.currentTime = (e.clientX - rect.left) / rect.width * audio.duration; }
-
                 function saveProgressToServer() {
                     if (currentPath && audio.currentTime > 0) {
-                        // Update the local browser dictionary first
-                        if (rawLibraryData[currentPath]) {
-                            if (!rawLibraryData[currentPath].progress) rawLibraryData[currentPath].progress = {};
-                            rawLibraryData[currentPath].progress[currentProfile] = audio.currentTime;
-                        }
-
-                        // Then send it to Python
                         fetch('/api/progress', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -526,16 +499,9 @@
                     }
                 }
 
-
                 audio.addEventListener('pause', saveProgressToServer);
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'hidden') saveProgressToServer();
-                });
-
-                // Trigger 3: When you click the 'X' to close the tab or refresh the page
-                window.addEventListener('beforeunload', saveProgressToServer);
                 window.addEventListener('pagehide', saveProgressToServer);
-
+                window.addEventListener('beforeunload', saveProgressToServer);
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'hidden') saveProgressToServer();
                 });

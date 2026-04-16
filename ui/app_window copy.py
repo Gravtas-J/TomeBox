@@ -483,11 +483,13 @@ class AAXManagerApp:
     def db_monitor_worker(self):
         import time
         import os
+        import json
         
         while True:
             ui_needs_refresh = False
             
             # 1. Check if any actual audio files were deleted from the hard drive
+            # We copy the keys() to a list so we can safely delete from the dictionary during the loop
             missing_paths = [path for path in list(self.local_library.keys()) if not os.path.exists(path)]
             
             if missing_paths:
@@ -496,14 +498,19 @@ class AAXManagerApp:
                     
                 self.write_log(f"Detected {len(missing_paths)} deleted files. Updating library...")
                 
-                # Save via the manager's locked method
-                self.db.save_local_db(self.local_library)
+                # Save the cleaned DB without triggering the JSON file monitor below
+                with open(self.db.local_db_path, "w") as f:
+                    json.dump(self.local_library, f, indent=4)
+                
+                if os.path.exists(self.db.local_db_path):
+                    self.db.last_db_mtime = os.path.getmtime(self.db.local_db_path)
+                    
                 ui_needs_refresh = True
 
-            # 2. Check if the SQLite database file was edited externally
-            if hasattr(self.db, 'db_path') and os.path.exists(self.db.db_path):
+            # 2. Check if the library.json file was edited externally
+            if os.path.exists(self.db.local_db_path):
                 try:
-                    current_mtime = os.path.getmtime(self.db.db_path)
+                    current_mtime = os.path.getmtime(self.db.local_db_path)
                     
                     if self.db.last_db_mtime == 0:
                         self.db.last_db_mtime = current_mtime
@@ -1056,6 +1063,7 @@ class AAXManagerApp:
                 abs_time = float(self.chapters[chap_idx].get("start_time", 0)) + rel_time
                 self.local_library[self.file_path]["last_position"] = abs_time
 
+            # FIXED: Always update the specific Profile Progress dict so the Web Server sees it!
             if "progress" not in self.local_library[self.file_path]:
                 self.local_library[self.file_path]["progress"] = {}
             self.local_library[self.file_path]["progress"][self.active_profile] = abs_time
@@ -1067,9 +1075,8 @@ class AAXManagerApp:
     def sync_playhead_from_remote(self, abs_position):
         """Called by the web server when the phone updates the current book's time."""
         try:
-            # Don't interrupt if the PC is actively playing audio right now
             if getattr(self.player, 'is_playing', False):
-                return 
+                return # Don't interrupt if the PC is actively playing audio
                 
             # Update the PC's internal memory so it doesn't save stale data on close
             if hasattr(self, 'chapters') and self.chapters:
@@ -1081,15 +1088,12 @@ class AAXManagerApp:
                         self.current_play_time = abs_position - start
                         break
             
-            # Visually move the progress bar on the PC screen
             if hasattr(self, 'progress_var') and hasattr(self, 'chapters'):
                 total_duration = float(self.chapters[-1].get("end_time", 0))
                 if total_duration > 0:
                     self.progress_var.set((abs_position / total_duration) * 100)
-                    
         except Exception as e:
             self.write_log(f"Failed to sync remote playhead: {e}")
-            
     def cue_last_played(self):
         last_path = self.settings.get(f"last_played_{self.active_profile}")
         if last_path and last_path in self.local_library and os.path.exists(last_path):
@@ -2515,8 +2519,6 @@ class AAXManagerApp:
             
             # The Web Player tracks absolute time (last_position). 
             # The PC Player tracks chapter index + relative time.
-            abs_pos = local_data.get("last_position")
-            
             abs_pos = None
             if "progress" in local_data and self.active_profile in local_data["progress"]:
                 abs_pos = local_data["progress"][self.active_profile]
