@@ -11,12 +11,25 @@ REPO_NAME = "TomeBox"
 BRANCH = "main"
 VERSION_FILE = ".tomebox_version"
 
-# Add any files here that should be kept synced with the repo
+# All project files across the new modular directory structure
 TARGET_FILES = [
-    "aax_player.py",
+    "main.py",
     "requirements.txt",
     "updater.py",
-    "install.py"
+    "install.py",
+    "api/audible_client.py",
+    "core/converter.py",
+    "core/database.py",
+    "core/downloader.py",
+    "core/exporter.py",
+    "core/player.py",
+    "server/mobile_ui.html",
+    "server/web_app.py",
+    "ui/app_window.py",
+    "ui/dialogs.py",
+    "ui/theme.py",
+    "ui/tomebox.ico",
+    "ui/tomebox.png"
 ]
 
 def get_headers():
@@ -34,10 +47,17 @@ def get_latest_commit_sha():
         return None
 
 def download_file(filename):
+    """Downloads a file and ensures the local directory structure exists."""
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{filename}"
     req = urllib.request.Request(url, headers=get_headers())
+    
+    # Ensure subdirectories (core, ui, etc.) exist locally
+    local_dir = os.path.dirname(filename)
+    if local_dir and not os.path.exists(local_dir):
+        os.makedirs(local_dir, exist_ok=True)
+        
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read()
             with open(filename, "wb") as f:
                 f.write(content)
@@ -52,7 +72,6 @@ def update_requirements():
         
     print("[Updater] Verifying dependencies...")
     try:
-        # Run pip install silently. Pip is smart; if requirements are already met, it does nothing.
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
             stdout=subprocess.DEVNULL, 
@@ -83,9 +102,7 @@ def main():
                 all_success = False
 
         if all_success:
-            # Install any new packages immediately after downloading the new requirements.txt
             update_requirements()
-            
             with open(VERSION_FILE, "w") as f:
                 f.write(latest_sha)
             print("[Updater] Update complete.")

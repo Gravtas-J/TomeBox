@@ -9,7 +9,7 @@ from pathlib import Path
 
 # --- Configuration ---
 APP_NAME = "TomeBox"
-MAIN_SCRIPT = "aax_player.py"
+MAIN_SCRIPT = "main.py"  # Now points to the new entry point
 REQUIREMENTS_FILE = "requirements.txt"
 
 def print_step(msg):
@@ -104,7 +104,7 @@ oLink.TargetPath = "wscript.exe"
 oLink.Arguments = chr(34) & "{vbs_launcher_path}" & chr(34)
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
-oLink.IconLocation = "{base_dir}\\tomebox.ico"
+oLink.IconLocation = "{base_dir}\\ui\\tomebox.ico"
 oLink.Save
 """
         with open(shortcut_maker_path, "w") as f:
@@ -120,7 +120,7 @@ oLink.Save
 Name={APP_NAME}
 Comment=Audiobook Manager
 Exec={sh_path}
-Icon={base_dir}/tomebox.png
+Icon={base_dir}/ui/tomebox.png
 Terminal=false
 Type=Application
 Categories=AudioVideo;
