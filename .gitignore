@@ -1,5 +1,6 @@
 *.json
 *.log
+ui/covers
 /covers
 test_aax_player.py
 test_results_log.txt
