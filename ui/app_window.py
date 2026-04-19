@@ -439,8 +439,8 @@ class AAXManagerApp:
         self.settings["active_profile"] = selected
         self.db.save_settings(self.settings)
         
-        self.auth_save_path = os.path.join(self.data_dir, f"auth_{self.active_profile}.json")
-        self.cloud_cache_path = os.path.join(self.data_dir, f"cloud_{self.active_profile}.json")
+        self.auth_save_path = os.path.join(self.base_dir, "data", f"auth_{self.active_profile}.json")
+        self.cloud_cache_path = os.path.join(self.base_dir, "data", f"cloud_{self.active_profile}.json")
         
         # Clear current session
         self.api_client.auth = None
@@ -1017,7 +1017,7 @@ class AAXManagerApp:
             self.on_closing()
 
     def silent_sync_worker(self):
-        if not getattr(self, 'auth_object', None):
+        if not self.api_client.auth:
             return
 
         try:
@@ -1131,7 +1131,7 @@ class AAXManagerApp:
             except Exception as e:
                 self.write_log(f"Failed to load local cover cache, falling back to API: {e}")
 
-        if not getattr(self, 'auth_object', None):
+        if not self.api_client.auth:
             return
             
         try:
@@ -1727,7 +1727,7 @@ class AAXManagerApp:
                 threading.Thread(target=self.download_worker, args=(asin, title, save_dir, False, action_type), daemon=True).start()
 
     def start_scrape_thread(self, filepath):
-        if not getattr(self, 'auth_object', None):
+        if not self.api_client.auth:
             messagebox.showwarning("Not Logged In", "An Audible login is required to search the catalog for ASINs.")
             return
         

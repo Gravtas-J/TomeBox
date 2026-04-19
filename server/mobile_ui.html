@@ -4,6 +4,12 @@
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
             <title>TomeBox</title>
+            <link rel="manifest" href="/static/manifest.json">
+            <meta name="theme-color" content="#121212">
+            <link rel="apple-touch-icon" href="/static/icon.png">
+            <meta name="apple-mobile-web-app-capable" content="yes">
+            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+            <meta name="apple-mobile-web-app-title" content="TomeBox">
             <style>
                 :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #bb86fc; }
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 150px; }
@@ -146,6 +152,13 @@
             </div>
 
             <script>
+                if ('serviceWorker' in navigator) {
+                    window.addEventListener('load', () => {
+                        navigator.serviceWorker.register('/static/sw.js').catch(err => {
+                            console.error('ServiceWorker registration failed: ', err);
+                        });
+                    });
+                }
                 const audio = document.getElementById('main-audio');
                 const playBtn = document.getElementById('play-pause-btn');
                 const progressFill = document.getElementById('progress-fill');

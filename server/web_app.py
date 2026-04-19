@@ -3,11 +3,36 @@ import json
 import subprocess
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 def create_server_app(tomebox):
     """Builds the FastAPI application, linked to the main Tkinter instance."""
     api = FastAPI()
 
+    # Mount the static directory
+    static_path = os.path.join(tomebox.base_dir, "server", "static")
+
+    @api.get("/static/manifest.json")
+    def get_manifest():
+        path = os.path.join(tomebox.base_dir, "server", "static", "manifest.json")
+        if os.path.exists(path):
+            return FileResponse(path, media_type="application/manifest+json")
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    @api.get("/static/sw.js")
+    def get_sw():
+        path = os.path.join(tomebox.base_dir, "server", "static", "sw.js")
+        if os.path.exists(path):
+            return FileResponse(path, media_type="application/javascript")
+        raise HTTPException(status_code=404, detail="Service worker not found")
+
+    @api.get("/static/icon.png")
+    def get_icon():
+        path = os.path.join(tomebox.base_dir, "server", "static", "icon.png")
+        if os.path.exists(path):
+            return FileResponse(path, media_type="image/png")
+        raise HTTPException(status_code=404, detail="Icon not found")
+    
     @api.get("/", response_class=HTMLResponse)
     def web_interface():
         html_path = os.path.join(tomebox.base_dir, "server", "mobile_ui.html")
@@ -38,7 +63,6 @@ def create_server_app(tomebox):
         master_metadata = {}
         data_dir = os.path.join(tomebox.base_dir, "data")
         
-        # Cloud caches remain JSON files, so we scrape them to build rich metadata
         if os.path.exists(data_dir):
             for f in os.listdir(data_dir):
                 if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
@@ -95,17 +119,19 @@ def create_server_app(tomebox):
                     
                 tomebox.local_library[path]["progress"][profile] = position
                 tomebox.local_library[path]["last_position"] = position
+                
                 tomebox.settings[f"last_played_{profile}"] = path
                 
+                # Save using your shiny new Database Manager
                 tomebox.db.save_settings(tomebox.settings)
                 tomebox.db.save_local_db(tomebox.local_library)
 
+                # Tap the PC on the shoulder to update its memory in real-time
                 if getattr(tomebox, 'file_path', None) == path:
                     tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")
-            
         return {"status": "success"}
 
     @api.get("/api/chapters")
