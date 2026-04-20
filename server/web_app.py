@@ -1,14 +1,30 @@
 import os
 import json
 import subprocess
-from fastapi import FastAPI, Request, HTTPException, status
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi import FastAPI, Request, HTTPException, status, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 def create_server_app(tomebox):
     """Builds the FastAPI application, linked to the main Tkinter instance."""
     api = FastAPI()
+    @api.middleware("http")
+    async def token_auth_middleware(request: Request, call_next):
+        # Allow the HTML shell and static files to load so the JS can boot up and grab the local storage token
+        if request.url.path in ["/", "/favicon.ico"] or request.url.path.startswith("/static"):
+            return await call_next(request)
 
+        client_token = request.query_params.get("token")
+        server_token = tomebox.db.load_settings().get("auth_token")
+
+        if client_token != server_token:
+            return JSONResponse(
+                status_code=401, 
+                content={"detail": "Unauthorized: Invalid or missing TomeBox token."}
+            )
+
+        response = await call_next(request)
+        return response
     # Mount the static directory
     static_path = os.path.join(tomebox.base_dir, "server", "static")
 

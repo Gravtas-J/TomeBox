@@ -152,6 +152,25 @@
             </div>
 
             <script>
+                // 1. Check the URL for the token
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlToken = urlParams.get('token');
+
+                // 2. If a token is in the URL, save it permanently to the device
+                if (urlToken) {
+                    localStorage.setItem('tomebox_token', urlToken);
+                    
+                    // Optional: Wipe the token from the visible URL bar so it looks like a clean, native app
+                    window.history.replaceState({}, document.title, "/");
+                }
+
+                // 3. Load the saved token into a variable to use for API calls
+                const authToken = localStorage.getItem('tomebox_token');
+
+                if (!authToken) {
+                    console.error("No authentication token found! Please scan the QR code from the desktop app.");
+                    // Optionally, show a UI warning here telling the user to scan the QR code
+                }
                 if ('serviceWorker' in navigator) {
                     window.addEventListener('load', () => {
                         navigator.serviceWorker.register('/static/sw.js').catch(err => {
@@ -159,6 +178,7 @@
                         });
                     });
                 }
+
                 const audio = document.getElementById('main-audio');
                 const playBtn = document.getElementById('play-pause-btn');
                 const progressFill = document.getElementById('progress-fill');
@@ -171,13 +191,13 @@
                 let sleepMode = null; 
                 let sleepTimeout = null;
                 let sleepTargetTime = null;
-                
+
                 let currentProfile = "Main";
                 let rawLibraryData = {};
 
                 async function initializeApp() {
                     try {
-                        const profRes = await fetch('/api/profiles');
+                        const profRes = await fetch(`/api/profiles?token=${authToken}`);
                         const profiles = await profRes.json();
                         const profSelect = document.getElementById('profile-selector');
                         profSelect.innerHTML = '';
@@ -191,7 +211,8 @@
 
                 async function loadLibrary() {
                     try {
-                        const response = await fetch('/api/library');
+                        // FIXED: Backtick syntax was broken here
+                        const response = await fetch(`/api/library?token=${authToken}`);
                         rawLibraryData = await response.json();
                         renderGrid();
                     } catch (e) { console.error("Failed to load library", e); }
@@ -228,8 +249,9 @@
                             timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
                         }
 
+                        // FIXED: Added token to the cover image fetch so they load properly
                         const coverHtml = asin !== "Unknown" 
-                            ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+                            ? `<img src="/api/cover/${asin}?token=${authToken}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
                             : `<div class="cover-placeholder">📖</div>`;
 
                         const card = document.createElement('div');
@@ -257,10 +279,10 @@
                     filterLibrary();
                 }
 
-                // --- NEW: Cue Last Played Helper ---
                 async function cueLastPlayedBook() {
                     try {
-                        const res = await fetch(`/api/last_played/${currentProfile}`);
+                        // FIXED: Added token
+                        const res = await fetch(`/api/last_played/${currentProfile}?token=${authToken}`);
                         const data = await res.json();
                         if (data.path && rawLibraryData[data.path]) {
                             const book = rawLibraryData[data.path];
@@ -279,10 +301,10 @@
                             document.getElementById('now-playing-title').innerText = titleStr;
                             document.getElementById('now-playing-author').innerText = authorStr;
                             
-                            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
+                            // FIXED: Added &token= because ?path= already exists
+                            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}&token=${authToken}`;
                             audio.playbackRate = currentSpeed; 
                             
-                            // Wait for the file to connect before moving the playhead
                             audio.onloadedmetadata = () => {
                                 audio.currentTime = resumePos;
                             };
@@ -292,12 +314,14 @@
                             setSleepOff(); 
 
                             try {
-                                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}`);
+                                // FIXED: Added &token=
+                                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}&token=${authToken}`);
                                 currentChapters = await chapRes.json();
                             } catch(e) { currentChapters = []; }
 
                             if ('mediaSession' in navigator) {
-                                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                                // FIXED: Added token to MediaSession artwork
+                                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}?token=${authToken}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                                 navigator.mediaSession.metadata = new MediaMetadata({ title: titleStr, artist: authorStr, album: 'TomeBox', artwork: artworkUrl });
                                 navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
                                 navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
@@ -333,10 +357,8 @@
                 }
 
                 async function startPlayback(filePath, title, author, fallbackPosition, asin) {
-                    // 1. Save the current book BEFORE we destroy the stream
                     saveProgressToServer(); 
                     
-                    // 2. Dynamically pull the absolute latest time for the NEW book
                     let latestPosition = fallbackPosition;
                     if (rawLibraryData[filePath]) {
                         if (rawLibraryData[filePath].progress && rawLibraryData[filePath].progress[currentProfile] !== undefined) {
@@ -350,10 +372,10 @@
                     document.getElementById('now-playing-title').innerText = title;
                     document.getElementById('now-playing-author').innerText = author;
                     
-                    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
+                    // FIXED: Added &token= 
+                    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}&token=${authToken}`;
                     audio.playbackRate = currentSpeed; 
                     
-                    // 3. Wait for the audio stream to connect before skipping time
                     audio.onloadedmetadata = () => {
                         audio.currentTime = latestPosition;
                         audio.play().catch(err => console.error("Audio play failed:", err));
@@ -364,12 +386,14 @@
                     setSleepOff(); 
 
                     try {
-                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
+                        // FIXED: Added &token=
+                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}&token=${authToken}`);
                         currentChapters = await res.json();
                     } catch(e) { currentChapters = []; }
 
                     if ('mediaSession' in navigator) {
-                        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                        // FIXED: Added token to MediaSession artwork
+                        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}?token=${authToken}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                         navigator.mediaSession.metadata = new MediaMetadata({ title: title, artist: author, album: 'TomeBox', artwork: artworkUrl });
                         navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
                         navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
@@ -380,7 +404,7 @@
 
                 function closeModals(e) { document.getElementById('sleep-modal').style.display = 'none'; document.getElementById('chapter-modal').style.display = 'none'; }
                 function openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
-                
+
                 function formatTime(sec) {
                     const h = Math.floor(sec / 3600);
                     const m = Math.floor((sec % 3600) / 60);
@@ -418,7 +442,7 @@
                     document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
                     closeModals();
                 }
-                
+
                 function setCustomSleepChapter() {
                     const inputElem = document.getElementById('custom-chapter-input');
                     let count = parseInt(inputElem.value, 10);
@@ -474,7 +498,8 @@
                             rawLibraryData[currentPath].progress[currentProfile] = pos;
                         }
 
-                        fetch('/api/progress', {
+                        // FIXED: Added token to the progress sync
+                        fetch(`/api/progress?token=${authToken}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ path: currentPath, position: pos, profile: currentProfile })
@@ -523,14 +548,13 @@
 
                 function saveProgressToServer() {
                     if (currentPath && audio.currentTime > 0) {
-                        // Update the local browser dictionary first
                         if (rawLibraryData[currentPath]) {
                             if (!rawLibraryData[currentPath].progress) rawLibraryData[currentPath].progress = {};
                             rawLibraryData[currentPath].progress[currentProfile] = audio.currentTime;
                         }
 
-                        // Then send it to Python
-                        fetch('/api/progress', {
+                        // FIXED: Added token to the progress sync
+                        fetch(`/api/progress?token=${authToken}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ path: currentPath, position: audio.currentTime, profile: currentProfile }),
@@ -539,19 +563,14 @@
                     }
                 }
 
-
                 audio.addEventListener('pause', saveProgressToServer);
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'hidden') saveProgressToServer();
                 });
 
-                // Trigger 3: When you click the 'X' to close the tab or refresh the page
                 window.addEventListener('beforeunload', saveProgressToServer);
                 window.addEventListener('pagehide', saveProgressToServer);
 
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'hidden') saveProgressToServer();
-                });
                 initializeApp();
             </script>
         </body>

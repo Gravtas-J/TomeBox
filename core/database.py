@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import threading
+import uuid
 
 class DatabaseManager:
     def __init__(self, base_dir):
@@ -50,6 +51,14 @@ class DatabaseManager:
                     settings_dict[key] = json.loads(value)
                 except:
                     settings_dict[key] = value
+            if "auth_token" not in settings_dict:
+                new_token = str(uuid.uuid4())
+                settings_dict["auth_token"] = new_token
+                # Save immediately so it persists in the database
+                cursor.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", 
+                    ("auth_token", json.dumps(new_token))
+                )
             conn.close()
         return settings_dict
 

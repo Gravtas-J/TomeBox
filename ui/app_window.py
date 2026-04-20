@@ -26,7 +26,7 @@ from core.database import DatabaseManager
 from core.converter import AudioConverter
 from api.audible_client import AudibleClient
 from core.player import AudioPlayer
-from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast
+from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
 from core.downloader import AudiobookDownloader
 from ui.theme import apply_theme
 from core.exporter import LibraryExporter
@@ -159,6 +159,7 @@ class AAXManagerApp:
             self.web_server = None
             self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server")
             messagebox.showinfo("Server Stopped", "The companion server has been safely disabled.")
+            # Note: Removed the accidental open_pairing_window(self) from here
         else:
             try:
                 import uvicorn
@@ -180,7 +181,10 @@ class AAXManagerApp:
                 self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server")
                 local_ip = self.get_local_ip()
                 self.write_log(f"Server started on http://{local_ip}:8000")
-                messagebox.showinfo("Server Active", f"Companion Server is now running!\n\nAccess it at:\nhttp://{local_ip}:8000")
+                
+                # --- NEW: Pop up the QR code instead of the message box ---
+                open_pairing_window(self)
+                # ----------------------------------------------------------
                 
             except ImportError:
                 messagebox.showerror("Missing Libraries", "Please install the required server packages first:\n\npip install fastapi uvicorn")
@@ -535,7 +539,7 @@ class AAXManagerApp:
         self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
         self.file_menu.add_command(label="Authentication & Profiles", command=lambda: open_auth_window(self))
         self.file_menu.add_separator()
-
+        # self.file_menu.add_command(label="Pair Mobile Device (QR)", command=lambda: open_pairing_window(self))
         self.file_menu.add_checkbutton(
             label="Minimize to Tray on Close", 
             variable=self.minimize_to_tray_var, 

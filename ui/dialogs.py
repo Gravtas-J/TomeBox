@@ -1,5 +1,8 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
+import socket
+import qrcode
+from PIL import Image, ImageTk
 
 def open_auth_window(app):
     if hasattr(app, 'auth_window') and app.auth_window.winfo_exists():
@@ -272,3 +275,46 @@ def show_achievement_toast(app, title, desc):
     toast.geometry(f"+{x}+{y}")
     
     app.root.after(5000, toast.destroy)
+
+def open_pairing_window(app):
+    # Dynamically grab the host machine's local IP
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('10.255.255.255', 1))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = "127.0.0.1"
+    finally:
+        s.close()
+
+    # Construct the secure URL
+    token = app.db.load_settings().get("auth_token")
+    pairing_url = f"http://{local_ip}:8000/?token={token}"
+
+    top = tk.Toplevel(app.root)
+    top.title("Pair Mobile Device")
+    top.geometry("400x500")
+    top.configure(bg="#2b2b2b")
+
+    tk.Label(top, text="Scan to Connect", font=("Arial", 16, "bold"), bg="#2b2b2b", fg="white").pack(pady=15)
+    tk.Label(top, text="Point your phone's camera at this code to securely load your library.", 
+             bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center").pack(pady=5)
+
+    # Generate the QR Code
+    qr = qrcode.QRCode(box_size=10, border=2)
+    qr.add_data(pairing_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to a Tkinter-compatible image
+    tk_image = ImageTk.PhotoImage(img)
+
+    qr_label = tk.Label(top, image=tk_image, bg="#2b2b2b")
+    qr_label.image = tk_image  # Keep a reference to prevent garbage collection
+    qr_label.pack(pady=20)
+
+    # Provide the raw URL for manual entry if needed
+    url_entry = tk.Entry(top, width=45, justify="center")
+    url_entry.insert(0, pairing_url)
+    url_entry.configure(state="readonly")
+    url_entry.pack(pady=10)
