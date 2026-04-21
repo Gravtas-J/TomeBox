@@ -33,6 +33,19 @@ class AudioConverter:
         # Suppress the black command prompt window on Windows
         self.creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
+        self.current_process = None
+        self.is_cancelled = False
+
+    def cancel(self):
+        """Forcefully kills the running FFmpeg process."""
+        self.is_cancelled = True
+        if self.current_process:
+            try:
+                self.current_process.terminate()  # Sends SIGTERM to ffmpeg.exe
+                self.logger.info("FFmpeg process terminated by user.")
+            except Exception as e:
+                pass # Process might have already finished
+            
     def get_metadata_and_chapters(self, filepath):
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", filepath]
         try:
@@ -64,11 +77,11 @@ class AudioConverter:
 
             # Hunt for the cover handling dropped zeros and scraper defaults
             candidates = [
-                cover_path,                                    # The expected path
-                os.path.join(cover_dir, f"{padded_asin}.jpg"), # Padded 10-digit ASIN
-                os.path.join(cover_dir, f"{padded_asin}.png"), # PNG variant
-                os.path.join(cover_dir, "cover.jpg"),          # Standard scraper output
-                os.path.join(cover_dir, "folder.jpg")          # Standard scraper output
+                cover_path,                                    
+                os.path.join(cover_dir, f"{padded_asin}.jpg"), 
+                os.path.join(cover_dir, f"{padded_asin}.png"), 
+                os.path.join(cover_dir, "cover.jpg"),          
+                os.path.join(cover_dir, "folder.jpg")          
             ]
             
             for candidate in candidates:
@@ -111,16 +124,30 @@ class AudioConverter:
 
         cmd.extend(["-progress", "pipe:1", temp_out_path])
         
+        # Reset the cancellation flag for this specific run
+        self.is_cancelled = False 
+        
         try:
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, 
-                universal_newlines=True, creationflags=self.creationflags
-            )
+            # TRAP 1: MISSING FFMPEG
+            try:
+                self.current_process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, 
+                    universal_newlines=True, creationflags=self.creationflags
+                )
+            except FileNotFoundError:
+                raise Exception("CRITICAL: FFmpeg not found. Please ensure FFmpeg is installed and added to your system PATH.")
 
             last_percent = -1
-            for line in process.stdout:
+            for line in self.current_process.stdout:
+                
+                # INSTANT BAILOUT if the user clicked cancel or hit Alt-F4
+                if getattr(self, 'is_cancelled', False):
+                    self.current_process.terminate()
+                    break 
+
                 line = line.strip()
-                if line.startswith("out_time_us=") and total_duration > 0:
+                # Safety check added here to ensure total_duration isn't None
+                if line.startswith("out_time_us=") and total_duration and total_duration > 0:
                     try:
                         val = line.split("=")[1]
                         if val != "N/A":
@@ -134,19 +161,34 @@ class AudioConverter:
                     except ValueError:
                         pass
 
-            process.wait()
+            self.current_process.wait()
             
-            if process.returncode != 0:
-                raise Exception(f"FFmpeg process failed with exit code {process.returncode}.")
+            # Post-processing checks
+            if getattr(self, 'is_cancelled', False):
+                raise Exception("Conversion cancelled by user.")
+                
+            if self.current_process.returncode != 0:
+                raise Exception(f"FFmpeg process failed with exit code {self.current_process.returncode}.")
             
-            os.replace(temp_out_path, output_path)
+            # TRAP 2: PERMISSION DENIED / DRIVE FULL
+            try:
+                os.replace(temp_out_path, output_path)
+            except OSError as e:
+                raise Exception(f"File System Error: Could not save the final audiobook. (Check permissions and drive space). Details: {e}")
+                
             return True
             
         except Exception as e:
+            # THE AFTERMATH CLEANUP
             if os.path.exists(temp_out_path):
-                try: os.remove(temp_out_path)
-                except OSError: pass
+                try: 
+                    os.remove(temp_out_path)
+                except OSError: 
+                    pass
             raise e
+        finally:
+            # UNLINK THE PROCESS so we don't hold it in memory
+            self.current_process = None
 
     def split_into_chapters(self, input_path, target_dir, chapters, drm_flags, progress_cb=None):
         total_chaps = len(chapters)

@@ -41,7 +41,8 @@ class AAXManagerApp:
         self.current_sort_col = "Title"  
         self.current_sort_descending = False
         self.enforce_single_instance()
-        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
+
         # 1. Initialize Database Manager FIRST
         self.db = DatabaseManager(self.base_dir)
         
@@ -50,8 +51,7 @@ class AAXManagerApp:
         icon_ico = os.path.join(ui_dir, "tomebox.ico")
         icon_png = os.path.join(ui_dir, "tomebox.png")
 
-        # if os.path.exists(icon_ico):
-        #     self.root.iconbitmap(icon_ico)
+        
         def apply_taskbar_icon():
             try:
                 # Force the OS to acknowledge the window exists first
@@ -140,7 +140,17 @@ class AAXManagerApp:
             "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
-    
+    def on_app_close(self):
+        # 1. Kill any active conversions
+            if hasattr(self, 'converter') and self.converter:
+                self.converter.cancel()
+                
+            # 2. Kill any active downloads (If your downloader has a similar cancel method)
+            # if hasattr(self, 'downloader'):
+            #     self.downloader.cancel()
+                
+            # 3. Destroy the window safely
+            self.root.destroy()
     def get_local_ip(self):
         import socket
         try:
