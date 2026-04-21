@@ -58,11 +58,12 @@ class AudibleClient:
         return resp.get("products", [])
 
     def get_download_license(self, asin):
+        clean_asin = str(asin).zfill(10)
         if not self.auth:
             raise Exception("Not authenticated")
         client = audible.Client(auth=self.auth)
         body = {"drm_type": "Adrm", "consumption_type": "Download"}
-        resp = client.post(f"1.0/content/{asin}/licenserequest", body=body)
+        resp = client.post(f"1.0/content/{clean_asin}/licenserequest", body=body)
         
         def find_url(d):
             if isinstance(d, dict):

@@ -2,6 +2,31 @@ import subprocess
 import os
 import json
 
+def resolve_cover_path(base_cover_path, asin):
+    """
+    Intelligently hunts for the cover art to handle Audible's dropped leading 
+    zeros and external metadata scraper naming conventions.
+    """
+    if not base_cover_path:
+        return None
+
+    cover_dir = os.path.dirname(base_cover_path)
+    padded_asin = str(asin).zfill(10)
+
+    # List of possible filenames your system/scraper might have saved
+    candidates = [
+        base_cover_path,                                  # The raw 9-digit expectation
+        os.path.join(cover_dir, f"{padded_asin}.jpg"),    # The 10-digit padded reality
+        os.path.join(cover_dir, f"{padded_asin}.png"),    # Scraper might have grabbed a PNG
+        os.path.join(cover_dir, "cover.jpg"),             # Standard generic scraper output
+        os.path.join(cover_dir, "folder.jpg")             # Alternative standard output
+    ]
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate  # Found it!
+            
+    return None # Truly missing
 class AudioConverter:
     def __init__(self, logger):
         self.logger = logger
@@ -26,6 +51,32 @@ class AudioConverter:
             return 0.0
 
     def convert_to_m4b(self, input_path, output_path, title, authors, cover_path, drm_flags, total_duration, progress_cb=None):
+        import os
+        import subprocess
+
+        # --- SMART COVER RESOLUTION ---
+        actual_cover = None
+        if cover_path:
+            cover_dir = os.path.dirname(cover_path)
+            filename = os.path.basename(cover_path)
+            raw_asin, _ = os.path.splitext(filename)
+            padded_asin = str(raw_asin).zfill(10)
+
+            # Hunt for the cover handling dropped zeros and scraper defaults
+            candidates = [
+                cover_path,                                    # The expected path
+                os.path.join(cover_dir, f"{padded_asin}.jpg"), # Padded 10-digit ASIN
+                os.path.join(cover_dir, f"{padded_asin}.png"), # PNG variant
+                os.path.join(cover_dir, "cover.jpg"),          # Standard scraper output
+                os.path.join(cover_dir, "folder.jpg")          # Standard scraper output
+            ]
+            
+            for candidate in candidates:
+                if os.path.exists(candidate):
+                    actual_cover = candidate
+                    break
+        # ------------------------------
+
         base, ext = os.path.splitext(output_path)
         temp_out_path = f"{base}_temp{ext}"
 
@@ -35,8 +86,18 @@ class AudioConverter:
             
         cmd.extend(["-i", input_path])
 
-        if cover_path and os.path.exists(cover_path):
-            cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c:v", "mjpeg", "-disposition:v", "attached_pic"])
+        # --- APPLY RESOLVED COVER ---
+        if actual_cover:
+            cmd.extend([
+                "-i", actual_cover, 
+                "-map", "0:a", 
+                "-map", "1:v", 
+                "-c:v", "mjpeg", 
+                "-disposition:v", "attached_pic"
+            ])
+        else:
+            # Fallback: Convert audio only without crashing if cover is truly gone
+            cmd.extend(["-map", "0:a"])
 
         cmd.extend([
             "-c:a", "copy",

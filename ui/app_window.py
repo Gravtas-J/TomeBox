@@ -937,9 +937,16 @@ class AAXManagerApp:
         covers_dir = getattr(self, 'covers_dir', self.base_dir)
         
         if asin and asin != "Unknown":
-            test_path = os.path.join(covers_dir, f"{asin}.jpg")
-            if os.path.exists(test_path):
-                cover_path = test_path
+            padded_asin = str(asin).zfill(10)
+            
+            # Check for the padded ASIN first, then fallback to raw
+            test_path_padded = os.path.join(covers_dir, f"{padded_asin}.jpg")
+            test_path_raw = os.path.join(covers_dir, f"{asin}.jpg")
+            
+            if os.path.exists(test_path_padded):
+                cover_path = test_path_padded
+            elif os.path.exists(test_path_raw):
+                cover_path = test_path_raw
                 
         if not cover_path:
             for p, d in getattr(self, 'local_library', {}).items():
