@@ -37,8 +37,9 @@ class AAXManagerApp:
         self.root.title("TomeBox")
         self.root.geometry("1550x850")
         self.root.drop_target_register(DND_FILES)
-        self.base_dir = base_dir  # This is the root folder passed from main.py
-
+        self.base_dir = base_dir  
+        self.current_sort_col = "Title"  
+        self.current_sort_descending = False
         self.enforce_single_instance()
         
         # 1. Initialize Database Manager FIRST
@@ -49,8 +50,17 @@ class AAXManagerApp:
         icon_ico = os.path.join(ui_dir, "tomebox.ico")
         icon_png = os.path.join(ui_dir, "tomebox.png")
 
-        if os.path.exists(icon_ico):
-            self.root.iconbitmap(icon_ico)
+        # if os.path.exists(icon_ico):
+        #     self.root.iconbitmap(icon_ico)
+        def apply_taskbar_icon():
+            try:
+                # Force the OS to acknowledge the window exists first
+                self.root.update_idletasks() 
+                
+                # Now apply the icon
+                self.root.iconbitmap(icon_ico)
+            except Exception as e:
+                print(f"Icon error: {e}")
         
         if os.path.exists(icon_png):
             try:
@@ -63,7 +73,7 @@ class AAXManagerApp:
         self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
         self.covers_dir = os.path.join(self.base_dir, "covers")
         os.makedirs(self.covers_dir, exist_ok=True)
-        
+        self.root.after(200, apply_taskbar_icon)
         # 4. Apply Profile Variables
         self.active_profile = self.settings.get("active_profile", "Main")
         self.minimize_to_tray_var = tk.BooleanVar(value=self.settings.get("minimize_to_tray", True))
@@ -1679,8 +1689,18 @@ class AAXManagerApp:
             if self.current_view_mode == "list":
                 self.grid_canvas.pack_forget()
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+                
+                # 1. Populate the treeview with the unsorted/default data
                 for row in filtered_rows:
                     self.library_tree.insert("", "end", values=row)
+                    
+                # 2. INSTANTLY RE-APPLY THE SAVED SORTING
+                if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
+                    self.sort_treeview(
+                        self.library_tree, 
+                        self.current_sort_col, 
+                        self.current_sort_descending
+                    )
             else:
                 self.library_tree.pack_forget()
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
@@ -1900,7 +1920,8 @@ class AAXManagerApp:
             return val.lower()
 
         data.sort(key=sort_key, reverse=descending)
-        
+        self.current_sort_col = col
+        self.current_sort_descending = descending
         for index, (val, child) in enumerate(data):
             tree.move(child, '', index)
             
