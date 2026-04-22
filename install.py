@@ -91,23 +91,23 @@ def create_shortcut(base_dir, vbs_launcher_path, sh_path, py_exec):
     os_name = platform.system()
     desktop_dir = Path.home() / "Desktop"
     if os_name == "Windows":
-        py_exec = str(base_dir / "venv" / "Scripts" / "pythonw.exe") # pythonw hides the console
-    else:
-        py_exec = str(base_dir / "venv" / "bin" / "python3")
-    if os_name == "Windows":
+        # Force absolute paths just to be completely safe
+        abs_base_dir = str(base_dir.resolve())
+        py_exec = str((base_dir / "venv" / "Scripts" / "pythonw.exe").resolve())
+        main_script_path = str((base_dir / MAIN_SCRIPT).resolve())
+        
         shortcut_maker_path = base_dir / "make_shortcut.vbs"
         shortcut_path = desktop_dir / f"{APP_NAME}.lnk"
         
-        # Notice TargetPath is now {py_exec}, not a raw pythonw.exe string
         vbs_content = f"""
 Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
 oLink.TargetPath = "{py_exec}"
-oLink.Arguments = "{MAIN_SCRIPT}"
-oLink.WorkingDirectory = "{base_dir}"
+oLink.Arguments = chr(34) & "{main_script_path}" & chr(34)
+oLink.WorkingDirectory = "{abs_base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
-oLink.IconLocation = "{base_dir}\\ui\\tomebox.ico"
+oLink.IconLocation = "{abs_base_dir}\\ui\\tomebox.ico"
 oLink.Save
 """
         with open(shortcut_maker_path, "w") as f:
