@@ -103,11 +103,10 @@ def create_shortcut(base_dir, vbs_launcher_path, sh_path, py_exec):
 Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "{py_exec}"
-oLink.Arguments = chr(34) & "{main_script_path}" & chr(34)
-oLink.WorkingDirectory = "{abs_base_dir}"
+oLink.TargetPath = "{base_dir}\\start_tomebox.vbs"
+oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
-oLink.IconLocation = "{abs_base_dir}\\ui\\tomebox.ico"
+oLink.IconLocation = "{base_dir}\\ui\\tomebox.ico"
 oLink.Save
 """
         with open(shortcut_maker_path, "w") as f:
