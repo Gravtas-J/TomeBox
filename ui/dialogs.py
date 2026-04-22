@@ -289,7 +289,7 @@ def open_pairing_window(app):
 
     # Construct the secure URL
     token = app.db.load_settings().get("auth_token")
-    pairing_url = f"http://{local_ip}:8000/?token={token}"
+    pairing_url = f"http://{local_ip}:8000/auth?token={token}"
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
@@ -301,7 +301,7 @@ def open_pairing_window(app):
              bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center").pack(pady=5)
 
     # Generate the QR Code
-    qr = qrcode.QRCode(box_size=10, border=2)
+    qr = qrcode.QRCode(box_size=9, border=2)
     qr.add_data(pairing_url)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")

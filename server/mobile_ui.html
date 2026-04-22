@@ -152,25 +152,9 @@
             </div>
 
             <script>
-                // 1. Check the URL for the token
-                const urlParams = new URLSearchParams(window.location.search);
-                const urlToken = urlParams.get('token');
+                
 
-                // 2. If a token is in the URL, save it permanently to the device
-                if (urlToken) {
-                    localStorage.setItem('tomebox_token', urlToken);
-                    
-                    // Optional: Wipe the token from the visible URL bar so it looks like a clean, native app
-                    window.history.replaceState({}, document.title, "/");
-                }
-
-                // 3. Load the saved token into a variable to use for API calls
-                const authToken = localStorage.getItem('tomebox_token');
-
-                if (!authToken) {
-                    console.error("No authentication token found! Please scan the QR code from the desktop app.");
-                    // Optionally, show a UI warning here telling the user to scan the QR code
-                }
+                
                 if ('serviceWorker' in navigator) {
                     window.addEventListener('load', () => {
                         navigator.serviceWorker.register('/static/sw.js').catch(err => {
@@ -197,7 +181,7 @@
 
                 async function initializeApp() {
                     try {
-                        const profRes = await fetch(`/api/profiles?token=${authToken}`);
+                        const profRes = await fetch(`/api/profiles`);
                         const profiles = await profRes.json();
                         const profSelect = document.getElementById('profile-selector');
                         profSelect.innerHTML = '';
@@ -212,7 +196,7 @@
                 async function loadLibrary() {
                     try {
                         // FIXED: Backtick syntax was broken here
-                        const response = await fetch(`/api/library?token=${authToken}`);
+                        const response = await fetch(`/api/library`);
                         rawLibraryData = await response.json();
                         renderGrid();
                     } catch (e) { console.error("Failed to load library", e); }
@@ -251,7 +235,7 @@
 
                         // FIXED: Added token to the cover image fetch so they load properly
                         const coverHtml = asin !== "Unknown" 
-                            ? `<img src="/api/cover/${asin}?token=${authToken}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+                            ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
                             : `<div class="cover-placeholder">📖</div>`;
 
                         const card = document.createElement('div');
@@ -282,7 +266,7 @@
                 async function cueLastPlayedBook() {
                     try {
                         // FIXED: Added token
-                        const res = await fetch(`/api/last_played/${currentProfile}?token=${authToken}`);
+                        const res = await fetch(`/api/last_played/${currentProfile}`);
                         const data = await res.json();
                         if (data.path && rawLibraryData[data.path]) {
                             const book = rawLibraryData[data.path];
@@ -302,7 +286,7 @@
                             document.getElementById('now-playing-author').innerText = authorStr;
                             
                             // FIXED: Added &token= because ?path= already exists
-                            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}&token=${authToken}`;
+                            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
                             audio.playbackRate = currentSpeed; 
                             
                             audio.onloadedmetadata = () => {
@@ -315,13 +299,13 @@
 
                             try {
                                 // FIXED: Added &token=
-                                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}&token=${authToken}`);
+                                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}`);
                                 currentChapters = await chapRes.json();
                             } catch(e) { currentChapters = []; }
 
                             if ('mediaSession' in navigator) {
                                 // FIXED: Added token to MediaSession artwork
-                                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}?token=${authToken}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                                 navigator.mediaSession.metadata = new MediaMetadata({ title: titleStr, artist: authorStr, album: 'TomeBox', artwork: artworkUrl });
                                 navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
                                 navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
@@ -373,7 +357,7 @@
                     document.getElementById('now-playing-author').innerText = author;
                     
                     // FIXED: Added &token= 
-                    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}&token=${authToken}`;
+                    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
                     audio.playbackRate = currentSpeed; 
                     
                     audio.onloadedmetadata = () => {
@@ -387,13 +371,13 @@
 
                     try {
                         // FIXED: Added &token=
-                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}&token=${authToken}`);
+                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
                         currentChapters = await res.json();
                     } catch(e) { currentChapters = []; }
 
                     if ('mediaSession' in navigator) {
                         // FIXED: Added token to MediaSession artwork
-                        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}?token=${authToken}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+                        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                         navigator.mediaSession.metadata = new MediaMetadata({ title: title, artist: author, album: 'TomeBox', artwork: artworkUrl });
                         navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
                         navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
@@ -499,7 +483,7 @@
                         }
 
                         // FIXED: Added token to the progress sync
-                        fetch(`/api/progress?token=${authToken}`, {
+                        fetch(`/api/progress`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ path: currentPath, position: pos, profile: currentProfile })
@@ -554,7 +538,7 @@
                         }
 
                         // FIXED: Added token to the progress sync
-                        fetch(`/api/progress?token=${authToken}`, {
+                        fetch(`/api/progress`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ path: currentPath, position: audio.currentTime, profile: currentProfile }),

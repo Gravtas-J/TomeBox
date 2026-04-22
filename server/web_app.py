@@ -2,31 +2,57 @@ import os
 import json
 import subprocess
 from fastapi import FastAPI, Request, HTTPException, status, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 def create_server_app(tomebox):
-    """Builds the FastAPI application, linked to the main Tkinter instance."""
     api = FastAPI()
+
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
-        # Allow the HTML shell and static files to load so the JS can boot up and grab the local storage token
-        if request.url.path in ["/", "/favicon.ico"] or request.url.path.startswith("/static"):
+        # Allow static files and the new auth endpoint to bypass the check
+        if request.url.path in ["/auth", "/favicon.ico"] or request.url.path.startswith("/static"):
             return await call_next(request)
 
-        client_token = request.query_params.get("token")
         server_token = tomebox.db.load_settings().get("auth_token")
+
+        # 1. Check for the secure cookie
+        client_token = request.cookies.get("tomebox_token")
+        
+        # 2. Fallback to Authorization header (optional, good for API testing tools like Postman)
+        if not client_token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                client_token = auth_header.split(" ")[1]
 
         if client_token != server_token:
             return JSONResponse(
                 status_code=401, 
-                content={"detail": "Unauthorized: Invalid or missing TomeBox token."}
+                content={"detail": "Unauthorized: Invalid or missing session."}
             )
 
-        response = await call_next(request)
-        return response
-    # Mount the static directory
-    static_path = os.path.join(tomebox.base_dir, "server", "static")
+        return await call_next(request)
+
+    @api.get("/auth")
+    def authenticate_device(token: str):
+        server_token = tomebox.db.load_settings().get("auth_token")
+        
+        if token == server_token:
+            # Create a redirect back to the clean root interface
+            redirect = RedirectResponse(url="/", status_code=302)
+            
+            # Set the secure cookie
+            # httponly=True prevents malicious JavaScript from reading the token
+            redirect.set_cookie(
+                key="tomebox_token", 
+                value=token, 
+                httponly=True, 
+                max_age=31536000, # Valid for 1 year
+                samesite="lax"
+            )
+            return redirect
+        else:
+            return HTMLResponse("<h1>Invalid Pairing Token</h1><p>Please scan the QR code from the TomeBox desktop app again.</p>", status_code=401)
 
     @api.get("/static/manifest.json")
     def get_manifest():
