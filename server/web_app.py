@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 def create_server_app(tomebox):
     api = FastAPI()
-
+    static_dir = os.path.join(tomebox.base_dir, "server", "static")
+    api.mount("/static", StaticFiles(directory=static_dir), name="static")
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
         # Allow static files and the new auth endpoint to bypass the check
@@ -53,27 +54,6 @@ def create_server_app(tomebox):
             return redirect
         else:
             return HTMLResponse("<h1>Invalid Pairing Token</h1><p>Please scan the QR code from the TomeBox desktop app again.</p>", status_code=401)
-
-    @api.get("/static/manifest.json")
-    def get_manifest():
-        path = os.path.join(tomebox.base_dir, "server", "static", "manifest.json")
-        if os.path.exists(path):
-            return FileResponse(path, media_type="application/manifest+json")
-        raise HTTPException(status_code=404, detail="Manifest not found")
-
-    @api.get("/static/sw.js")
-    def get_sw():
-        path = os.path.join(tomebox.base_dir, "server", "static", "sw.js")
-        if os.path.exists(path):
-            return FileResponse(path, media_type="application/javascript")
-        raise HTTPException(status_code=404, detail="Service worker not found")
-
-    @api.get("/static/icon.png")
-    def get_icon():
-        path = os.path.join(tomebox.base_dir, "server", "static", "icon.png")
-        if os.path.exists(path):
-            return FileResponse(path, media_type="image/png")
-        raise HTTPException(status_code=404, detail="Icon not found")
     
     @api.get("/", response_class=HTMLResponse)
     def web_interface():

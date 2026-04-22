@@ -1,0 +1,57 @@
+:root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #bb86fc; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; padding-bottom: 150px; }
+header { background-color: var(--card); padding: 15px 20px; text-align: center; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 10px; }
+
+.header-controls { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+#search-box { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 1rem; outline: none; box-sizing: border-box; }
+
+.filter-row { display: flex; gap: 10px; width: 100%; }
+.ui-select { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 0.9rem; outline: none; }
+#search-box:focus, .ui-select:focus { border-color: var(--accent); }
+
+#library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px; }
+.book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.book-card:active { transform: scale(0.98); }
+.cover-image { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; margin-bottom: 10px; background-color: #333; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+.cover-placeholder { width: 100%; aspect-ratio: 1; background-color: #333; border-radius: 4px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #555; }
+.book-title { font-weight: bold; font-size: 0.9rem; margin: 0 0 5px 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
+.progress-pill { font-size: 0.7rem; color: var(--accent); background: #333; padding: 2px 6px; border-radius: 10px; margin-top: 5px; display: inline-block; }
+
+#player-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: var(--card); border-top: 1px solid #333; padding: 10px 15px 20px 15px; display: flex; flex-direction: column; transform: translateY(100%); transition: transform 0.3s ease-out; z-index: 20; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); }
+#player-bar.active { transform: translateY(0); }
+
+.player-top-row { display: flex; justify-content: center; align-items: center; width: 100%; margin-bottom: 5px; }
+.player-info { width: 100%; overflow: hidden; text-align: center; }
+#now-playing-title { font-weight: bold; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#now-playing-author { font-size: 0.8rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.player-secondary-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 5px; }
+.player-main-row { display: flex; justify-content: center; align-items: center; gap: 25px; width: 100%; margin-top: 10px; }
+
+.side-tools { display: flex; gap: 15px; justify-content: flex-end; }
+
+button { background: none; border: none; color: var(--text); cursor: pointer; padding: 5px; outline: none; display: flex; align-items: center; justify-content: center; }
+.play-btn { color: var(--accent); font-size: 2.8rem; width: 50px; height: 50px; }
+.skip-btn { font-size: 1.6rem; color: #ccc; }
+.chapter-btn { font-size: 1.4rem; color: #888; }
+.speed-btn { font-size: 1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 4px; padding: 5px 12px; }
+.tool-btn { font-size: 1.4rem; color: #aaa; transition: color 0.2s; }
+
+#progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
+#progress-fill { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; }
+
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+.modal-content { background: var(--card); width: 90%; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #444; }
+.modal-header { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2rem; }
+.modal-body { overflow-y: auto; flex-grow: 1; }
+.close-btn { color: #aaa; font-size: 1.5rem; }
+.list-item { padding: 15px; border-bottom: 1px solid #333; color: #ccc; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+.list-item:active { background-color: #2a2a2a; }
+.list-item.active { color: var(--accent); font-weight: bold; }
+.custom-sleep-row { cursor: default; }
+.custom-sleep-row:active { background-color: transparent; }
+.sleep-input-group { display: flex; align-items: center; gap: 10px; }
+.sleep-input { width: 50px; background: #222; color: white; border: 1px solid #444; border-radius: 6px; padding: 5px; text-align: center; font-size: 1rem; outline: none; }
+.sleep-input:focus { border-color: var(--accent); }
+.sleep-set-btn { background: var(--accent); color: var(--bg); font-weight: bold; border-radius: 6px; padding: 5px 15px; font-size: 0.9rem; }
