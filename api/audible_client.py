@@ -5,6 +5,7 @@ try:
     from audible.aescipher import decrypt_voucher_from_licenserequest
 except ImportError:
     pass
+import time
 
 class AudibleClient:
     def __init__(self):
@@ -32,7 +33,23 @@ class AudibleClient:
 
     def get_activation_bytes(self):
         if self.auth:
-            return self.auth.get_activation_bytes()
+            try:
+                # 1. First attempt
+                return self.auth.get_activation_bytes()
+            except ValueError as e:
+                # 2. Trap the specific Audible backend propagation bug
+                if "data wrong" in str(e):
+                    print("[API] Audible server delay: Retrying activation bytes in 3 seconds...")
+                    time.sleep(3)
+                    try:
+                        # 3. Second attempt
+                        return self.auth.get_activation_bytes()
+                    except ValueError:
+                        print("[API] Failed to fetch activation bytes. .aaxc downloads will still work.")
+                        return ""
+                else:
+                    # If it's a different ValueError, raise it normally
+                    raise e
         return ""
 
     def fetch_library(self):
