@@ -90,18 +90,21 @@ def create_shortcut(base_dir, vbs_launcher_path, sh_path, py_exec):
     print_step("Creating desktop shortcut...")
     os_name = platform.system()
     desktop_dir = Path.home() / "Desktop"
-
     if os_name == "Windows":
-        shortcut_path = desktop_dir / f"{APP_NAME}.lnk"
+        py_exec = str(base_dir / "venv" / "Scripts" / "pythonw.exe") # pythonw hides the console
+    else:
+        py_exec = str(base_dir / "venv" / "bin" / "python3")
+    if os_name == "Windows":
         shortcut_maker_path = base_dir / "make_shortcut.vbs"
+        shortcut_path = desktop_dir / f"{APP_NAME}.lnk"
         
-        # Point the shortcut to wscript.exe to run our silent launcher
+        # Notice TargetPath is now {py_exec}, not a raw pythonw.exe string
         vbs_content = f"""
 Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "wscript.exe"
-oLink.Arguments = chr(34) & "{vbs_launcher_path}" & chr(34)
+oLink.TargetPath = "{py_exec}"
+oLink.Arguments = "{MAIN_SCRIPT}"
 oLink.WorkingDirectory = "{base_dir}"
 oLink.Description = "{APP_NAME} Audiobook Manager"
 oLink.IconLocation = "{base_dir}\\ui\\tomebox.ico"
