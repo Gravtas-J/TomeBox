@@ -1052,12 +1052,13 @@ class AAXManagerApp:
             return
 
         try:
-            
             self.write_log("Background sync: Polling Audible API...")
             client = audible.Client(auth=self.api_client.auth)
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
             new_items = response.get("items", [])
-            self.root.after(0, lambda: self.status_var.set("Library Synced (Online)"))
+            
+            # FIXED: Changed status_var to dl_status_var
+            self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
             
             if len(new_items) != len(self.cloud_items):
                 self.write_log(f"Background sync: Detected library change. Old: {len(self.cloud_items)}, New: {len(new_items)}")
@@ -1066,22 +1067,21 @@ class AAXManagerApp:
                 self.root.after(0, self.refresh_library_ui)
             else:
                 self.write_log("Background sync: No changes detected.")
-        except (httpx.ConnectError, httpx.TimeoutException) as e: # Use requests.exceptions.ConnectionError if using requests
-            # TRAP 1: AIRPLANE MODE / NO INTERNET
+                
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
             self.write_log(f"Network offline: {e}")
-            self.root.after(0, lambda: self.status_var.set("Offline - Check Connection"))
+            # FIXED: Changed status_var to dl_status_var
+            self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
             
         except httpx.HTTPStatusError as e:
-            # TRAP 2: AUDIBLE SERVER CRASH (500 Internal Server Error)
             self.write_log(f"Audible API Error: {e.response.status_code}")
             if e.response.status_code == 429:
-                self.root.after(0, lambda: self.status_var.set("Rate Limited by Audible"))
+                # FIXED: Changed status_var to dl_status_var
+                self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
             elif e.response.status_code >= 500:
-                self.root.after(0, lambda: self.status_var.set("Audible Servers Down"))
+                # FIXED: Changed status_var to dl_status_var
+                self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
                 
-        except Exception as e:
-            # TRAP 3: EVERYTHING ELSE
-            self.write_log(f"Sync failed: {e}")
         except Exception as e:
             self.write_log(f"Background sync failed silently: {e}")
     

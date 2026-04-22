@@ -59,16 +59,13 @@ def install_requirements():
 def create_startup_scripts(base_dir, py_exec):
     print_step("Creating OS-agnostic startup scripts...")
     
-    # --- NEW: Use pythonw.exe to hide the console completely ---
     pyw_exec = str(py_exec).replace("python.exe", "pythonw.exe")
     
-    # 1. Windows VBScript Launcher (Replaces the .bat file)
+    # 1. Windows VBScript Launcher
     vbs_launcher_path = base_dir / "start_tomebox.vbs"
     with open(vbs_launcher_path, "w") as f:
         f.write('Set objShell = CreateObject("WScript.Shell")\n')
         f.write(f'objShell.CurrentDirectory = "{base_dir}"\n')
-        # Run updater silently (0) and wait for it to finish (True)
-        f.write(f'objShell.Run """{pyw_exec}"" updater.py", 0, True\n')
         # Run app silently (0) and do NOT wait (False)
         f.write(f'objShell.Run """{pyw_exec}"" {MAIN_SCRIPT}", 0, False\n')
     print(f"  -> Created {vbs_launcher_path.name}")
@@ -78,7 +75,6 @@ def create_startup_scripts(base_dir, py_exec):
     with open(sh_path, "w", newline='\n') as f:
         f.write("#!/bin/bash\n")
         f.write(f"cd \"{base_dir}\"\n")
-        f.write(f"\"{py_exec}\" updater.py\n")
         f.write(f"\"{py_exec}\" {MAIN_SCRIPT}\n")
     
     if platform.system() != "Windows":
