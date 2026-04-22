@@ -73,7 +73,7 @@ def create_server_app(tomebox):
     @api.get("/api/last_played/{profile}")
     def get_last_played(profile: str):
         path = tomebox.settings.get(f"last_played_{profile}")
-        if path and path in tomebox.local_library:
+        if path and path in tomebox.library_manager.local_library:
             return {"path": path}
         return {"path": None}
 
@@ -95,11 +95,11 @@ def create_server_app(tomebox):
                                 if item.get("title"): master_metadata[item["title"]] = item
                     except Exception: pass
 
-        for item in getattr(tomebox, 'cloud_items', []):
+        for item in getattr(tomebox.library_manager, 'cloud_items', []):
             if item.get("asin"): master_metadata[item["asin"]] = item
             if item.get("title"): master_metadata[item["title"]] = item
 
-        for path, data in tomebox.local_library.items():
+        for path, data in tomebox.library_manager.local_library.items():
             item_copy = dict(data)
             asin = item_copy.get("asin")
             item_copy["shelves"] = shelves_db.get(asin, [])
@@ -135,20 +135,21 @@ def create_server_app(tomebox):
             position = data.get("position")
             profile = data.get("profile", "Main")
 
-            if path and path in tomebox.local_library:
-                if "progress" not in tomebox.local_library[path]:
-                    tomebox.local_library[path]["progress"] = {}
+            # CHANGED: All tomebox.local_library instances updated to tomebox.library_manager.local_library
+            if path and path in tomebox.library_manager.local_library:
+                if "progress" not in tomebox.library_manager.local_library[path]:
+                    tomebox.library_manager.local_library[path]["progress"] = {}
                     
-                tomebox.local_library[path]["progress"][profile] = position
-                tomebox.local_library[path]["last_position"] = position
+                tomebox.library_manager.local_library[path]["progress"][profile] = position
+                tomebox.library_manager.local_library[path]["last_position"] = position
                 
                 tomebox.settings[f"last_played_{profile}"] = path
                 
-                # Save using your shiny new Database Manager
                 tomebox.db.save_settings(tomebox.settings)
-                tomebox.db.save_local_db(tomebox.local_library)
+                
+                # CHANGED: Save the correct dictionary
+                tomebox.db.save_local_db(tomebox.library_manager.local_library)
 
-                # Tap the PC on the shoulder to update its memory in real-time
                 if getattr(tomebox, 'file_path', None) == path:
                     tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     

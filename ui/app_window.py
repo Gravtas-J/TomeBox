@@ -30,6 +30,7 @@ from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, o
 from core.downloader import AudiobookDownloader
 from ui.theme import apply_theme
 from core.exporter import LibraryExporter
+from core.controllers.library_manager import LibraryManager
 
 class AAXManagerApp:
     def __init__(self, root, base_dir):
@@ -45,7 +46,9 @@ class AAXManagerApp:
 
         # 1. Initialize Database Manager FIRST
         self.db = DatabaseManager(self.base_dir)
-        
+        self.api_client = AudibleClient()
+        self.library_manager = LibraryManager(self.db, self.api_client, self.base_dir)
+
         # 2. Setup Assets (Icons are in the ui folder)
         ui_dir = os.path.join(self.base_dir, "ui")
         icon_ico = os.path.join(ui_dir, "tomebox.ico")
@@ -84,10 +87,10 @@ class AAXManagerApp:
         self.converter = AudioConverter(self.write_log)
         
         # 5. Load Memory
-        self.api_client = AudibleClient()
+        
         self.downloader = AudiobookDownloader(self.api_client, self.write_log)
-        self.local_library = self.db.load_local_db()
-        self.cloud_items = self.load_cloud_cache()
+        # self.library_manager.local_library = self.db.load_local_db()
+        # self.library_manager.cloud_items = self.load_cloud_cache()
 
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
@@ -326,7 +329,7 @@ class AAXManagerApp:
                 except Exception as e:
                     self.write_log(f"Failed to read tags for {filename}: {e}")
 
-            self.local_library[filepath] = {
+            self.library_manager.local_library[filepath] = {
                 "title": title, 
                 "format": format_clean, 
                 "path": filepath, 
@@ -336,7 +339,7 @@ class AAXManagerApp:
             added_count += 1
             
         if added_count > 0:
-            self.db.save_local_db(self.local_library)
+            self.db.save_local_db(self.library_manager.local_library)
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda c=added_count: self.dl_status_var.set(f"Successfully imported {c} files."))
         else:
@@ -469,7 +472,7 @@ class AAXManagerApp:
         # Clear current session
         self.api_client.auth = None
         self.auth_bytes.set("")
-        self.cloud_items = self.load_cloud_cache()
+        self.library_manager.cloud_items = self.load_cloud_cache()
         
         # Try to load the new profile's auth file
         self.auto_load_auth()
@@ -512,16 +515,16 @@ class AAXManagerApp:
             ui_needs_refresh = False
             
             # 1. Check if any actual audio files were deleted from the hard drive
-            missing_paths = [path for path in list(self.local_library.keys()) if not os.path.exists(path)]
+            missing_paths = [path for path in list(self.library_manager.local_library.keys()) if not os.path.exists(path)]
             
             if missing_paths:
                 for path in missing_paths:
-                    del self.local_library[path]
+                    del self.library_manager.local_library[path]
                     
                 self.write_log(f"Detected {len(missing_paths)} deleted files. Updating library...")
                 
                 # Save via the manager's locked method
-                self.db.save_local_db(self.local_library)
+                self.db.save_local_db(self.library_manager.local_library)
                 ui_needs_refresh = True
 
             # 2. Check if the SQLite database file was edited externally
@@ -534,7 +537,7 @@ class AAXManagerApp:
                     elif current_mtime > self.db.last_db_mtime:
                         self.write_log("External DB change detected. Syncing local library...")
                         self.db.last_db_mtime = current_mtime
-                        self.local_library = self.db.load_local_db()
+                        self.library_manager.local_library = self.db.load_local_db()
                         ui_needs_refresh = True
                 except Exception as e:
                     self.write_log(f"DB Monitor Error: {e}")
@@ -916,7 +919,7 @@ class AAXManagerApp:
             self.play_chapter()
 
     def start_convert_all_thread(self):
-        to_convert = [path for path, data in self.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
+        to_convert = [path for path, data in self.library_manager.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
         
         if not to_convert:
             messagebox.showinfo("Convert All", "No AAX or AAXC files found to convert.")
@@ -1060,9 +1063,9 @@ class AAXManagerApp:
             # FIXED: Changed status_var to dl_status_var
             self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
             
-            if len(new_items) != len(self.cloud_items):
-                self.write_log(f"Background sync: Detected library change. Old: {len(self.cloud_items)}, New: {len(new_items)}")
-                self.cloud_items = new_items
+            if len(new_items) != len(self.library_manager.cloud_items):
+                self.write_log(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
+                self.library_manager.cloud_items = new_items
                 self.save_cloud_cache()
                 self.root.after(0, self.refresh_library_ui)
             else:
@@ -1092,23 +1095,23 @@ class AAXManagerApp:
         self.root.destroy()
 
     def save_playback_state(self):
-        if getattr(self, 'file_path', None) and self.file_path in self.local_library:
+        if getattr(self, 'file_path', None) and self.file_path in self.library_manager.local_library:
             chap_idx = getattr(self, 'current_chapter_idx', 0)
             rel_time = getattr(self, 'current_play_time', 0.0)
             
-            self.local_library[self.file_path]["last_chapter"] = chap_idx
-            self.local_library[self.file_path]["last_time"] = rel_time
+            self.library_manager.local_library[self.file_path]["last_chapter"] = chap_idx
+            self.library_manager.local_library[self.file_path]["last_time"] = rel_time
             
             abs_time = rel_time
             if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
                 abs_time = float(self.chapters[chap_idx].get("start_time", 0)) + rel_time
-                self.local_library[self.file_path]["last_position"] = abs_time
+                self.library_manager.local_library[self.file_path]["last_position"] = abs_time
 
-            if "progress" not in self.local_library[self.file_path]:
-                self.local_library[self.file_path]["progress"] = {}
-            self.local_library[self.file_path]["progress"][self.active_profile] = abs_time
+            if "progress" not in self.library_manager.local_library[self.file_path]:
+                self.library_manager.local_library[self.file_path]["progress"] = {}
+            self.library_manager.local_library[self.file_path]["progress"][self.active_profile] = abs_time
                 
-            self.db.save_local_db(self.local_library)
+            self.db.save_local_db(self.library_manager.local_library)
 
             self.settings[f"last_played_{self.active_profile}"] = self.file_path
             self.db.save_settings(self.settings)
@@ -1140,11 +1143,11 @@ class AAXManagerApp:
             
     def cue_last_played(self):
         last_path = self.settings.get(f"last_played_{self.active_profile}")
-        if last_path and last_path in self.local_library and os.path.exists(last_path):
+        if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
             self.load_specific_file(last_path)
 
     def fetch_metadata_worker(self, filepath):
-        local_data = self.local_library.get(filepath, {})
+        local_data = self.library_manager.local_library.get(filepath, {})
         title = local_data.get("title", "")
         asin = local_data.get("asin")
 
@@ -1230,7 +1233,7 @@ class AAXManagerApp:
     def save_cloud_cache(self):
         try:
             with open(self.cloud_cache_path, "w") as f:
-                json.dump(self.cloud_items, f, indent=4)
+                json.dump(self.library_manager.cloud_items, f, indent=4)
         except Exception as e:
             self.write_log(f"Failed to save cloud cache: {e}")
 
@@ -1338,7 +1341,7 @@ class AAXManagerApp:
             self.view_btn.config(text="List View")
             self.library_tree.pack_forget()
             
-            if self.cloud_items or self.local_library:
+            if self.library_manager.cloud_items or self.library_manager.local_library:
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
             
             if scroll_bar:
@@ -1349,7 +1352,7 @@ class AAXManagerApp:
             self.view_btn.config(text="Grid View")
             self.grid_canvas.pack_forget()
             
-            if self.cloud_items or self.local_library:
+            if self.library_manager.cloud_items or self.library_manager.local_library:
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
             
             if scroll_bar:
@@ -1516,7 +1519,7 @@ class AAXManagerApp:
             self.active_downloads[asin]["status_var"].set("Canceling...")
 
     def start_download_all(self):
-        local_titles = {data["title"] for path, data in self.local_library.items()}
+        local_titles = {data["title"] for path, data in self.library_manager.local_library.items()}
         missing_items = [item for item in getattr(self, 'cloud_items', []) if item.get("title") not in local_titles]
 
         if not missing_items:
@@ -1584,125 +1587,31 @@ class AAXManagerApp:
             self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def refresh_library_ui(self, *args):
+        # 1. Clear the current UI
         for row in self.library_tree.get_children():
             self.library_tree.delete(row)
 
-        search_query = self.search_var.get().lower()
+        search_query = self.search_var.get()
         current_filter = self.filter_var.get()
         current_shelf = getattr(self, 'shelf_filter_var', tk.StringVar(value="All Shelves")).get()
 
-        local_titles = {data["title"]: data for path, data in self.local_library.items()}
-        cloud_titles = []
-        rows_to_insert = []
+        # 2. Ask the Controller for the data
+        filtered_rows, shelf_list = self.library_manager.get_view_data(
+            search_query=search_query, 
+            filter_type=current_filter, 
+            shelf_filter=current_shelf
+        )
+        
+        self._current_filtered_data = filtered_rows
 
-        all_unique_shelves = set()
-        shelves_db = self.settings.get("shelves_db", {})
-
-        master_metadata = {}
-        for f in os.listdir(self.base_dir):
-            if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
-                try:
-                    with open(os.path.join(self.base_dir, f), "r") as file:
-                        for item in json.load(file):
-                            if item.get("title"):
-                                master_metadata[item["title"]] = item
-                except Exception:
-                    pass
-
-        for item in getattr(self, 'cloud_items', []):
-            if item.get("title"):
-                master_metadata[item["title"]] = item
-
-        for item in getattr(self, 'cloud_items', []):
-            title = item.get("title", "Unknown")
-            cloud_titles.append(title)
-            
-            raw_authors = item.get("authors") or []
-            authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-            
-            raw_series = item.get("series") or []
-            series_list = []
-            for s in raw_series:
-                if isinstance(s, dict) and s.get("title"):
-                    series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
-            series_str = ", ".join(series_list)
-            
-            duration_min = item.get("runtime_length_min", 0)
-            hours, mins = divmod(duration_min, 60)
-            duration_str = f"{hours}h {mins}m"
-            
-            asin = item.get("asin", "Unknown")
-            
-            local_data = local_titles.get(title)
-            status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
-            
-            rows_to_insert.append((title, authors, series_str, duration_str, asin, status))
-            all_unique_shelves.update(shelves_db.get(asin, []))
-
-        for path, data in self.local_library.items():
-            if data["title"] not in cloud_titles:
-                title = data["title"]
-                asin = data.get("asin", "Unknown")
-                meta = master_metadata.get(title, {})
-
-                # Extract rich metadata safely
-                if meta.get("authors"):
-                    raw_authors = meta.get("authors")
-                    loc_authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                else:
-                    loc_authors = data.get("authors", "Local File")
-
-                if meta.get("series"):
-                    raw_series = meta.get("series")
-                    series_list = [f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")]
-                    loc_series = ", ".join(series_list)
-                else:
-                    loc_series = data.get("series", "N/A")
-
-                duration_min = meta.get("runtime_length_min") or data.get("duration_min", 0)
-                if duration_min > 0:
-                    hours, mins = divmod(duration_min, 60)
-                    loc_duration = f"{hours}h {mins}m"
-                else:
-                    loc_duration = "N/A"
-
-                if asin == "Unknown" and meta.get("asin"):
-                    asin = meta.get("asin")
-
-                rows_to_insert.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
-                all_unique_shelves.update(shelves_db.get(asin, []))
-
-        shelf_list = ["All Shelves"] + sorted(list(all_unique_shelves))
+        # 3. Update Shelf Dropdown
         if hasattr(self, 'shelf_combo'):
             self.shelf_combo.config(values=shelf_list)
             if current_shelf not in shelf_list:
                 self.shelf_filter_var.set("All Shelves")
-                current_shelf = "All Shelves"
 
-        filtered_rows = []
-        for row in rows_to_insert:
-            title, authors, series_str, duration_str, asin, status = row
-
-            if current_filter == "Downloaded" and "Downloaded" not in status:
-                continue
-            if current_filter == "Cloud Only" and status != "Cloud Only":
-                continue
-
-            if current_shelf != "All Shelves":
-                book_shelves = shelves_db.get(asin, [])
-                if current_shelf not in book_shelves:
-                    continue
-
-            if search_query:
-                search_target = f"{title} {authors} {series_str}".lower()
-                if search_query not in search_target:
-                    continue
-
-            filtered_rows.append(row)
-
-        self._current_filtered_data = filtered_rows
-
-        is_completely_empty = (not getattr(self, 'cloud_items', [])) and (not self.local_library)
+        # 4. Handle Empty State
+        is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
 
         if is_completely_empty:
             self.library_tree.pack_forget()
@@ -1717,22 +1626,15 @@ class AAXManagerApp:
                 self.grid_canvas.pack_forget()
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
                 
-                # 1. Populate the treeview with the unsorted/default data
                 for row in filtered_rows:
                     self.library_tree.insert("", "end", values=row)
                     
-                # 2. INSTANTLY RE-APPLY THE SAVED SORTING
                 if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
-                    self.sort_treeview(
-                        self.library_tree, 
-                        self.current_sort_col, 
-                        self.current_sort_descending
-                    )
+                    self.sort_treeview(self.library_tree, self.current_sort_col, self.current_sort_descending)
             else:
                 self.library_tree.pack_forget()
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
                 self.draw_grid_view()
-    
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
@@ -1750,7 +1652,7 @@ class AAXManagerApp:
         asin = item['values'][4]
 
         local_path = None
-        for path, data in self.local_library.items():
+        for path, data in self.library_manager.local_library.items():
             if data["title"] == title:
                 local_path = path
                 break
@@ -1789,7 +1691,7 @@ class AAXManagerApp:
             messagebox.showwarning("Not Logged In", "An Audible login is required to search the catalog for ASINs.")
             return
         
-        data = self.local_library.get(filepath, {})
+        data = self.library_manager.local_library.get(filepath, {})
         current_title = data.get("title", os.path.basename(filepath))
         
         query = simpledialog.askstring("Search Catalog", "Enter book title or author to search:", initialvalue=current_title)
@@ -1877,14 +1779,14 @@ class AAXManagerApp:
                     with open(cover_path, "wb") as f:
                         f.write(img_resp.content)
 
-            data = self.local_library.get(filepath, {})
+            data = self.library_manager.local_library.get(filepath, {})
             data["title"] = title
             data["authors"] = authors
             data["series"] = series_str      # NEW
             data["duration_min"] = duration_min # NEW
             data["asin"] = asin
-            self.local_library[filepath] = data
-            self.db.save_local_db(self.local_library)
+            self.library_manager.local_library[filepath] = data
+            self.db.save_local_db(self.library_manager.local_library)
 
             ext = data.get("format", "").upper()
             if ext in ["M4B", "MP3"]:
@@ -1992,7 +1894,7 @@ class AAXManagerApp:
             return
 
         try:
-            LibraryExporter.export_csv(output_file, self.local_library, self.cloud_items)
+            LibraryExporter.export_csv(output_file, self.library_manager.local_library, self.library_manager.cloud_items)
             messagebox.showinfo("Export Successful", f"Library successfully exported to:\n{output_file}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Failed to write CSV:\n{e}")
@@ -2007,7 +1909,7 @@ class AAXManagerApp:
             return
 
         try:
-            LibraryExporter.export_html(output_file, self.local_library, self.cloud_items)
+            LibraryExporter.export_html(output_file, self.library_manager.local_library, self.library_manager.cloud_items)
             import webbrowser
             webbrowser.open(output_file)
         except Exception as e:
@@ -2133,8 +2035,8 @@ class AAXManagerApp:
 
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
             
-            self.cloud_items = response.get("items", [])
-            self.write_log(f"Successfully retrieved {len(self.cloud_items)} library items.")
+            self.library_manager.cloud_items = response.get("items", [])
+            self.write_log(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
             
             self.save_cloud_cache()
 
@@ -2254,7 +2156,7 @@ class AAXManagerApp:
             self.add_stat("books_downloaded", 1)
             
             # Save to Database
-            self.local_library[filepath] = {
+            self.library_manager.local_library[filepath] = {
                 "title": title, 
                 "format": ext.replace(".", "").upper(), 
                 "path": filepath,
@@ -2262,7 +2164,7 @@ class AAXManagerApp:
                 "audible_iv": a_iv,
                 "asin": asin  
             }
-            self.db.save_local_db(self.local_library)
+            self.db.save_local_db(self.library_manager.local_library)
             self.root.after(0, self.refresh_library_ui)
 
             # Handle post-actions (Play or Convert automatically)
@@ -2325,7 +2227,7 @@ class AAXManagerApp:
             self.progress_var.set(percent)
         
     def get_drm_flags(self, filepath):
-        data = self.local_library.get(filepath, {})
+        data = self.library_manager.local_library.get(filepath, {})
         a_key = data.get("audible_key")
         a_iv = data.get("audible_iv")
 
@@ -2374,14 +2276,14 @@ class AAXManagerApp:
             except Exception as e:
                 self.write_log(f"Failed to read tags for {filename}: {e}")
 
-        self.local_library[filepath] = {
+        self.library_manager.local_library[filepath] = {
             "title": title, 
             "format": ext, 
             "path": filepath, 
             "authors": authors,
             "owner": self.active_profile
         }
-        self.db.save_local_db(self.local_library)
+        self.db.save_local_db(self.library_manager.local_library)
         self.refresh_library_ui()
 
     
@@ -2395,15 +2297,15 @@ class AAXManagerApp:
         title = item['values'][0]
         
         local_path = None
-        for path, data in self.local_library.items():
+        for path, data in self.library_manager.local_library.items():
             if data["title"] == title:
                 local_path = path
                 break
         
-        if local_path and local_path in self.local_library:
+        if local_path and local_path in self.library_manager.local_library:
             if messagebox.askyesno("Remove File", f"Remove '{title}' from your local library list?\n\n(This only removes it from the list, it does not delete the actual file from your hard drive.)"):
-                del self.local_library[local_path]
-                self.db.save_local_db(self.local_library)
+                del self.library_manager.local_library[local_path]
+                self.db.save_local_db(self.library_manager.local_library)
                 self.refresh_library_ui()
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
@@ -2527,7 +2429,7 @@ class AAXManagerApp:
             return
 
         local_path = None
-        for path, data in self.local_library.items():
+        for path, data in self.library_manager.local_library.items():
             if data.get("title") == title:
                 local_path = path
                 break
@@ -2570,7 +2472,7 @@ class AAXManagerApp:
         self.chapters = self.extract_chapters(self.file_path)
         
         if self.chapters:
-            local_data = self.local_library.get(filepath, {})
+            local_data = self.library_manager.local_library.get(filepath, {})
             
             # The Web Player tracks absolute time (last_position). 
             # The PC Player tracks chapter index + relative time.
@@ -2642,7 +2544,7 @@ class AAXManagerApp:
             
         if not note: return 
 
-        local_data = self.local_library.get(self.file_path, {})
+        local_data = self.library_manager.local_library.get(self.file_path, {})
         if "bookmarks" not in local_data:
             local_data["bookmarks"] = []
             
@@ -2653,7 +2555,7 @@ class AAXManagerApp:
             "note": note
         })
         
-        self.db.save_local_db(self.local_library)
+        self.db.save_local_db(self.library_manager.local_library)
         self.refresh_bookmarks_ui()
 
     def refresh_bookmarks_ui(self):
@@ -2664,7 +2566,7 @@ class AAXManagerApp:
             
         if not getattr(self, 'file_path', None): return
         
-        local_data = self.local_library.get(self.file_path, {})
+        local_data = self.library_manager.local_library.get(self.file_path, {})
         bookmarks = local_data.get("bookmarks", [])
 
         bookmarks.sort(key=lambda x: x.get("abs_time", 0))
@@ -2686,7 +2588,7 @@ class AAXManagerApp:
         if not selected: return
         
         idx = int(selected)
-        bookmarks = self.local_library.get(self.file_path, {}).get("bookmarks", [])
+        bookmarks = self.library_manager.local_library.get(self.file_path, {}).get("bookmarks", [])
         
         if 0 <= idx < len(bookmarks):
             bm = bookmarks[idx]
@@ -2702,11 +2604,11 @@ class AAXManagerApp:
         if not selected: return
         
         idx = int(selected)
-        bookmarks = self.local_library.get(self.file_path, {}).get("bookmarks", [])
+        bookmarks = self.library_manager.local_library.get(self.file_path, {}).get("bookmarks", [])
         
         if 0 <= idx < len(bookmarks):
             del bookmarks[idx]
-            self.db.save_local_db(self.local_library)
+            self.db.save_local_db(self.library_manager.local_library)
             self.refresh_bookmarks_ui()
 
     def verify_bytes(self, filepath):
@@ -2764,7 +2666,7 @@ class AAXManagerApp:
             if total_duration == 0:
                 total_duration = self.converter.get_duration(input_path)
 
-            original_data = self.local_library.get(input_path, {})
+            original_data = self.library_manager.local_library.get(input_path, {})
             title = original_data.get("title", os.path.basename(output_path))
             asin = original_data.get("asin", "")
 
@@ -2788,10 +2690,10 @@ class AAXManagerApp:
                 total_duration=total_duration, progress_cb=on_progress
             )
 
-            self.local_library[output_path] = {
+            self.library_manager.local_library[output_path] = {
                 "title": title, "format": "M4B", "path": output_path, "asin": asin
             }
-            self.db.save_local_db(self.local_library)
+            self.db.save_local_db(self.library_manager.local_library)
             
             self.root.after(0, lambda: messagebox.showinfo("Success", "File converted with embedded metadata."))
             self.root.after(0, self.refresh_library_ui)
@@ -2807,7 +2709,7 @@ class AAXManagerApp:
         try:
             drm_flags = self.get_drm_flags(input_path) if input_path.endswith((".aax", ".aaxc")) else None
             
-            original_data = self.local_library.get(input_path, {})
+            original_data = self.library_manager.local_library.get(input_path, {})
             book_title = original_data.get("title", os.path.splitext(os.path.basename(input_path))[0])
             safe_book_title = "".join([c for c in book_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
             
@@ -2837,7 +2739,7 @@ class AAXManagerApp:
                 for idx, filepath in enumerate(file_list, 1):
                     if not os.path.exists(filepath): continue
                         
-                    data = self.local_library.get(filepath, {})
+                    data = self.library_manager.local_library.get(filepath, {})
                     title = data.get("title", "Unknown")
                     asin = data.get("asin", "")
                     
@@ -2867,13 +2769,13 @@ class AAXManagerApp:
                             total_duration=total_duration, progress_cb=on_progress
                         )
                         
-                        self.local_library[out_path] = data
-                        self.local_library[out_path]["format"] = "M4B"
-                        self.local_library[out_path]["path"] = out_path
+                        self.library_manager.local_library[out_path] = data
+                        self.library_manager.local_library[out_path]["format"] = "M4B"
+                        self.library_manager.local_library[out_path]["path"] = out_path
                         
                         if os.path.exists(filepath): os.remove(filepath)
-                        del self.local_library[filepath]
-                        self.db.save_local_db(self.local_library)
+                        del self.library_manager.local_library[filepath]
+                        self.db.save_local_db(self.library_manager.local_library)
                         self.root.after(0, self.refresh_library_ui)
                             
                     except Exception as e:
