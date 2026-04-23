@@ -152,3 +152,28 @@ class PlaybackController:
         self._monitor_active = False
         if self.on_chapter_end_cb:
             self.on_chapter_end_cb()
+    
+    def next_chapter(self):
+        """Advances state to the next chapter. Returns True if successful, False if at the end."""
+        if not self.chapters or self.current_chapter_idx >= len(self.chapters) - 1:
+            return False
+            
+        self.current_chapter_idx += 1
+        self.current_play_time = 0.0
+        
+        ch = self.chapters[self.current_chapter_idx]
+        self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
+        return True
+
+    def prev_chapter(self):
+        """Reverts to the previous chapter, or restarts the current one."""
+        if not self.chapters: 
+            return
+            
+        if self.current_chapter_idx > 0:
+            self.current_chapter_idx -= 1
+            
+        self.current_play_time = 0.0
+        
+        ch = self.chapters[self.current_chapter_idx]
+        self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))

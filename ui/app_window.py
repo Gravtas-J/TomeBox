@@ -35,6 +35,7 @@ from core.controllers.library_manager import LibraryManager
 from core.controllers.playback_controller import PlaybackController
 from core.controllers.download_manager import DownloadManager
 from core.controllers.metadata_manager import MetadataManager
+from core.controllers.conversion_manager import ConversionManager
 
 class AAXManagerApp:
     def __init__(self, root, base_dir):
@@ -46,7 +47,7 @@ class AAXManagerApp:
         self.current_sort_col = "Title"  
         self.current_sort_descending = False
         self.enforce_single_instance()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
+        # self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         # 1. Initialize Database Manager FIRST
         self.db = DatabaseManager(self.base_dir)
@@ -113,18 +114,33 @@ class AAXManagerApp:
                 "on_error": self._on_scrape_error
             }
         )
-        self.file_path = ""
-        self.auth_bytes = tk.StringVar(value="")
-        self.locale = tk.StringVar(value="us")
-        self.chapters = []
-        self.current_chapter_idx = 0
-        self.player_process = None
+        self.conversion_manager = ConversionManager(
+            converter=self.converter,
+            library_manager=self.library_manager,
+            logger=self.write_log,
+            covers_dir=self.covers_dir,
+            get_drm_flags_cb=lambda path: self.get_drm_flags(path) if path.endswith((".aax", ".aaxc")) else None,
+            callbacks={
+                "on_status": lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                "on_progress": lambda pct: self.root.after(0, self.dl_progress_var.set, pct),
+                "on_complete": lambda msg: self.root.after(0, lambda: messagebox.showinfo("Conversion Success", msg)),
+                "on_error": lambda msg: self.root.after(0, lambda: messagebox.showerror("Error", msg)),
+                "on_refresh_required": lambda: self.root.after(0, self.refresh_library_ui)
+            }
+        )
         self.playback = PlaybackController(
             logger=self.write_log,
             on_tick_cb=self._on_playback_tick,
             on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
             on_error_cb=lambda code: self.root.after(0, self.stop_audio)
         )
+        self.file_path = ""
+        self.auth_bytes = tk.StringVar(value="")
+        self.locale = tk.StringVar(value="us")
+        self.chapters = []
+        self.current_chapter_idx = 0
+        self.player_process = None
+
         self.debug_mode = tk.BooleanVar(value=False)
         self.dl_progress_var = tk.DoubleVar()
         self.dl_status_var = tk.StringVar(value="Idle")
@@ -165,17 +181,6 @@ class AAXManagerApp:
             "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
-    def on_app_close(self):
-        # 1. Kill any active conversions
-            if hasattr(self, 'converter') and self.converter:
-                self.converter.cancel()
-                
-            # 2. Kill any active downloads (If your downloader has a similar cancel method)
-            # if hasattr(self, 'downloader'):
-            #     self.downloader.cancel()
-                
-            # 3. Destroy the window safely
-            self.root.destroy()
 
     def _on_scrape_search_results(self, filepath, products):
         """Called when the Audible search returns results."""
@@ -1061,25 +1066,7 @@ class AAXManagerApp:
             
             self.play_chapter()
 
-    def start_convert_all_thread(self):
-        to_convert = [path for path, data in self.library_manager.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
-        
-        if not to_convert:
-            messagebox.showinfo("Convert All", "No AAX or AAXC files found to convert.")
-            return
-        required_bytes = sum(os.path.getsize(p) for p in to_convert if os.path.exists(p))
-        if not self.has_enough_disk_space(self.base_dir, required_bytes + (500 * 1024 * 1024)): # Add 500MB padding
-            required_gb = required_bytes / (1024**3)
-            messagebox.showerror(
-                "Insufficient Storage", 
-                f"Batch conversion requires at least {required_gb:.2f} GB of free space on your drive.\n\n"
-                "Please free up space and try again."
-            )
-            return
-        if not messagebox.askyesno("Convert All", f"Found {len(to_convert)} files to convert.\nThis will process sequentially in the background. Proceed?"):
-            return
-            
-        threading.Thread(target=self.convert_all_worker, args=(to_convert,), daemon=True).start()
+
 
     def on_item_select(self, event=None):
         if getattr(self, 'current_view_mode', 'list') == "list":
@@ -1254,8 +1241,6 @@ class AAXManagerApp:
             self.root.withdraw()
             
             # 5. The Nuclear Option: Kill the process tree.
-            # This ensures that even if a thread is hanging, Python and ALL 
-            # child processes (FFmpeg/FFplay) are instantly executed by the OS.
             import os
             import subprocess
             if os.name == 'nt':
@@ -1377,7 +1362,7 @@ class AAXManagerApp:
     def cancel_download(self, asin):
         self.download_manager.cancel_download(asin)
 
-    def download_title_prompt(self):
+    def download_title_prompt(self): ###
         selected = self.cloud_tree.focus()
         if not selected: return
         item = self.cloud_tree.item(selected)
@@ -1603,32 +1588,6 @@ class AAXManagerApp:
             "prog_var": prog_var,
             "status_var": status_var
         }
-        
-
-    def start_download_all(self):
-        local_titles = {data["title"] for path, data in self.library_manager.local_library.items()}
-        missing_items = [item for item in getattr(self, 'cloud_items', []) if item.get("title") not in local_titles]
-
-        if not missing_items:
-            messagebox.showinfo("Up to Date", "Your local library already has all cloud items downloaded.")
-            return
-        save_dir = getattr(self, 'default_download_dir', self.base_dir)
-        estimated_bytes_per_book = 500 * 1024 * 1024 # 500 MB
-        total_required_bytes = len(missing_items) * estimated_bytes_per_book
-        
-        if not self.has_enough_disk_space(save_dir, total_required_bytes):
-            required_gb = total_required_bytes / (1024**3)
-            messagebox.showerror(
-                "Insufficient Storage", 
-                f"Downloading {len(missing_items)} books requires approximately {required_gb:.2f} GB of free space in your target folder.\n\n"
-                "Please change your download directory or free up space."
-            )
-            return
-        if messagebox.askyesno("Download All", f"Found {len(missing_items)} missing audiobooks.\n\nDo you want to batch download them all now? This may take a while depending on your internet connection."):
-            self.dl_all_btn.config(state=tk.DISABLED)
-            threading.Thread(target=self.download_all_worker, args=(missing_items,), daemon=True).start()
-
-    
 
     def refresh_library_ui(self, *args):
         # 1. Clear the current UI
@@ -1768,8 +1727,6 @@ class AAXManagerApp:
             self.metadata_manager.apply_scraped_metadata(filepath, selected_asin)
             
         ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
-
-
 
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children('')]
@@ -2040,32 +1997,6 @@ class AAXManagerApp:
                 if self.debug_mode.get():
                     self.write_log(f"DEBUG - Failed to parse UI for item: {e}")
 
-    def download_title_prompt(self):
-        selected = self.cloud_tree.focus()
-        if not selected:
-            messagebox.showwarning("Selection Required", "Select a title from the Cloud Library first.")
-            return
-
-        item = self.cloud_tree.item(selected)
-        title = item['values'][0]
-        asin = item['values'][3]
-
-        if not asin or asin == "Unknown":
-            messagebox.showerror("Data Error", "This item does not have a valid ASIN.")
-            return
-
-        save_dir = getattr(self, 'default_download_dir', '')
-        if not save_dir:
-            save_dir = filedialog.askdirectory(title=f"Select Download Folder for '{title}'")
-            if not save_dir:
-                return
-
-        self.write_log(f"Starting download process for ASIN: {asin}")
-        threading.Thread(target=self.download_worker, args=(asin, title, save_dir), daemon=True).start()
-
-
-
-        
     def get_drm_flags(self, filepath):
         data = self.library_manager.local_library.get(filepath, {})
         a_key = data.get("audible_key")
@@ -2198,10 +2129,6 @@ class AAXManagerApp:
         
         self._sleep_timer_id = self.root.after(1000, self.sleep_timer_tick)
 
-    
-                
-
-    
     def on_sleep_timer_set(self, event=None):
         val = self.sleep_time_var.get()
 
@@ -2221,7 +2148,6 @@ class AAXManagerApp:
         
         self.sleep_timer_tick()
 
-        
     def _on_grid_scroll(self, event):
         if getattr(self, 'current_view_mode', 'list') != "grid":
             return
@@ -2460,7 +2386,7 @@ class AAXManagerApp:
             return False, "FFmpeg is missing!"
         except Exception as e:
             return False, str(e)
-
+        
     def start_convert_thread(self):
         if not self.chapters:
             messagebox.showinfo("No Chapters Found", "This file does not contain chapter markers. Defaulting to single file conversion.")
@@ -2482,7 +2408,7 @@ class AAXManagerApp:
             if not output_dir: 
                 return
             self.dl_status_var.set("Splitting into chapters... Please wait.")
-            threading.Thread(target=self.split_worker, args=(self.file_path, output_dir), daemon=True).start()
+            self.conversion_manager.split_book(self.file_path, output_dir, self.chapters)
         else:
             output_file = filedialog.asksaveasfilename(
                 defaultextension=".m4b", 
@@ -2492,154 +2418,29 @@ class AAXManagerApp:
             if not output_file: 
                 return
             self.dl_status_var.set("Converting to .m4b... Please wait.")
-            threading.Thread(target=self.convert_single_worker, args=(self.file_path, output_file), daemon=True).start()
+            self.conversion_manager.convert_single(self.file_path, output_file, self.chapters)
 
-    def convert_single_worker(self, input_path, output_path):
-        try:
-            total_duration = 0
-            if hasattr(self, 'chapters') and self.chapters:
-                total_duration = float(self.chapters[-1].get("end_time", 0))
-            if total_duration == 0:
-                total_duration = self.converter.get_duration(input_path)
-
-            # FIXED: Point to library_manager
-            original_data = self.library_manager.local_library.get(input_path, {})
-            title = original_data.get("title", os.path.basename(output_path))
-            asin = original_data.get("asin", "")
-
-            authors = ""
-            for item in getattr(self.library_manager, 'cloud_items', []):
-                if item.get("asin") == asin:
-                    raw_authors = item.get("authors", [])
-                    authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                    break
-
-            cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-            drm_flags = self.get_drm_flags(input_path) if input_path.endswith((".aax", ".aaxc")) else None
-
-            # Route FFmpeg's progress stream into your Tkinter progress bar
-            def on_progress(percent):
-                self.root.after(0, self.dl_progress_var.set, percent)
-
-            self.converter.convert_to_m4b(
-                input_path=input_path, output_path=output_path, title=title,
-                authors=authors, cover_path=cover_path, drm_flags=drm_flags,
-                total_duration=total_duration, progress_cb=on_progress
+    def start_convert_all_thread(self):
+        to_convert = [path for path, data in self.library_manager.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
+        
+        if not to_convert:
+            messagebox.showinfo("Convert All", "No AAX or AAXC files found to convert.")
+            return
+            
+        required_bytes = sum(os.path.getsize(p) for p in to_convert if os.path.exists(p))
+        if not self.has_enough_disk_space(self.base_dir, required_bytes + (500 * 1024 * 1024)): 
+            required_gb = required_bytes / (1024**3)
+            messagebox.showerror(
+                "Insufficient Storage", 
+                f"Batch conversion requires at least {required_gb:.2f} GB of free space on your drive.\n\n"
+                "Please free up space and try again."
             )
-
-            # Update database with new file
-            self.library_manager.local_library[output_path] = {
-                "title": title, "format": "M4B", "path": output_path, "asin": asin
-            }
+            return
             
-            if os.path.exists(input_path):
-                try:
-                    os.remove(input_path)
-                    self.write_log(f"Deleted original file: {input_path}")
-                except Exception as e:
-                    self.write_log(f"Could not delete original file: {e}")
-                    
-            if input_path in self.library_manager.local_library:
-                del self.library_manager.local_library[input_path]
+        if not messagebox.askyesno("Convert All", f"Found {len(to_convert)} files to convert.\nThis will process sequentially in the background. Proceed?"):
+            return
             
-            self.library_manager.db.save_local_db(self.library_manager.local_library)
-            
-            self.root.after(0, lambda: messagebox.showinfo("Success", "File converted and original deleted."))
-            self.root.after(0, self.refresh_library_ui)
-
-        except Exception as e:
-            self.write_log(f"Conversion Error: {e}")
-            self.root.after(0, lambda err=str(e): messagebox.showerror("Conversion Failed", err))
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set(f"Ready: {os.path.basename(input_path)}"))
-            self.root.after(0, lambda: self.dl_progress_var.set(0))
-
-    def split_worker(self, input_path, output_dir):
-        try:
-            drm_flags = self.get_drm_flags(input_path) if input_path.endswith((".aax", ".aaxc")) else None
-            
-            original_data = self.library_manager.local_library.get(input_path, {})
-            book_title = original_data.get("title", os.path.splitext(os.path.basename(input_path))[0])
-            safe_book_title = "".join([c for c in book_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
-            
-            target_dir = os.path.join(output_dir, safe_book_title)
-            os.makedirs(target_dir, exist_ok=True)
-            
-            def on_progress(percent):
-                self.root.after(0, self.dl_progress_var.set, percent)
-
-            self.converter.split_into_chapters(
-                input_path=input_path, target_dir=target_dir, chapters=self.chapters,
-                drm_flags=drm_flags, progress_cb=on_progress
-            )
-
-            self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook split into {len(self.chapters)} files.\n\nSaved to:\n{target_dir}"))
-            
-        except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Split Failed", str(e)))
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set(f"Ready: {os.path.basename(input_path)}"))
-            self.root.after(0, lambda: self.dl_progress_var.set(0))
-
-    def convert_all_worker(self, file_list):
-        total = len(file_list)
-        try:
-            with keep.running():
-                for idx, filepath in enumerate(file_list, 1):
-                    if not os.path.exists(filepath): continue
-                        
-                    data = self.library_manager.local_library.get(filepath, {})
-                    title = data.get("title", "Unknown")
-                    asin = data.get("asin", "")
-                    
-                    self.root.after(0, lambda i=idx, t=title: self.dl_status_var.set(f"Converting {i}/{total}: {t}"))
-                    
-                    base_name, _ = os.path.splitext(filepath)
-                    out_path = f"{base_name}.m4b"
-                    
-                    drm_flags = self.get_drm_flags(filepath) if filepath.endswith((".aax", ".aaxc")) else None
-                    cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-                    
-                    authors = ""
-                    for item in getattr(self.library_manager, 'cloud_items', []):
-                        if item.get("asin") == asin:
-                            raw_authors = item.get("authors", [])
-                            authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                            break
-
-                    try:
-                        total_duration = self.converter.get_duration(filepath)
-                        def on_progress(percent):
-                            self.root.after(0, self.dl_progress_var.set, percent)
-
-                        self.converter.convert_to_m4b(
-                            input_path=filepath, output_path=out_path, title=title,
-                            authors=authors, cover_path=cover_path, drm_flags=drm_flags,
-                            total_duration=total_duration, progress_cb=on_progress
-                        )
-                        
-                        self.library_manager.local_library[out_path] = data
-                        self.library_manager.local_library[out_path]["format"] = "M4B"
-                        self.library_manager.local_library[out_path]["path"] = out_path
-                        
-                        if os.path.exists(filepath): 
-                            try:
-                                os.remove(filepath)
-                            except OSError:
-                                pass
-                                
-                        if filepath in self.library_manager.local_library:
-                            del self.library_manager.local_library[filepath]
-                            
-                        self.library_manager.db.save_local_db(self.library_manager.local_library)
-                        
-                        self.root.after(0, self.refresh_library_ui)
-                            
-                    except Exception as e:
-                        self.write_log(f"Batch Convert Exception on {title}: {e}")
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-            self.root.after(0, lambda: messagebox.showinfo("Convert All", "Batch conversion complete!"))
+        self.conversion_manager.convert_batch(to_convert)
 
     def extract_chapters(self, filepath):
         metadata = self.converter.get_metadata_and_chapters(filepath)
@@ -2745,94 +2546,61 @@ class AAXManagerApp:
         if h > 0: return f"{h:02d}:{m:02d}:{s:02d}"
         return f"{m:02d}:{s:02d}"
 
-    def update_playback_progress(self, active_proc):
-        if not self.is_playing or self.player.process != active_proc or active_proc.poll() is not None:
-            return
-        
-        import time
-        now = time.time()
-        delta = now - getattr(self, '_last_tick_time', now)
-        self._last_tick_time = now
-        
-        speed_val = float(self.playback_speed.get().replace("x", ""))
-        self.current_play_time += (delta * speed_val)
-
-        real_time_delta = delta * speed_val
-        self.session_listen_buffer += real_time_delta
-        if self.session_listen_buffer >= 60.0:
-            self.add_stat("seconds_listened", self.session_listen_buffer)
-            self.session_listen_buffer = 0.0
-        
-        if self.current_play_time > self.chapter_duration:
-            self.current_play_time = self.chapter_duration
-            
-        percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
-        self.progress_var.set(percent)
-        
-        curr_str = self.format_time(self.current_play_time)
-        dur_str = self.format_time(self.chapter_duration)
-        self.time_label.config(text=f"{curr_str} / {dur_str}")
-
-        # Save to database every 10 seconds so the web server stays updated
-        if not hasattr(self, '_last_disk_save_time'):
-            self._last_disk_save_time = now
-            
-        if now - self._last_disk_save_time > 10:
-            self.save_playback_state()
-            self._last_disk_save_time = now
-
-        self.root.after(500, self.update_playback_progress, active_proc)
-
     def next_chapter(self):
         self.save_playback_state()
-
-        if self.current_chapter_idx < len(self.chapters) - 1:
-            self.current_chapter_idx += 1
-            self.current_play_time = 0
-
+        
+        # 1. Ask the controller to advance its internal state
+        if self.playback.next_chapter():
+            
+            # 2. Sync the UI's variables to match the controller's new reality
+            self.current_chapter_idx = self.playback.current_chapter_idx
+            self.current_play_time = self.playback.current_play_time
+            self.chapter_duration = self.playback.chapter_duration
+            
+            # 3. Handle Chapter Sleep Timer
             if getattr(self, 'sleep_mode', None) == "chapters":
                 self.sleep_chapters_remaining -= 1
                 if self.sleep_chapters_remaining <= 0:
                     self.sleep_mode = None
                     self.timer_btn.config(text="Sleep: Off")
                     self.write_log("Sleep timer (chapters) finished. Pausing playback.")
-                    self.is_paused = True 
-
-                    chapter = self.chapters[self.current_chapter_idx]
-                    start_time = float(chapter.get("start_time", 0))
-                    end_time = float(chapter.get("end_time", 0))
-                    self.chapter_duration = end_time - start_time
-                    self.update_info()
                     
+                    self.is_paused = True
+                    self.update_info()
                     curr_str = self.format_time(self.current_play_time)
                     dur_str = self.format_time(self.chapter_duration)
                     self.time_label.config(text=f"{curr_str} / {dur_str}")
                     self.progress_var.set(0)
-                    
-                    self.playback.stop()
-                        
-                    return 
+                    return
                 else:
                     self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
 
+            # 4. Resume playing the newly loaded chapter
             self.is_paused = False
-            self.play_chapter()
+            self.update_info()
+            self.resume_playback()
+            
         else:
+            # Controller reported False (we were on the last chapter)
             self.stop_audio()
             self.add_stat("books_finished", 1)
             self.info_label.config(text="Finished Book")
 
     def prev_chapter(self):
         self.save_playback_state()
-        if self.current_chapter_idx > 0:
-            self.current_chapter_idx -= 1
-            self.current_play_time = 0
-            self.is_paused = False
-            self.play_chapter()
-        else:
-            self.current_play_time = 0
-            self.is_paused = False
-            self.play_chapter()
+        
+        # 1. Ask the controller to revert its state
+        self.playback.prev_chapter()
+        
+        # 2. Sync the UI's variables
+        self.current_chapter_idx = self.playback.current_chapter_idx
+        self.current_play_time = self.playback.current_play_time
+        self.chapter_duration = self.playback.chapter_duration
+        
+        # 3. Resume playing
+        self.is_paused = False
+        self.update_info()
+        self.resume_playback()
 
     def update_info(self):
         if self.chapters:
