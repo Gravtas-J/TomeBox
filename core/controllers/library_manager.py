@@ -60,11 +60,6 @@ class LibraryManager:
             if item.get("asin"): self.master_metadata[item["asin"]] = item
 
     def get_view_data(self, search_query="", filter_type="All", shelf_filter="All Shelves"):
-        """
-        Processes all local and cloud data and returns a clean, sorted list 
-        of rows ready for the UI (Treeview or Grid) to display.
-        Returns: (filtered_rows_list, unique_shelves_list)
-        """
         rows = []
         all_unique_shelves = set()
         settings = self.db.load_settings()
@@ -72,6 +67,9 @@ class LibraryManager:
         
         cloud_titles = set()
         search_query = search_query.lower()
+
+        # --- THE FIX: Create a reverse lookup keyed by Title instead of Path ---
+        local_titles = {data["title"]: data for path, data in self.local_library.items()}
 
         # 1. Process Cloud Items
         for item in self.cloud_items:
@@ -91,7 +89,8 @@ class LibraryManager:
             
             asin = item.get("asin", "Unknown")
             
-            local_data = self.local_library.get(title) # Simplification: assumes title match for now
+            # --- THE FIX: Look up against the new title dictionary ---
+            local_data = local_titles.get(title) 
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             
             rows.append((title, authors, series_str, duration_str, asin, status))
@@ -99,7 +98,7 @@ class LibraryManager:
 
         # 2. Process Local-Only Items
         for path, data in self.local_library.items():
-            title = data["title"]
+            title = data.get("title", "Unknown")
             if title not in cloud_titles:
                 asin = data.get("asin", "Unknown")
                 meta = self.master_metadata.get(title) or self.master_metadata.get(asin, {})
@@ -118,7 +117,7 @@ class LibraryManager:
                 if asin == "Unknown" and meta.get("asin"):
                     asin = meta.get("asin")
 
-                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data['format']})"))
+                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})"))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 3. Apply Filters

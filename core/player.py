@@ -62,8 +62,27 @@ class AudioPlayer:
     def stop(self):
         self.is_playing = False
         self.is_paused = False
+        
         if self.process:
-            self.process.terminate()
+            try:
+                if os.name == 'nt':
+                    # Windows: Ruthlessly kill the process tree instantly
+                    subprocess.run(
+                        ['taskkill', '/F', '/T', '/PID', str(self.process.pid)], 
+                        stdout=subprocess.DEVNULL, 
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    # Mac/Linux: Send SIGKILL (instant) instead of SIGTERM (polite)
+                    self.process.kill()
+            except Exception:
+                # Ultimate fallback if the OS-level kill somehow fails
+                try:
+                    self.process.terminate()
+                except:
+                    pass
+                    
             self.process = None
 
     def set_volume(self, volume):

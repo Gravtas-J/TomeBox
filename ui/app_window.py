@@ -31,7 +31,8 @@ from core.downloader import AudiobookDownloader
 from ui.theme import apply_theme
 from core.exporter import LibraryExporter
 from core.controllers.library_manager import LibraryManager
-
+from core.controllers.playback_controller import PlaybackController
+import time
 class AAXManagerApp:
     def __init__(self, root, base_dir):
         self.root = root
@@ -86,11 +87,7 @@ class AAXManagerApp:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.converter = AudioConverter(self.write_log)
         
-        # 5. Load Memory
-        
         self.downloader = AudiobookDownloader(self.api_client, self.write_log)
-        # self.library_manager.local_library = self.db.load_local_db()
-        # self.library_manager.cloud_items = self.load_cloud_cache()
 
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
@@ -98,9 +95,10 @@ class AAXManagerApp:
         self.chapters = []
         self.current_chapter_idx = 0
         self.player_process = None
-        self.player = AudioPlayer(
+        self.playback = PlaybackController(
             logger=self.write_log,
-            on_complete_cb=lambda: self.root.after(0, self.next_chapter),
+            on_tick_cb=self._on_playback_tick,
+            on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
             on_error_cb=lambda code: self.root.after(0, self.stop_audio)
         )
         self.debug_mode = tk.BooleanVar(value=False)
@@ -154,6 +152,35 @@ class AAXManagerApp:
                 
             # 3. Destroy the window safely
             self.root.destroy()
+
+    def _on_playback_tick(self, current_time, total_time, real_time_delta):
+        """Called twice a second by the PlaybackController."""
+        def update_ui():
+            # Update Progress Bar & Labels
+            percent = (current_time / total_time) * 100 if total_time > 0 else 0
+            self.progress_var.set(percent)
+            
+            curr_str = self.format_time(current_time)
+            dur_str = self.format_time(total_time)
+            self.time_label.config(text=f"{curr_str} / {dur_str}")
+
+            # Achievement Tracking
+            self.session_listen_buffer += real_time_delta
+            if self.session_listen_buffer >= 60.0:
+                self.add_stat("seconds_listened", self.session_listen_buffer)
+                self.session_listen_buffer = 0.0
+
+            # Database Saving (Every ~10 seconds)
+            now = time.time()
+            if not hasattr(self, '_last_disk_save_time'):
+                self._last_disk_save_time = now
+            if now - self._last_disk_save_time > 10:
+                self.save_playback_state()
+                self._last_disk_save_time = now
+                
+        # Push the update to the main Tkinter thread safely
+        self.root.after(0, update_ui)
+
     def get_local_ip(self):
         import socket
         try:
@@ -1089,10 +1116,41 @@ class AAXManagerApp:
             self.write_log(f"Background sync failed silently: {e}")
     
     def on_closing(self):
-        self.save_playback_state()
-        if self.player_process:
-            self.player_process.terminate()
-        self.root.destroy()
+        try:
+            self.write_log("Initiating shutdown sequence...")
+            
+            # 1. Save our place in the audiobook and database
+            self.save_playback_state()
+
+            # 2. Trigger the aggressive stop command on our actual player object
+            if hasattr(self, 'player') and self.player:
+                self.player.stop()
+
+            # 3. Flag the web server thread to shut down gracefully
+            if hasattr(self, 'web_server') and self.web_server is not None:
+                self.web_server.should_exit = True
+                
+        except Exception as e:
+            self.write_log(f"Error during shutdown: {e}")
+            
+        finally:
+            # 4. Hide the UI instantly so the app feels snappy and responsive
+            self.root.withdraw()
+            
+            # 5. The Nuclear Option: Kill the process tree.
+            # This ensures that even if a thread is hanging, Python and ALL 
+            # child processes (FFmpeg/FFplay) are instantly executed by the OS.
+            import os
+            import subprocess
+            if os.name == 'nt':
+                # /T flag = "Tree Kill" (Kills this process and everything it spawned)
+                subprocess.Popen(
+                    ['taskkill', '/F', '/T', '/PID', str(os.getpid())],
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                # Mac/Linux immediate hard exit
+                os._exit(0)
 
     def save_playback_state(self):
         if getattr(self, 'file_path', None) and self.file_path in self.library_manager.local_library:
@@ -2195,36 +2253,7 @@ class AAXManagerApp:
                 self.root.after(0, lambda: self.dl_status_var.set("Idle"))
                 self.root.after(0, lambda: self.dl_progress_var.set(0))
         
-    def seek_audio(self, offset):
-        if not self.file_path or not self.chapters:
-            return
 
-        if not self.is_playing and not self.is_paused:
-            return
-
-        new_time = self.current_play_time + offset
-        
-        if new_time < 0:
-            new_time = 0
-        elif new_time >= self.chapter_duration:
-            self.next_chapter()
-            return
-            
-        self.current_play_time = new_time
-        
-        if self.is_playing:
-            self.is_playing = False
-            if self.player_process:
-                self.player_process.terminate()
-                self.player_process = None
-            self.resume_playback()
-            
-        elif self.is_paused:
-            curr_str = self.format_time(self.current_play_time)
-            dur_str = self.format_time(self.chapter_duration)
-            self.time_label.config(text=f"{curr_str} / {dur_str}")
-            percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
-            self.progress_var.set(percent)
         
     def get_drm_flags(self, filepath):
         data = self.library_manager.local_library.get(filepath, {})
@@ -2360,11 +2389,7 @@ class AAXManagerApp:
 
     
                 
-    def on_speed_change(self, selected_speed):
-        if self.is_playing:
-            self.pause_audio()
-            self.is_paused = False
-            self.resume_playback()
+
     
     def on_sleep_timer_set(self, event=None):
         val = self.sleep_time_var.get()
@@ -2476,13 +2501,13 @@ class AAXManagerApp:
             
             # The Web Player tracks absolute time (last_position). 
             # The PC Player tracks chapter index + relative time.
-            abs_pos = local_data.get("last_position")
-            
             abs_pos = None
             if "progress" in local_data and self.active_profile in local_data["progress"]:
                 abs_pos = local_data["progress"][self.active_profile]
             elif "last_position" in local_data:
                 abs_pos = local_data["last_position"]
+                
+            if abs_pos is not None:
                 # Translate Web's absolute time to PC's chapter format
                 found_chap = 0
                 for i, chap in enumerate(self.chapters):
@@ -2791,58 +2816,46 @@ class AAXManagerApp:
     def play_chapter(self):
         if not self.file_path or not self.chapters: return
         
-        if self.is_paused:
-            self.is_paused = False
-            self.resume_playback()
-            return
-            
-        self.stop_audio()
-        
+        # 1. Update UI Info
         chapter = self.chapters[self.current_chapter_idx]
-        start_time = float(chapter.get("start_time", 0))
-        end_time = float(chapter.get("end_time", 0))
-        
-        self.chapter_duration = end_time - start_time
+        self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
         self.update_info()
+
+        # 2. Load the state into the controller
+        self.playback.load_file(
+            filepath=self.file_path,
+            chapters=self.chapters,
+            start_chapter_idx=self.current_chapter_idx,
+            start_time=self.current_play_time
+        )
+        
+        self.is_paused = False
         self.resume_playback()
 
     def resume_playback(self):
-        chapter = self.chapters[self.current_chapter_idx]
-        base_start = float(chapter.get("start_time", 0))
-        
-        actual_start_time = base_start + self.current_play_time
-        remaining_duration = self.chapter_duration - self.current_play_time
-        
-        speed_val = float(self.playback_speed.get().replace("x", ""))
         drm_flags = self.get_drm_flags(self.file_path) if self.file_path.endswith((".aax", ".aaxc")) else None
         
-        self.player.play(
-            filepath=self.file_path,
-            start_time=actual_start_time,
-            remaining_duration=remaining_duration,
-            speed=speed_val,
-            volume=int(self.volume_var.get()),
+        # Make sure the controller has the latest UI settings before playing
+        self.playback.set_speed(float(self.playback_speed.get().replace("x", "")))
+        self.playback.set_volume(int(self.volume_var.get()))
+        
+        # Tell the controller to spin up FFplay
+        self.playback.play(
             voice_boost=self.voice_boost_var.get(),
             skip_silence=self.skip_silence_var.get(),
             drm_flags=drm_flags
         )
         
-        if os.name == 'nt':
-            self.root.after(500, self.on_volume_change)
-            
-        import time
-        self._last_tick_time = time.time()
         self.is_playing = True
-        
-        self.update_playback_progress(self.player.process)
 
     def pause_audio(self):
         if self.is_playing:
-            self.player.stop()
+            self.playback.pause()
             self.is_playing = False
             self.is_paused = True
             
-            self.current_play_time = max(0, self.current_play_time - 1.5)
+            # Sync the PC's memory with where the controller stopped
+            self.current_play_time = self.playback.current_play_time
             
             curr_str = self.format_time(self.current_play_time)
             dur_str = self.format_time(self.chapter_duration)
@@ -2851,19 +2864,48 @@ class AAXManagerApp:
             self.save_playback_state()
 
     def stop_audio(self):
+        self.playback.stop()
         self.is_playing = False
         self.is_paused = False
-        self.player.stop()
+        self.current_play_time = self.playback.current_play_time
         self.save_playback_state()
 
+    def seek_audio(self, offset):
+        result = self.playback.seek(offset)
+        
+        if result == "NEXT_CHAPTER":
+            self.next_chapter()
+        elif result == "RESTART_PLAYBACK":
+            self.resume_playback()
+            
+        # Keep local UI state synced
+        self.current_play_time = self.playback.current_play_time
+        
+        # If paused, update the UI visually (if playing, the background tick will handle it)
+        if getattr(self, 'is_paused', False):
+            curr_str = self.format_time(self.current_play_time)
+            dur_str = self.format_time(self.chapter_duration)
+            self.time_label.config(text=f"{curr_str} / {dur_str}")
+            percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
+            self.progress_var.set(percent)
+
+    def on_speed_change(self, event=None):
+        speed_val = float(self.playback_speed.get().replace("x", ""))
+        self.playback.set_speed(speed_val)
+        
+        # FFplay requires a restart to change speed mid-stream
+        if self.is_playing:
+            self.pause_audio()
+            self.is_paused = False
+            self.resume_playback()
+
     def on_volume_change(self, event=None):
-        if os.name == 'nt':
-            self.player.set_volume(self.volume_var.get())
-        else:
-            if self.is_playing:
-                self.pause_audio()
-                self.is_paused = False
-                self.resume_playback()
+        self.playback.set_volume(int(self.volume_var.get()))
+        # Only restart if we are on Mac/Linux (Windows changes it dynamically via pycaw)
+        if os.name != 'nt' and self.is_playing:
+            self.pause_audio()
+            self.is_paused = False
+            self.resume_playback()
 
     def format_time(self, seconds):
         m, s = divmod(int(seconds), 60)
@@ -2935,9 +2977,7 @@ class AAXManagerApp:
                     self.time_label.config(text=f"{curr_str} / {dur_str}")
                     self.progress_var.set(0)
                     
-                    if self.player_process:
-                        self.player_process.terminate()
-                        self.player_process = None
+                    self.playback.stop()
                         
                     return 
                 else:
