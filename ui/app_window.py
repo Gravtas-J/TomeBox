@@ -11,6 +11,7 @@ import io
 from PIL import Image, ImageTk
 import csv
 import httpx
+import time
 try:
     import audible
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -27,12 +28,13 @@ from core.converter import AudioConverter
 from api.audible_client import AudibleClient
 from core.player import AudioPlayer
 from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
-from core.downloader import AudiobookDownloader
+# from core.downloader import AudiobookDownloader
 from ui.theme import apply_theme
 from core.exporter import LibraryExporter
 from core.controllers.library_manager import LibraryManager
 from core.controllers.playback_controller import PlaybackController
-import time
+from core.controllers.download_manager import DownloadManager
+
 class AAXManagerApp:
     def __init__(self, root, base_dir):
         self.root = root
@@ -87,7 +89,17 @@ class AAXManagerApp:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.converter = AudioConverter(self.write_log)
         
-        self.downloader = AudiobookDownloader(self.api_client, self.write_log)
+        self.download_manager = DownloadManager(
+            api_client=self.api_client,
+            logger=self.write_log,
+            library_manager=self.library_manager,
+            callbacks={
+                "on_status": self._on_dl_status,
+                "on_progress": self._on_dl_progress,
+                "on_complete": self._on_dl_complete,
+                "on_batch_finish": self._on_dl_batch_finish
+            }
+        )
 
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
@@ -152,6 +164,50 @@ class AAXManagerApp:
                 
             # 3. Destroy the window safely
             self.root.destroy()
+
+    def _on_dl_status(self, asin, status_text, is_global=False):
+        """Routes status text updates to either the global header or the specific queue row."""
+        def update():
+            if is_global:
+                self.dl_status_var.set(status_text)
+            elif asin in self.queue_ui_elements:
+                self.queue_ui_elements[asin]["status_var"].set(status_text)
+        self.root.after(0, update)
+
+    def _on_dl_progress(self, asin, percent, is_global=False):
+        """Routes progress bar updates."""
+        def update():
+            if is_global:
+                self.dl_progress_var.set(percent)
+            if asin in self.queue_ui_elements:
+                self.queue_ui_elements[asin]["prog_var"].set(percent)
+                self.queue_ui_elements[asin]["status_var"].set(f"{int(percent)}%")
+        self.root.after(0, update)
+
+    def _on_dl_complete(self, filepath, title, post_action):
+        """Called when a file successfully finishes saving to disk."""
+        def update():
+            self.add_stat("books_downloaded", 1)
+            self.refresh_library_ui()
+            
+            if post_action in ["play", "convert"]:
+                self.load_specific_file(filepath)
+                if post_action == "play":
+                    self.root.after(500, self.play_chapter)
+                elif post_action == "convert":
+                    self.root.after(500, self.start_convert_thread)
+        self.root.after(0, update)
+
+    def _on_dl_batch_finish(self):
+        """Called when the entire queue goes idle."""
+        def update():
+            self.dl_status_var.set("All downloads completed.")
+            self.dl_progress_var.set(0)
+            if hasattr(self, 'dl_all_btn'):
+                self.dl_all_btn.config(state=tk.NORMAL)
+            self.root.after(3000, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(3000, lambda: self.toggle_queue_drawer(False))
+        self.root.after(0, update)
 
     def _on_playback_tick(self, current_time, total_time, real_time_delta):
         """Called twice a second by the PlaybackController."""
@@ -679,7 +735,7 @@ class AAXManagerApp:
         self.queue_canvas.pack(side="left", fill="both", expand=True)
         queue_scroll.pack(side="right", fill="y")
 
-        self.active_downloads = {}
+        self.queue_ui_elements = {}
 
         filter_frame = ttk.Frame(lib_frame)
         filter_frame.pack(fill="x", pady=(0, 5))
@@ -1326,43 +1382,51 @@ class AAXManagerApp:
         self.write_log(f"Starting download process for ASIN: {asin}")
         threading.Thread(target=self.download_single_worker, args=(asin, title, save_dir), daemon=True).start()
 
-    def download_single_worker(self, asin, title, save_dir):
-        self.download_worker(asin, title, save_dir, is_queue=False)
+    def cancel_all_downloads(self):
+        if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):
+            self.download_manager.cancel_all()
+            self.write_log("User initiated Cancel All Downloads.")
 
-    def download_queue_worker(self, items, save_dir):
-        try:
-            # 1. Use the new cross-platform wakepy context manager
-            with keep.running():
-                for item in items:
-                    title = item[0]
-                    asin = item[3]
-                    
-                    # 2. Check if the user hit the "Cancel All" button
-                    if asin in getattr(self, 'active_downloads', {}) and self.active_downloads[asin].get("cancel_flag"):
-                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
-                        continue
-                    
-                    safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
-                    if os.path.exists(os.path.join(save_dir, f"{safe_title}.aaxc")) or os.path.exists(os.path.join(save_dir, f"{safe_title}.aax")):
-                        self.write_log(f"Skipping {title}, file already exists.")
-                        # Optionally update the UI so it doesn't get stuck saying "Waiting..."
-                        if asin in getattr(self, 'active_downloads', {}):
-                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Skipped"))
-                        continue
+    def cancel_download(self, asin):
+        self.download_manager.cancel_download(asin)
 
-                    # 3. Isolate each download so one failure doesn't kill the whole queue
-                    try:
-                        self.download_worker(asin, title, save_dir, is_queue=True)
-                    except Exception as e:
-                        self.write_log(f"Failed to queue download for {title}: {e}")
-                        if asin in getattr(self, 'active_downloads', {}):
-                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
-                        
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set("All downloads completed."))
-            self.root.after(0, lambda: self.dl_progress_var.set(0))
-            self.root.after(0, lambda: messagebox.showinfo("Download Queue Finished", "Finished processing all titles."))
-    
+    def download_title_prompt(self):
+        selected = self.cloud_tree.focus()
+        if not selected: return
+        item = self.cloud_tree.item(selected)
+        title = item['values'][0]
+        asin = item['values'][3]
+
+        save_dir = getattr(self, 'default_download_dir', '')
+        if not save_dir:
+            save_dir = filedialog.askdirectory(title=f"Select Folder for '{title}'")
+            if not save_dir: return
+
+        self.add_queue_ui_row(asin, title)
+        self.toggle_queue_drawer(True)
+        self.download_manager.queue_download(asin, title, save_dir)
+
+    def start_download_all(self):
+        # We check the library manager instead of local_library directly
+        local_titles = {data["title"] for path, data in self.library_manager.local_library.items()}
+        missing_items = [{"asin": item.get("asin"), "title": item.get("title", "Unknown")} 
+                         for item in getattr(self.library_manager, 'cloud_items', []) 
+                         if item.get("title") not in local_titles]
+
+        if not missing_items:
+            messagebox.showinfo("Up to Date", "Your local library already has all cloud items.")
+            return
+
+        save_dir = getattr(self, 'default_download_dir', self.base_dir)
+        if messagebox.askyesno("Download All", f"Queue {len(missing_items)} missing audiobooks?"):
+            self.dl_all_btn.config(state=tk.DISABLED)
+            self.toggle_queue_drawer(True)
+            
+            for item in missing_items:
+                self.add_queue_ui_row(item["asin"], item["title"])
+                
+            self.download_manager.queue_batch(missing_items, save_dir)
+
     def apply_classic_palette(self, palette_name):
         apply_theme(self, palette_name)
 
@@ -1519,23 +1583,6 @@ class AAXManagerApp:
         else:
             self.main_paned.add(self.queue_frame, weight=0)
 
-    def cancel_all_downloads(self):
-        if not getattr(self, 'active_downloads', None):
-            return
-
-        if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):
-            for asin, data in self.active_downloads.items():
-                current_status = data["status_var"].get()
-                if not data["cancel_flag"] and current_status not in ["Complete", "Failed", "Canceled"]:
-                    data["cancel_flag"] = True
-                    data["status_var"].set("Canceling...")
-            
-            self.write_log("User initiated Cancel All Downloads.")
-
-            self.dl_status_var.set("Downloads Canceled")
-            self.dl_progress_var.set(0)
-            self.root.after(3000, lambda: self.dl_status_var.set("Idle"))
-            self.root.after(3000, lambda: self.toggle_queue_drawer(False))
 
     def toggle_queue_drawer(self, show=True):
         current_panes = self.main_paned.panes()
@@ -1564,17 +1611,12 @@ class AAXManagerApp:
         cancel_btn = ttk.Button(row_frame, text="✕", command=lambda a=asin: self.cancel_download(a))
         cancel_btn.pack(side=tk.RIGHT)
 
-        self.active_downloads[asin] = {
+        self.queue_ui_elements[asin] = {
             "frame": row_frame,
             "prog_var": prog_var,
-            "status_var": status_var,
-            "cancel_flag": False
+            "status_var": status_var
         }
         
-    def cancel_download(self, asin):
-        if asin in self.active_downloads:
-            self.active_downloads[asin]["cancel_flag"] = True
-            self.active_downloads[asin]["status_var"].set("Canceling...")
 
     def start_download_all(self):
         local_titles = {data["title"] for path, data in self.library_manager.local_library.items()}
@@ -1599,50 +1641,7 @@ class AAXManagerApp:
             self.dl_all_btn.config(state=tk.DISABLED)
             threading.Thread(target=self.download_all_worker, args=(missing_items,), daemon=True).start()
 
-    def download_all_worker(self, missing_items):
-        total = len(missing_items)
-        
-        save_dir = getattr(self, 'default_download_dir', "")
-        if not save_dir:
-            save_dir = getattr(self, 'base_dir', os.getcwd())
-
-        self.root.after(0, lambda: self.toggle_queue_drawer(True))
-
-        for item in missing_items:
-            asin = item.get("asin")
-            title = item.get("title", "Unknown")
-            self.root.after(0, self.add_queue_ui_row, asin, title)
-
-        try:
-            with keep.running():
-                for idx, item in enumerate(missing_items):
-                    title = item.get("title", "Unknown")
-                    asin = item.get("asin")
-
-                    if asin in getattr(self, 'active_downloads', {}) and self.active_downloads[asin].get("cancel_flag"):
-                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Canceled"))
-                        continue
-                    
-                    self.root.after(0, lambda i=idx+1, t=total, name=title: self.dl_status_var.set(f"Batch Downloading ({i}/{t}): {name}..."))
-                    
-                    if asin in getattr(self, 'active_downloads', {}):
-                        self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Starting..."))
-                    
-                    try:
-                        self.download_worker(asin, title, save_dir, is_queue=True)
-                    except Exception as e:
-                        self.write_log(f"Failed to batch download {title}: {e}")
-                        if asin in getattr(self, 'active_downloads', {}):
-                            self.root.after(0, lambda a=asin: self.active_downloads[a]["status_var"].set("Failed"))
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set("Batch Download Complete"))
-            self.root.after(0, lambda: self.dl_progress_var.set(0))
-            self.root.after(0, self.refresh_library_ui)
-            if hasattr(self, 'dl_all_btn'):
-                self.root.after(0, lambda: self.dl_all_btn.config(state=tk.NORMAL))
-            
-            self.root.after(5000, lambda: self.toggle_queue_drawer(False))
-            self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
+    
 
     def refresh_library_ui(self, *args):
         # 1. Clear the current UI
@@ -1693,6 +1692,7 @@ class AAXManagerApp:
                 self.library_tree.pack_forget()
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
                 self.draw_grid_view()
+
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
@@ -1731,18 +1731,13 @@ class AAXManagerApp:
                 self.start_convert_thread()
         else:
             if action_type == "download" or messagebox.askyesno("Download Required", f"'{title}' is not downloaded.\n\nDownload it now?"):
-                if not asin or asin == "Unknown":
-                    messagebox.showerror("Error", "Cannot download a file without an ASIN.")
-                    return
-
                 save_dir = getattr(self, 'default_download_dir', '')
                 if not save_dir:
                     save_dir = filedialog.askdirectory(title=f"Select Download Folder for '{title}'")
-                    if not save_dir:
-                        return
+                    if not save_dir: return
 
-                self.write_log(f"Queuing download for {title}. Post-action: {action_type}")
-                threading.Thread(target=self.download_worker, args=(asin, title, save_dir, False, action_type), daemon=True).start()
+                self.add_queue_ui_row(asin, title)
+                self.download_manager.queue_download(asin, title, save_dir, post_action=action_type)
 
     def start_scrape_thread(self, filepath):
         if not self.api_client.auth:
@@ -2183,76 +2178,7 @@ class AAXManagerApp:
         self.write_log(f"Starting download process for ASIN: {asin}")
         threading.Thread(target=self.download_worker, args=(asin, title, save_dir), daemon=True).start()
 
-    def download_worker(self, asin, title, save_dir, is_queue=False, post_action=None):
-        try:
-            self.root.after(0, lambda: self.dl_status_var.set(f"Downloading: {title}"))
-            self.root.after(0, lambda: self.dl_progress_var.set(0))
 
-            # Define UI Callbacks for the downloader
-            def on_progress(percent_float):
-                self.root.after(0, self.dl_progress_var.set, percent_float)
-                if is_queue and asin in getattr(self, 'active_downloads', {}):
-                    self.root.after(0, self.active_downloads[asin]["prog_var"].set, percent_float)
-                    self.root.after(0, self.active_downloads[asin]["status_var"].set, f"{int(percent_float)}%")
-
-            def check_cancel():
-                return is_queue and asin in getattr(self, 'active_downloads', {}) and self.active_downloads[asin].get("cancel_flag")
-
-            # Let core/downloader handle the network stream
-            filepath, a_key, a_iv, ext = self.downloader.download_item(
-                asin=asin, 
-                title=title, 
-                save_dir=save_dir, 
-                progress_callback=on_progress, 
-                check_cancel_callback=check_cancel
-            )
-
-            # Update UI on success
-            if is_queue and asin in getattr(self, 'active_downloads', {}):
-                self.root.after(0, self.active_downloads[asin]["status_var"].set, "Complete")
-            
-            self.add_stat("books_downloaded", 1)
-            
-            # Save to Database
-            self.library_manager.local_library[filepath] = {
-                "title": title, 
-                "format": ext.replace(".", "").upper(), 
-                "path": filepath,
-                "audible_key": a_key,
-                "audible_iv": a_iv,
-                "asin": asin  
-            }
-            self.db.save_local_db(self.library_manager.local_library)
-            self.root.after(0, self.refresh_library_ui)
-
-            # Handle post-actions (Play or Convert automatically)
-            if post_action == "play" or post_action == "convert":
-                self.root.after(0, lambda: self.load_specific_file(filepath))
-                if post_action == "play":
-                    self.root.after(500, self.play_chapter)
-                elif post_action == "convert":
-                    self.root.after(500, self.start_convert_thread)
-            elif not is_queue:
-                self.root.after(0, lambda: messagebox.showinfo("Success", f"Finished downloading:\n{title}"))
-            
-        except Exception as e:
-            import traceback
-            error_trace = traceback.format_exc()
-            error_msg = str(e)
-            
-            self.write_log(f"DOWNLOAD ERROR:\n{error_trace}")
-
-            if is_queue and asin in getattr(self, 'active_downloads', {}):
-                self.root.after(0, lambda: self.active_downloads[asin]["status_var"].set("Failed"))
-
-            if not is_queue:
-                self.root.after(0, lambda err=error_msg: messagebox.showerror("Download Error", f"Failed to download.\n\n{err}\n\nCheck log for details."))
-                
-        finally:
-            if not is_queue:
-                self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-                self.root.after(0, lambda: self.dl_progress_var.set(0))
-        
 
         
     def get_drm_flags(self, filepath):
