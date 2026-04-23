@@ -34,6 +34,7 @@ from core.exporter import LibraryExporter
 from core.controllers.library_manager import LibraryManager
 from core.controllers.playback_controller import PlaybackController
 from core.controllers.download_manager import DownloadManager
+from core.controllers.metadata_manager import MetadataManager
 
 class AAXManagerApp:
     def __init__(self, root, base_dir):
@@ -100,7 +101,18 @@ class AAXManagerApp:
                 "on_batch_finish": self._on_dl_batch_finish
             }
         )
-
+        self.metadata_manager = MetadataManager(
+            api_client=self.api_client,
+            library_manager=self.library_manager,
+            logger=self.write_log,
+            covers_dir=self.covers_dir,
+            callbacks={
+                "on_search_complete": self._on_scrape_search_results,
+                "on_apply_complete": self._on_scrape_apply_complete,
+                "on_display_ready": self._on_display_metadata_ready,
+                "on_error": self._on_scrape_error
+            }
+        )
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
         self.locale = tk.StringVar(value="us")
@@ -164,6 +176,54 @@ class AAXManagerApp:
                 
             # 3. Destroy the window safely
             self.root.destroy()
+
+    def _on_scrape_search_results(self, filepath, products):
+        """Called when the Audible search returns results."""
+        def update():
+            self.dl_status_var.set("Idle")
+            if not products:
+                messagebox.showinfo("No Results", "No matches found for that title.")
+                return
+            self.show_scrape_results(filepath, products)
+        self.root.after(0, update)
+
+    def _on_scrape_apply_complete(self, filepath, title):
+        """Called when FFmpeg finishes embedding tags."""
+        def update():
+            self.dl_status_var.set("Idle")
+            messagebox.showinfo("Success", "Metadata scraped and applied!")
+            self.refresh_library_ui()
+            # Reload the player if the user is currently listening to the file we just tagged
+            if getattr(self, 'file_path', "") == filepath:
+                self.load_specific_file(filepath)
+        self.root.after(0, update)
+
+    def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
+        """Updates the side panel when the user clicks a book."""
+        def update():
+            # If the user clicked another book while the image was downloading, ignore this update
+            if getattr(self, 'file_path', "") != filepath and not getattr(self, '_selected_grid_item', None):
+                return
+                
+            self.author_label.config(text=authors)
+            if cover_path and os.path.exists(cover_path):
+                try:
+                    img = Image.open(cover_path)
+                    img.thumbnail((400, 400))
+                    photo = ImageTk.PhotoImage(img)
+                    self.current_cover_photo = photo
+                    self.cover_label.config(image=photo, text="")
+                except Exception:
+                    self.cover_label.config(image="", text="Image Error")
+            else:
+                self.cover_label.config(image="", text=error_text)
+        self.root.after(0, update)
+
+    def _on_scrape_error(self, err_msg):
+        def update():
+            self.dl_status_var.set("Idle")
+            messagebox.showerror("Scrape Failed", err_msg)
+        self.root.after(0, update)
 
     def _on_dl_status(self, asin, status_text, is_global=False):
         """Routes status text updates to either the global header or the specific queue row."""
@@ -1260,80 +1320,7 @@ class AAXManagerApp:
         if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
             self.load_specific_file(last_path)
 
-    def fetch_metadata_worker(self, filepath):
-        local_data = self.library_manager.local_library.get(filepath, {})
-        title = local_data.get("title", "")
-        asin = local_data.get("asin")
 
-        authors = ""
-        for item in getattr(self, 'cloud_items', []):
-            if item.get("title") == title or item.get("asin") == asin:
-                asin = item.get("asin")
-                raw_authors = item.get("authors", [])
-                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                break
-        
-        if not asin:
-            self.root.after(0, lambda: self.cover_label.config(image="", text="Metadata Unavailable"))
-            self.root.after(0, lambda: self.author_label.config(text=authors))
-            return
-
-        cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-
-        if os.path.exists(cover_path):
-            try:
-                img = Image.open(cover_path)
-                img.thumbnail((400, 400))
-                photo = ImageTk.PhotoImage(img)
-                
-                def update_ui_local():
-                    self.current_cover_photo = photo
-                    self.cover_label.config(image=photo, text="")
-                    self.author_label.config(text=authors)
-                
-                self.root.after(0, update_ui_local)
-                return 
-            except Exception as e:
-                self.write_log(f"Failed to load local cover cache, falling back to API: {e}")
-
-        if not self.api_client.auth:
-            return
-            
-        try:
-            client = audible.Client(auth=self.api_client.auth)
-            resp = client.get(f"1.0/catalog/products/{asin}", response_groups="media,product_attrs")
-            product = resp.get("product", {})
-            
-            if not authors:
-                raw_authors = product.get("authors", [])
-                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-            
-            images = product.get("product_images", {})
-            image_url = images.get("500") or images.get("252")
-            
-            if image_url:
-                img_data = requests.get(image_url).content
-
-                with open(cover_path, "wb") as f:
-                    f.write(img_data)
-                    
-                img = Image.open(io.BytesIO(img_data))
-                img.thumbnail((250, 250))
-                photo = ImageTk.PhotoImage(img)
-                
-                def update_ui_api():
-                    self.current_cover_photo = photo
-                    self.cover_label.config(image=photo, text="")
-                    self.author_label.config(text=authors)
-                
-                self.root.after(0, update_ui_api)
-            else:
-                self.root.after(0, lambda: self.cover_label.config(image="", text="No Cover Art Found"))
-                self.root.after(0, lambda: self.author_label.config(text=authors))
-                
-        except Exception as e:
-            self.write_log(f"Metadata Fetch Error: {e}")
-            self.root.after(0, lambda: self.cover_label.config(image="", text="Failed to load metadata"))
     
     def load_cloud_cache(self):
         if os.path.exists(self.cloud_cache_path):
@@ -1751,24 +1738,7 @@ class AAXManagerApp:
         if not query: return
         
         self.dl_status_var.set("Searching catalog...")
-        threading.Thread(target=self.scrape_search_worker, args=(filepath, query), daemon=True).start()
-
-    def scrape_search_worker(self, filepath, query):
-        try:
-            client = audible.Client(auth=self.api_client.auth)
-            resp = client.get("1.0/catalog/products", title=query, num_results=5, response_groups="product_desc,product_attrs,contributors")
-            products = resp.get("products", [])
-            
-            if not products:
-                self.root.after(0, lambda: messagebox.showinfo("No Results", "No matches found for that title."))
-                return
-                
-            self.root.after(0, lambda: self.show_scrape_results(filepath, products))
-        except Exception as e:
-            self.write_log(f"Scrape search error: {e}")
-            self.root.after(0, lambda: messagebox.showerror("Search Failed", str(e)))
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+        self.metadata_manager.search_catalog(filepath, query)
 
     def show_scrape_results(self, filepath, products):
         popup = tk.Toplevel(self.root)
@@ -1794,97 +1764,12 @@ class AAXManagerApp:
             if not sel: return
             selected_asin = products[sel[0]].get("asin")
             popup.destroy()
-            self.dl_status_var.set("Fetching Audnexus data...")
-            threading.Thread(target=self.apply_scraped_metadata, args=(filepath, selected_asin), daemon=True).start()
+            self.dl_status_var.set("Fetching and embedding metadata...")
+            self.metadata_manager.apply_scraped_metadata(filepath, selected_asin)
             
         ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
 
-    def apply_scraped_metadata(self, filepath, asin):
-        try:
-            client = audible.Client(auth=self.api_client.auth)
-            resp = client.get(f"1.0/catalog/products/{asin}", response_groups="product_desc,product_attrs,contributors,media,series")
-            product = resp.get("product", {})
-            
-            if not product:
-                raise Exception("Audible API returned no data for this ASIN.")
-                
-            title = product.get("title", "Unknown Title")
-            
-            raw_authors = product.get("authors", [])
-            authors = ", ".join([a.get("name", "") for a in raw_authors])
-            
-            raw_series = product.get("series", [])
-            series_list = []
-            for s in raw_series:
-                if isinstance(s, dict) and s.get("title"):
-                    series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
-            series_str = ", ".join(series_list) if series_list else ""
-            
-            duration_min = product.get("runtime_length_min", 0)
 
-            cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
-            images = product.get("product_images", {})
-            img_url = images.get("500") or images.get("252")
-            
-            if img_url:
-                img_resp = requests.get(img_url, timeout=10)
-                if img_resp.status_code == 200:
-                    with open(cover_path, "wb") as f:
-                        f.write(img_resp.content)
-
-            data = self.library_manager.local_library.get(filepath, {})
-            data["title"] = title
-            data["authors"] = authors
-            data["series"] = series_str      # NEW
-            data["duration_min"] = duration_min # NEW
-            data["asin"] = asin
-            self.library_manager.local_library[filepath] = data
-            self.db.save_local_db(self.library_manager.local_library)
-
-            ext = data.get("format", "").upper()
-            if ext in ["M4B", "MP3"]:
-                self.root.after(0, lambda: self.dl_status_var.set("Embedding tags..."))
-                
-                base_name, original_ext = os.path.splitext(filepath)
-                temp_path = f"{base_name}_temp{original_ext}"
-                
-                cmd = ["ffmpeg", "-y", "-i", filepath]
-                
-                if os.path.exists(cover_path):
-                    cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c:v", "mjpeg", "-disposition:v", "attached_pic"])
-                else:
-                    cmd.extend(["-map", "0:a"])
-                    
-                cmd.extend([
-                    "-c:a", "copy",
-                    "-metadata", f"title={title}",
-                    "-metadata", f"album={title}",
-                    "-metadata", f"artist={authors}",
-                    "-metadata", f"album_artist={authors}",
-                    "-metadata", "genre=Audiobook",
-                    temp_path
-                ])
-                
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                if res.returncode == 0:
-                    import shutil
-                    shutil.move(temp_path, filepath)
-                else:
-                    if os.path.exists(temp_path): os.remove(temp_path)
-                    self.write_log(f"FFmpeg Embed Error: {res.stderr}")
-                    raise Exception("FFmpeg failed to embed metadata. Check log for details.")
-
-            self.root.after(0, lambda: messagebox.showinfo("Success", "Metadata scraped and applied!"))
-            self.root.after(0, self.refresh_library_ui)
-
-            if getattr(self, 'file_path', "") == filepath:
-                self.root.after(0, lambda: self.load_specific_file(filepath))
-                
-        except Exception as e:
-            self.write_log(f"Scrape Error: {e}")
-            self.root.after(0, lambda err=str(e): messagebox.showerror("Scrape Failed", err))
-        finally:
-            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children('')]
@@ -2395,7 +2280,7 @@ class AAXManagerApp:
 
         self.stop_audio()
 
-        threading.Thread(target=self.fetch_metadata_worker, args=(local_path,), daemon=True).start()
+        threading.Thread(target=self.metadata_manager.fetch_display_metadata(local_path), args=(local_path,), daemon=True).start()
         
         self.handle_action_on_selected("play")
 
@@ -2468,7 +2353,7 @@ class AAXManagerApp:
             percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
             self.progress_var.set(percent)
 
-        threading.Thread(target=self.fetch_metadata_worker, args=(filepath,), daemon=True).start()
+        threading.Thread(target=self.metadata_manager.fetch_display_metadata(filepath), args=(filepath,), daemon=True).start()
         self.refresh_bookmarks_ui()
 
     def add_bookmark(self):
@@ -2948,8 +2833,6 @@ class AAXManagerApp:
             self.current_play_time = 0
             self.is_paused = False
             self.play_chapter()
-
-    
 
     def update_info(self):
         if self.chapters:
