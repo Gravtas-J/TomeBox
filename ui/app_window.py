@@ -36,6 +36,7 @@ from core.controllers.playback_controller import PlaybackController
 from core.controllers.download_manager import DownloadManager
 from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
+from core.controllers.system_manager import SystemManager
 
 class AAXManagerApp:
     def __init__(self, root, base_dir):
@@ -47,7 +48,7 @@ class AAXManagerApp:
         self.base_dir = base_dir  
         self.current_sort_col = "Title"  
         self.current_sort_descending = False
-        self.enforce_single_instance()
+        # self.enforce_single_instance()
         # self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         # 1. Initialize Database Manager FIRST
@@ -135,6 +136,9 @@ class AAXManagerApp:
             on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
             on_error_cb=lambda code: self.root.after(0, self.stop_audio)
         )
+        self.system_manager = SystemManager(logger=self.write_log)
+        self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
+
         self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
         self.locale = tk.StringVar(value="us")
@@ -161,7 +165,7 @@ class AAXManagerApp:
         self.setup_tray_icon()
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
-        threading.Thread(target=self.cleanup_orphaned_files, daemon=True).start()
+        threading.Thread(target=lambda: self.system_manager.cleanup_orphaned_files(self.settings.get("download_dir", "")), daemon=True).start()
         threading.Thread(target=self.db_monitor_worker, daemon=True).start()
 
         if "stats" not in self.settings:
@@ -314,124 +318,25 @@ class AAXManagerApp:
             self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
         self.root.after(0, update)
 
-    def get_local_ip(self):
-        import socket
-        try:
-            # We don't actually send data, just forcing the OS to route to an external IP
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            return "127.0.0.1" # Fallback to localhost if disconnected from Wi-Fi
-        
-    def _get_mobile_html(self):
-        import os
-        html_path = os.path.join(self.base_dir, "server", "mobile_ui.html")
-        try:
-            with open(html_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            return "<h1>Error: mobile_ui.html not found in server directory.</h1>"
-    
     def toggle_web_server(self):
-        if hasattr(self, 'web_server') and self.web_server is not None:
-            self.write_log("Stopping companion server...")
-            self.web_server.should_exit = True
-            self.web_server = None
-            self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server")
-            messagebox.showinfo("Server Stopped", "The companion server has been safely disabled.")
-            # Note: Removed the accidental open_pairing_window(self) from here
-        else:
-            try:
-                import uvicorn
-                import threading
-                import sys
-                import asyncio
-                from server.web_app import create_server_app
+        def on_started():
+            self.root.after(0, lambda: self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server"))
+            self.root.after(0, lambda: open_pairing_window(self))
+            
+        def on_stopped():
+            self.root.after(0, lambda: self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server"))
+            self.root.after(0, lambda: messagebox.showinfo("Server Stopped", "The companion server has been safely disabled."))
+            
+        def on_error(title, msg):
+            self.root.after(0, lambda: messagebox.showerror(title, msg))
 
-                if sys.platform == 'win32':
-                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        self.system_manager.toggle_web_server(
+            app_instance=self,
+            on_started_cb=on_started,
+            on_stopped_cb=on_stopped,
+            on_error_cb=on_error
+        )
 
-                # Pass the TomeBox app instance to the server so it can read library/settings
-                api = create_server_app(self)
-
-                config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_config=None)
-                self.web_server = uvicorn.Server(config)
-                threading.Thread(target=self.web_server.run, daemon=True).start()
-                
-                self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server")
-                local_ip = self.get_local_ip()
-                self.write_log(f"Server started on http://{local_ip}:8000")
-                
-                # --- NEW: Pop up the QR code instead of the message box ---
-                open_pairing_window(self)
-                # ----------------------------------------------------------
-                
-            except ImportError:
-                messagebox.showerror("Missing Libraries", "Please install the required server packages first:\n\npip install fastapi uvicorn")
-            except Exception as e:
-                self.write_log(f"Failed to start server: {e}")
-                messagebox.showerror("Server Error", f"Could not start the server.\n\n{e}")
-
-    def cleanup_orphaned_files(self):
-        save_dir = self.settings.get("download_dir", "")
-        if not save_dir or not os.path.exists(save_dir):
-            return
-
-        self.write_log("Running startup scan for orphaned/partial files...")
-        cleaned_count = 0
-
-        try:
-            for filename in os.listdir(save_dir):
-                filepath = os.path.join(save_dir, filename)
-                
-                # Skip directories
-                if not os.path.isfile(filepath):
-                    continue
-
-                # Target 1: Explicitly temporary/partial files
-                if filename.endswith(".part") or "_temp." in filename:
-                    try:
-                        os.remove(filepath)
-                        self.write_log(f"Deleted partial file: {filename}")
-                        cleaned_count += 1
-                    except OSError:
-                        pass
-                    continue
-
-                # Target 2: Corrupted 0-byte media files
-                if filename.lower().endswith(('.aax', '.aaxc', '.m4b', '.mp3')):
-                    try:
-                        if os.path.getsize(filepath) == 0:
-                            os.remove(filepath)
-                            self.write_log(f"Deleted empty 0-byte file: {filename}")
-                            cleaned_count += 1
-                    except OSError:
-                        pass
-
-            if cleaned_count > 0:
-                self.write_log(f"Cleanup complete. Removed {cleaned_count} orphaned files.")
-                
-        except Exception as e:
-            self.write_log(f"Failed to run orphaned file cleanup: {e}")
-
-    def toggle_system_sleep(self, prevent_sleep=True):
-        if os.name != 'nt':
-            return # Only implemented for Windows
-
-        try:
-            import ctypes
-            # 0x80000000 = ES_CONTINUOUS, 0x00000001 = ES_SYSTEM_REQUIRED
-            if prevent_sleep:
-                self.write_log("Applying sleep prevention for active background task.")
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
-            else:
-                self.write_log("Releasing system sleep prevention.")
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-        except Exception as e:
-            self.write_log(f"Failed to toggle sleep state: {e}")
 
     def has_enough_disk_space(self, target_dir, required_bytes):
         import shutil
@@ -485,52 +390,6 @@ class AAXManagerApp:
             logger=self.write_log
         )
 
-    # def process_dropped_files_worker(self, files):
-    #     valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
-    #     added_count = 0
-        
-    #     for filepath in files:
-    #         if not os.path.exists(filepath): continue
-            
-    #         ext = os.path.splitext(filepath)[1].lower()
-    #         if ext not in valid_exts: continue
-            
-    #         filename = os.path.basename(filepath)
-    #         title = filename
-    #         authors = "Unknown Author"
-    #         format_clean = ext.replace(".", "").upper()
-            
-    #         self.root.after(0, lambda f=filename: self.dl_status_var.set(f"Importing: {f}"))
-            
-    #         if format_clean in ["M4B", "MP3"]:
-    #             try:
-    #                 data = self.converter.get_metadata_and_chapters(filepath)
-    #                 tags = data.get("format", {}).get("tags", {})
-
-    #                 if "title" in tags: title = tags["title"]
-    #                 if "artist" in tags: authors = tags["artist"]
-    #                 elif "album_artist" in tags: authors = tags["album_artist"]
-    #             except Exception as e:
-    #                 self.write_log(f"Failed to read tags for {filename}: {e}")
-
-    #         self.library_manager.local_library[filepath] = {
-    #             "title": title, 
-    #             "format": format_clean, 
-    #             "path": filepath, 
-    #             "authors": authors,
-    #             "owner": self.active_profile
-    #         }
-    #         added_count += 1
-            
-    #     if added_count > 0:
-    #         self.db.save_local_db(self.library_manager.local_library)
-    #         self.root.after(0, self.refresh_library_ui)
-    #         self.root.after(0, lambda c=added_count: self.dl_status_var.set(f"Successfully imported {c} files."))
-    #     else:
-    #         self.root.after(0, lambda: self.dl_status_var.set("No valid audiobooks found in drop."))
-            
-    #     self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
-
     def check_achievements(self):
         stats = self.settings.get("stats", {})
         unlocked = stats.get("unlocked_achievements", [])
@@ -543,47 +402,7 @@ class AAXManagerApp:
                     self.settings["stats"]["unlocked_achievements"] = unlocked
                     self.db.save_settings(self.settings)
                     show_achievement_toast(self, data["title"], data["desc"])
-
-    def enforce_single_instance(self):
-        self.lock_port = 43128 # Unique port just for TomeBox
-        self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
-        try:
-            # Try to claim the port
-            self.lock_socket.bind(('127.0.0.1', self.lock_port))
-            self.lock_socket.listen(1)
-            
-            # Success! We are the first instance. Start listening for wake requests.
-            threading.Thread(target=self.instance_listener_worker, daemon=True).start()
-            
-        except socket.error:
-            # Port is already in use! Another TomeBox is running.
-            self.write_log("Another instance detected. Sending wake signal...")
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect(('127.0.0.1', self.lock_port))
-                s.sendall(b"WAKEUP")
-                s.close()
-            except Exception:
-                pass
-            
-            # Kill this duplicate instance immediately
-            sys.exit(0)
-
-    def instance_listener_worker(self):
-        while True:
-            try:
-                conn, addr = self.lock_socket.accept()
-                data = conn.recv(1024)
-                if data == b"WAKEUP":
-                    self.write_log("Wake signal received. Bringing window to front.")
-                    self.root.after(0, self.bring_to_front)
-                conn.close()
-            except Exception as e:
-                if self.debug_mode.get():
-                    self.write_log(f"Socket listener error: {e}")
-                break
-
+    
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
         self.root.deiconify()
@@ -1267,7 +1086,7 @@ class AAXManagerApp:
 
             # 3. Flag the web server thread to shut down gracefully
             if hasattr(self, 'web_server') and self.web_server is not None:
-                self.web_server.should_exit = True
+                self.system_manager.stop_server_sync()
                 
         except Exception as e:
             self.write_log(f"Error during shutdown: {e}")
@@ -1367,29 +1186,6 @@ class AAXManagerApp:
             self.db.save_settings(self.settings)
             messagebox.showinfo("Folder Saved", f"Default download folder updated to:\n{directory}")
 
-    def download_title_prompt(self):
-        selected = self.cloud_tree.focus()
-        if not selected:
-            messagebox.showwarning("Selection Required", "Select a title from the Cloud Library first.")
-            return
-
-        item = self.cloud_tree.item(selected)
-        title = item['values'][0]
-        asin = item['values'][3]
-
-        if not asin or asin == "Unknown":
-            messagebox.showerror("Data Error", "This item does not have a valid ASIN.")
-            return
-
-        save_dir = self.default_download_dir
-        if not save_dir:
-            save_dir = filedialog.askdirectory(title=f"Select Download Folder for '{title}'")
-            if not save_dir:
-                return
-
-        self.write_log(f"Starting download process for ASIN: {asin}")
-        threading.Thread(target=self.download_single_worker, args=(asin, title, save_dir), daemon=True).start()
-
     def cancel_all_downloads(self):
         if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):
             self.download_manager.cancel_all()
@@ -1437,27 +1233,6 @@ class AAXManagerApp:
 
     def apply_classic_palette(self, palette_name):
         apply_theme(self, palette_name)
-
-    def download_all_prompt(self):
-        save_dir = getattr(self, 'default_download_dir', '')
-        if not save_dir:
-            save_dir = filedialog.askdirectory(title="Select Download Folder for All Titles")
-            if not save_dir: return
-            self.default_download_dir = save_dir
-            self.settings["download_dir"] = save_dir
-            self.db.save_settings(self.settings)
-            self.lbl_download_dir.config(text=save_dir)
-
-        items_to_download = []
-        for child in self.cloud_tree.get_children():
-            values = self.cloud_tree.item(child)['values']
-            if values[3] and values[3] != "Unknown":
-                items_to_download.append(values)
-
-        if not items_to_download:
-            return
-
-        threading.Thread(target=self.download_queue_worker, args=(items_to_download, save_dir), daemon=True).start()
 
     def toggle_library_view(self):
         scroll_bar = None
