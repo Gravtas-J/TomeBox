@@ -2617,12 +2617,13 @@ class AAXManagerApp:
             if total_duration == 0:
                 total_duration = self.converter.get_duration(input_path)
 
+            # FIXED: Point to library_manager
             original_data = self.library_manager.local_library.get(input_path, {})
             title = original_data.get("title", os.path.basename(output_path))
             asin = original_data.get("asin", "")
 
             authors = ""
-            for item in getattr(self, 'cloud_items', []):
+            for item in getattr(self.library_manager, 'cloud_items', []):
                 if item.get("asin") == asin:
                     raw_authors = item.get("authors", [])
                     authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
@@ -2641,12 +2642,24 @@ class AAXManagerApp:
                 total_duration=total_duration, progress_cb=on_progress
             )
 
+            # Update database with new file
             self.library_manager.local_library[output_path] = {
                 "title": title, "format": "M4B", "path": output_path, "asin": asin
             }
-            self.db.save_local_db(self.library_manager.local_library)
             
-            self.root.after(0, lambda: messagebox.showinfo("Success", "File converted with embedded metadata."))
+            if os.path.exists(input_path):
+                try:
+                    os.remove(input_path)
+                    self.write_log(f"Deleted original file: {input_path}")
+                except Exception as e:
+                    self.write_log(f"Could not delete original file: {e}")
+                    
+            if input_path in self.library_manager.local_library:
+                del self.library_manager.local_library[input_path]
+            
+            self.library_manager.db.save_local_db(self.library_manager.local_library)
+            
+            self.root.after(0, lambda: messagebox.showinfo("Success", "File converted and original deleted."))
             self.root.after(0, self.refresh_library_ui)
 
         except Exception as e:
@@ -2703,7 +2716,7 @@ class AAXManagerApp:
                     cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
                     
                     authors = ""
-                    for item in getattr(self, 'cloud_items', []):
+                    for item in getattr(self.library_manager, 'cloud_items', []):
                         if item.get("asin") == asin:
                             raw_authors = item.get("authors", [])
                             authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
@@ -2724,9 +2737,17 @@ class AAXManagerApp:
                         self.library_manager.local_library[out_path]["format"] = "M4B"
                         self.library_manager.local_library[out_path]["path"] = out_path
                         
-                        if os.path.exists(filepath): os.remove(filepath)
-                        del self.library_manager.local_library[filepath]
-                        self.db.save_local_db(self.library_manager.local_library)
+                        if os.path.exists(filepath): 
+                            try:
+                                os.remove(filepath)
+                            except OSError:
+                                pass
+                                
+                        if filepath in self.library_manager.local_library:
+                            del self.library_manager.local_library[filepath]
+                            
+                        self.library_manager.db.save_local_db(self.library_manager.local_library)
+                        
                         self.root.after(0, self.refresh_library_ui)
                             
                     except Exception as e:
