@@ -173,3 +173,55 @@ class LibraryManager:
             
         settings["shelves_db"][asin] = tags_list
         self.db.save_settings(settings)
+
+    def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+        """Processes an array of files, extracts metadata, and adds them to the library database."""
+        def worker():
+            valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
+            added_count = 0
+            
+            for filepath in file_paths:
+                if not os.path.exists(filepath): continue
+                
+                ext = os.path.splitext(filepath)[1].lower()
+                if ext not in valid_exts: continue
+                
+                filename = os.path.basename(filepath)
+                title = filename
+                authors = "Unknown Author"
+                format_clean = ext.replace(".", "").upper()
+                
+                if on_status_cb:
+                    on_status_cb(f"Importing: {filename}")
+                
+                # Scrape tags if it's an M4B or MP3
+                if format_clean in ["M4B", "MP3"]:
+                    try:
+                        data = converter.get_metadata_and_chapters(filepath)
+                        tags = data.get("format", {}).get("tags", {})
+
+                        if "title" in tags: title = tags["title"]
+                        if "artist" in tags: authors = tags["artist"]
+                        elif "album_artist" in tags: authors = tags["album_artist"]
+                    except Exception as e:
+                        if logger: logger(f"Failed to read tags for {filename}: {e}")
+
+                # Mutate the library dictionary
+                self.local_library[filepath] = {
+                    "title": title, 
+                    "format": format_clean, 
+                    "path": filepath, 
+                    "authors": authors,
+                    "owner": active_profile
+                }
+                added_count += 1
+                
+            # Save and ping the UI
+            if added_count > 0:
+                self.db.save_local_db(self.local_library)
+                
+            if on_complete_cb:
+                on_complete_cb(added_count)
+
+        # Run it in the background so a 50-file drag-and-drop doesn't freeze the app
+        threading.Thread(target=worker, daemon=True).start()

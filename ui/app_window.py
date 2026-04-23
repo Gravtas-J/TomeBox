@@ -43,6 +43,7 @@ class AAXManagerApp:
         self.root.title("TomeBox")
         self.root.geometry("1550x850")
         self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind('<<Drop>>', self.on_file_drop)
         self.base_dir = base_dir  
         self.current_sort_col = "Title"  
         self.current_sort_descending = False
@@ -302,6 +303,17 @@ class AAXManagerApp:
         # Push the update to the main Tkinter thread safely
         self.root.after(0, update_ui)
 
+    def _on_import_complete(self, added_count):
+        def update():
+            if added_count > 0:
+                self.refresh_library_ui()
+                self.dl_status_var.set(f"Successfully imported {added_count} files.")
+            else:
+                self.dl_status_var.set("No valid audiobooks found to import.")
+                
+            self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
+        self.root.after(0, update)
+
     def get_local_ip(self):
         import socket
         try:
@@ -443,57 +455,81 @@ class AAXManagerApp:
         self.check_achievements()
 
     def on_file_drop(self, event):
-        # Tkinter safely parses the dropped string into a tuple of file paths
-        files = self.root.tk.splitlist(event.data)
+        # 1. Parse the dropped string into a tuple of file paths
+        raw_files = self.root.tk.splitlist(event.data)
         
-        # Start a background thread so FFprobe doesn't freeze the app if you drop 50 files
-        threading.Thread(target=self.process_dropped_files_worker, args=(files,), daemon=True).start()
-
-    def process_dropped_files_worker(self, files):
-        valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
-        added_count = 0
+        # 2. Strip any lingering curly braces (a common Windows drag-and-drop quirk)
+        clean_files = [f.strip('{}') for f in raw_files]
         
-        for filepath in files:
-            if not os.path.exists(filepath): continue
-            
-            ext = os.path.splitext(filepath)[1].lower()
-            if ext not in valid_exts: continue
-            
-            filename = os.path.basename(filepath)
-            title = filename
-            authors = "Unknown Author"
-            format_clean = ext.replace(".", "").upper()
-            
-            self.root.after(0, lambda f=filename: self.dl_status_var.set(f"Importing: {f}"))
-            
-            if format_clean in ["M4B", "MP3"]:
-                try:
-                    data = self.converter.get_metadata_and_chapters(filepath)
-                    tags = data.get("format", {}).get("tags", {})
+        # 3. Pass the clean list to the manager
+        self.library_manager.import_files(
+            file_paths=clean_files,
+            converter=self.converter,
+            active_profile=self.active_profile,
+            on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+            on_complete_cb=self._on_import_complete,
+            logger=self.write_log
+        )
 
-                    if "title" in tags: title = tags["title"]
-                    if "artist" in tags: authors = tags["artist"]
-                    elif "album_artist" in tags: authors = tags["album_artist"]
-                except Exception as e:
-                    self.write_log(f"Failed to read tags for {filename}: {e}")
+    def add_local_file(self):
+        filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
+        if not filepath: return
+        
+        # Pass it as a single-item list to utilize the same batch manager
+        self.library_manager.import_files(
+            file_paths=[filepath],
+            converter=self.converter,
+            active_profile=self.active_profile,
+            on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+            on_complete_cb=self._on_import_complete,
+            logger=self.write_log
+        )
 
-            self.library_manager.local_library[filepath] = {
-                "title": title, 
-                "format": format_clean, 
-                "path": filepath, 
-                "authors": authors,
-                "owner": self.active_profile
-            }
-            added_count += 1
+    # def process_dropped_files_worker(self, files):
+    #     valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
+    #     added_count = 0
+        
+    #     for filepath in files:
+    #         if not os.path.exists(filepath): continue
             
-        if added_count > 0:
-            self.db.save_local_db(self.library_manager.local_library)
-            self.root.after(0, self.refresh_library_ui)
-            self.root.after(0, lambda c=added_count: self.dl_status_var.set(f"Successfully imported {c} files."))
-        else:
-            self.root.after(0, lambda: self.dl_status_var.set("No valid audiobooks found in drop."))
+    #         ext = os.path.splitext(filepath)[1].lower()
+    #         if ext not in valid_exts: continue
             
-        self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
+    #         filename = os.path.basename(filepath)
+    #         title = filename
+    #         authors = "Unknown Author"
+    #         format_clean = ext.replace(".", "").upper()
+            
+    #         self.root.after(0, lambda f=filename: self.dl_status_var.set(f"Importing: {f}"))
+            
+    #         if format_clean in ["M4B", "MP3"]:
+    #             try:
+    #                 data = self.converter.get_metadata_and_chapters(filepath)
+    #                 tags = data.get("format", {}).get("tags", {})
+
+    #                 if "title" in tags: title = tags["title"]
+    #                 if "artist" in tags: authors = tags["artist"]
+    #                 elif "album_artist" in tags: authors = tags["album_artist"]
+    #             except Exception as e:
+    #                 self.write_log(f"Failed to read tags for {filename}: {e}")
+
+    #         self.library_manager.local_library[filepath] = {
+    #             "title": title, 
+    #             "format": format_clean, 
+    #             "path": filepath, 
+    #             "authors": authors,
+    #             "owner": self.active_profile
+    #         }
+    #         added_count += 1
+            
+    #     if added_count > 0:
+    #         self.db.save_local_db(self.library_manager.local_library)
+    #         self.root.after(0, self.refresh_library_ui)
+    #         self.root.after(0, lambda c=added_count: self.dl_status_var.set(f"Successfully imported {c} files."))
+    #     else:
+    #         self.root.after(0, lambda: self.dl_status_var.set("No valid audiobooks found in drop."))
+            
+    #     self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
 
     def check_achievements(self):
         stats = self.settings.get("stats", {})
@@ -2022,42 +2058,6 @@ class AAXManagerApp:
         
         return ["-activation_bytes", self.auth_bytes.get().strip()]
             
-    def add_local_file(self):
-        filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
-        if not filepath: return
-        
-        filename = os.path.basename(filepath)
-        ext = filename.split(".")[-1].upper()
-        
-        title = filename
-        authors = "Unknown Author"
-        
-        if ext in ["M4B", "MP3"]:
-            try:
-                data = self.converter.get_metadata_and_chapters(filepath)
-                tags = data.get("format", {}).get("tags", {})
-
-                if "title" in tags: 
-                    title = tags["title"]
-                if "artist" in tags: 
-                    authors = tags["artist"]
-                elif "album_artist" in tags: 
-                    authors = tags["album_artist"]
-                    
-            except Exception as e:
-                self.write_log(f"Failed to read tags for {filename}: {e}")
-
-        self.library_manager.local_library[filepath] = {
-            "title": title, 
-            "format": ext, 
-            "path": filepath, 
-            "authors": authors,
-            "owner": self.active_profile
-        }
-        self.db.save_local_db(self.library_manager.local_library)
-        self.refresh_library_ui()
-
-    
 
     def remove_local_file(self):
         selected = self.library_tree.focus()
