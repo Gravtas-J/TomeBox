@@ -19,3 +19,5 @@ migrate_to_sqlite.py
 /old
 *.md
 /logs
+/release
+*.spec
