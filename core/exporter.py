@@ -3,6 +3,14 @@ import html
 
 class LibraryExporter:
     @staticmethod
+    def _sanitize_csv(value):
+        """Prevents CSV Injection (Excel Macro execution) if metadata starts with command chars."""
+        val_str = str(value)
+        if val_str and val_str[0] in ('=', '+', '-', '@'):
+            return "'" + val_str
+        return val_str
+
+    @staticmethod
     def export_csv(output_file, local_library, cloud_items):
         with open(output_file, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
@@ -37,11 +45,26 @@ class LibraryExporter:
                 status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
                 local_path = local_data['path'] if local_data else ""
 
-                writer.writerow([title, authors, series_str, duration, asin, status, local_path])
+                # Apply CSV sanitization before writing
+                writer.writerow([
+                    LibraryExporter._sanitize_csv(title), 
+                    LibraryExporter._sanitize_csv(authors), 
+                    LibraryExporter._sanitize_csv(series_str), 
+                    duration, 
+                    asin, 
+                    status, 
+                    local_path
+                ])
 
             for path, data in local_library.items():
                 if data["title"] not in cloud_titles:
-                    writer.writerow([data["title"], "Local File", "N/A", "N/A", data.get("asin", "Unknown"), f"Downloaded ({data['format']})", path])
+                    writer.writerow([
+                        LibraryExporter._sanitize_csv(data["title"]), 
+                        "Local File", "N/A", "N/A", 
+                        data.get("asin", "Unknown"), 
+                        f"Downloaded ({data.get('format', 'Unknown')})", 
+                        path
+                    ])
 
     @staticmethod
     def export_html(output_file, local_library, cloud_items):
@@ -75,8 +98,11 @@ class LibraryExporter:
         cloud_titles = []
 
         for item in cloud_items:
-            title = item.get("title", "Unknown")
-            cloud_titles.append(title)
+            raw_title = item.get("title", "Unknown")
+            cloud_titles.append(raw_title)
+            
+            # HTML Escape ALL injected data
+            title = html.escape(raw_title)
             
             raw_authors = item.get("authors") or []
             authors = html.escape(", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)]))
@@ -86,15 +112,17 @@ class LibraryExporter:
             for s in raw_series:
                 if isinstance(s, dict) and s.get("title"):
                     series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
-            series_str = ", ".join(series_list)
+            series_str = html.escape(", ".join(series_list))
 
             images = item.get("product_images", {})
-            img_url = images.get("500") or images.get("252") or ""
+            img_url = html.escape(images.get("500") or images.get("252") or "")
             
-            local_data = local_titles.get(title)
+            local_data = local_titles.get(raw_title)
             is_downloaded = bool(local_data)
             status_class = "downloaded" if is_downloaded else "cloud"
-            status_text = f"Downloaded ({local_data['format']})" if is_downloaded else "Cloud Only"
+            
+            local_format = local_data.get('format', 'Unknown') if local_data else 'Unknown'
+            status_text = html.escape(f"Downloaded ({local_format})") if is_downloaded else "Cloud Only"
 
             img_tag = f'<img src="{img_url}" class="cover-art" alt="Cover">' if img_url else '<div class="cover-art">No Cover Art</div>'
 
@@ -112,13 +140,16 @@ class LibraryExporter:
 
         for path, data in local_library.items():
             if data["title"] not in cloud_titles:
+                safe_title = html.escape(data.get("title", "Unknown"))
+                safe_format = html.escape(data.get('format', 'Unknown'))
+                
                 html_content += f"""
                     <div class="card">
                         <div class="cover-art">Local File</div>
                         <div class="card-content">
-                            <h3 class="title">{data["title"]}</h3>
+                            <h3 class="title">{safe_title}</h3>
                             <p class="author">Local File</p>
-                            <div class="status downloaded">Downloaded ({data['format']})</div>
+                            <div class="status downloaded">Downloaded ({safe_format})</div>
                         </div>
                     </div>
                 """

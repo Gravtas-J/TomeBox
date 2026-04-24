@@ -100,7 +100,7 @@ class AAXManagerApp:
         self.auth_save_path = self.db.get_auth_path(self.active_profile)
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.converter = AudioConverter(self.write_log)
-        self.thread_pool = AppThreadPool(logger=self.write_log)
+        self.thread_pool = AppThreadPool(logger=self.logger)
 
         self.stats_manager = StatsManager(
             self.db, 
@@ -108,7 +108,7 @@ class AAXManagerApp:
         )
         self.download_manager = DownloadManager(
             api_client=self.api_client,
-            logger=self.write_log,
+            logger=self.logger,
             library_manager=self.library_manager,
             thread_pool=self.thread_pool,  
             callbacks={
@@ -121,7 +121,7 @@ class AAXManagerApp:
         self.metadata_manager = MetadataManager(
             api_client=self.api_client,
             library_manager=self.library_manager,
-            logger=self.write_log,
+            logger=self.logger,
             covers_dir=self.covers_dir,
             callbacks={
                 "on_search_complete": self._on_scrape_search_results,
@@ -133,7 +133,7 @@ class AAXManagerApp:
         self.conversion_manager = ConversionManager(
             converter=self.converter,
             library_manager=self.library_manager,
-            logger=self.write_log,
+            logger=self.logger,
             covers_dir=self.covers_dir,
             thread_pool=self.thread_pool,
             get_drm_flags_cb=lambda path: self.api_client.get_drm_flags(
@@ -148,12 +148,12 @@ class AAXManagerApp:
             }
         )
         self.playback = PlaybackController(
-            logger=self.write_log,
+            logger=self.logger,
             on_tick_cb=self._on_playback_tick,
             on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
             on_error_cb=lambda code: self.root.after(0, self.stop_audio)
         )
-        self.system_manager = SystemManager(logger=self.write_log)
+        self.system_manager = SystemManager(logger=self.logger)
         self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
 
         self.file_path = ""
@@ -412,7 +412,7 @@ class AAXManagerApp:
             active_profile=self.active_profile,
             on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
             on_complete_cb=self._on_import_complete,
-            logger=self.write_log
+            logger=self.logger
         )
 
     def add_local_file(self):
@@ -426,7 +426,7 @@ class AAXManagerApp:
             active_profile=self.active_profile,
             on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
             on_complete_cb=self._on_import_complete,
-            logger=self.write_log
+            logger=self.logger
         )
     
     def bring_to_front(self):
@@ -778,22 +778,6 @@ class AAXManagerApp:
 
     def cancel_download(self, asin):
         self.download_manager.cancel_download(asin)
-
-    def download_title_prompt(self): ###
-        selected = self.cloud_tree.focus()
-        if not selected: return
-        item = self.cloud_tree.item(selected)
-        title = item['values'][0]
-        asin = item['values'][3]
-
-        save_dir = self.default_download_dir
-        if not save_dir:
-            save_dir = filedialog.askdirectory(title=f"Select Folder for '{title}'")
-            if not save_dir: return
-
-        self.add_queue_ui_row(asin, title)
-        self.toggle_queue_drawer(True)
-        self.download_manager.queue_download(asin, title, save_dir)
 
     def start_download_all(self):
         # We check the library manager instead of local_library directly
@@ -1332,27 +1316,6 @@ class AAXManagerApp:
                 self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
         finally:
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-
-    def update_cloud_ui(self, items):
-        for row in self.cloud_tree.get_children():
-            self.cloud_tree.delete(row)
-
-        for item in items:
-            try:
-                asin = item.get("asin", "Unknown")
-                title = item.get("title") or "Unknown"
-                
-                raw_authors = item.get("authors") or []
-                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                
-                duration_min = item.get("runtime_length_min") or 0
-                hours, mins = divmod(duration_min, 60)
-                duration_str = f"{hours}h {mins}m"
-                
-                self.cloud_tree.insert("", "end", values=(title, authors, duration_str, asin))
-            except Exception as e:
-                if self.debug_mode.get():
-                    self.logger.info(f"DEBUG - Failed to parse UI for item: {e}")
 
     def remove_local_file(self):
         selected = self.library_tree.focus()
