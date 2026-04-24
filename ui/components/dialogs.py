@@ -5,7 +5,7 @@ import qrcode
 from PIL import Image, ImageTk
 
 def open_auth_window(app):
-    if hasattr(app, 'auth_window') and app.auth_window.winfo_exists():
+    if getattr(app, 'auth_window', None) and app.auth_window.winfo_exists():
         app.auth_window.lift()
         app.auth_window.focus_set()
         return
@@ -65,7 +65,7 @@ def open_chapter_window(app):
         messagebox.showinfo("Chapters", "No chapter data available. Please load an audiobook first.")
         return
 
-    if hasattr(app, 'chapter_win') and app.chapter_win.winfo_exists():
+    if getattr(app, 'chapter_win', None) and app.chapter_win.winfo_exists():
         app.chapter_win.lift()
         app.chapter_win.focus_set()
         return
@@ -113,7 +113,7 @@ def open_chapter_window(app):
     tree.bind("<Double-1>", lambda e: app.on_chapter_select(tree))
 
 def open_sleep_menu(app):
-    if hasattr(app, 'sleep_menu_popup') and app.sleep_menu_popup.winfo_exists():
+    if getattr(app, 'sleep_menu_popup', None) and app.sleep_menu_popup.winfo_exists():
         app.sleep_menu_popup.destroy()
         return
 
@@ -167,7 +167,7 @@ def open_sleep_menu(app):
     app.sleep_menu_popup.focus_set()
 
 def open_achievements_window(app):
-    if hasattr(app, 'ach_window') and app.ach_window.winfo_exists():
+    if getattr(app, 'ach_window', None) and app.ach_window.winfo_exists():
         app.ach_window.lift()
         app.ach_window.focus_set()
         return

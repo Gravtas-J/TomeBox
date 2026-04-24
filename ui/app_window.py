@@ -26,12 +26,18 @@ import pystray
 from pystray import MenuItem as item
 import sys
 import socket
+from api.audible_client import AudibleClient
+
+from ui.components.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
+from ui.components.theme import apply_theme
+from ui.components.menu_bar import setup_menu_bar
+from ui.components.player_bar import setup_player_bar
+from ui.components.library_view import setup_library_view
+from ui.components.sidebar import setup_sidebar
+
 from core.database import DatabaseManager
 from core.converter import AudioConverter
-from api.audible_client import AudibleClient
 from core.player import AudioPlayer
-from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
-from ui.theme import apply_theme
 from core.exporter import LibraryExporter
 from core.controllers.library_manager import LibraryManager
 from core.controllers.playback_controller import PlaybackController
@@ -380,7 +386,6 @@ class AAXManagerApp:
             on_error_cb=on_error
         )
 
-
     def has_enough_disk_space(self, target_dir, required_bytes):
         import shutil
         try:
@@ -593,297 +598,6 @@ class AAXManagerApp:
                 
             time.sleep(2)
 
-    def build_menu_bar(self):
-        self.root.config(menu="")
-        self.menu_frame = ttk.Frame(self.root)
-        self.menu_frame.pack(side=tk.TOP, fill="x")
-
-        self.file_menubutton = ttk.Menubutton(self.menu_frame, text="File")
-        self.file_menubutton.pack(side=tk.LEFT, padx=5, pady=2)
-
-        self.file_menu = tk.Menu(self.file_menubutton, tearoff=0, relief="flat")
-        self.file_menubutton.config(menu=self.file_menu)
-        
-        self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
-        self.file_menu.add_command(label="Authentication & Profiles", command=lambda: open_auth_window(self))
-        self.file_menu.add_separator()
-        self.file_menu.add_checkbutton(
-            label="Minimize to Tray on Close", 
-            variable=self.minimize_to_tray_var, 
-            command=self.save_tray_setting
-        )
-        self.file_menu.add_separator()
-
-        # Appearance Sub-Menu
-        self.appearance_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
-        self.file_menu.add_cascade(label="Appearance", menu=self.appearance_menu)
-        
-        self.palette_var = tk.StringVar(value=self.settings.get("classic_palette", "light"))
-        
-        self.appearance_menu.add_radiobutton(label="Light Default", variable=self.palette_var, value="light", command=lambda: self.apply_classic_palette("light"))
-        self.appearance_menu.add_radiobutton(label="Dark Charcoal", variable=self.palette_var, value="dark", command=lambda: self.apply_classic_palette("dark"))
-        self.appearance_menu.add_radiobutton(label="Terminal Green", variable=self.palette_var, value="terminal", command=lambda: self.apply_classic_palette("terminal"))
-        self.appearance_menu.add_separator()
-        self.appearance_menu.add_radiobutton(label="Solarized Dark", variable=self.palette_var, value="solarized_dark", command=lambda: self.apply_classic_palette("solarized_dark"))
-        self.appearance_menu.add_radiobutton(label="Solarized Light", variable=self.palette_var, value="solarized_light", command=lambda: self.apply_classic_palette("solarized_light"))
-        self.appearance_menu.add_separator()
-        self.appearance_menu.add_radiobutton(label="Dracula", variable=self.palette_var, value="dracula", command=lambda: self.apply_classic_palette("dracula"))
-        self.appearance_menu.add_radiobutton(label="Nordic Slate", variable=self.palette_var, value="nord", command=lambda: self.apply_classic_palette("nord"))
-        self.appearance_menu.add_radiobutton(label="Cyberpunk", variable=self.palette_var, value="cyberpunk", command=lambda: self.apply_classic_palette("cyberpunk"))
-
-        self.file_menu.add_separator()
-
-        # Export Sub-Menu
-        self.export_menu = tk.Menu(self.file_menu, tearoff=0, relief="flat")
-        self.file_menu.add_cascade(label="Export Library", menu=self.export_menu)
-        self.export_menu.add_command(label="Export to CSV", command=self.export_csv_worker)
-        self.export_menu.add_command(label="Export to HTML Page", command=self.export_html_worker)
-
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.on_closing)
-
-        self.help_menubutton = ttk.Menubutton(self.menu_frame, text="Donate")
-        self.help_menubutton.pack(side=tk.LEFT, padx=5, pady=2)
-
-        self.help_menu = tk.Menu(self.help_menubutton, tearoff=0, relief="flat")
-        self.help_menubutton.config(menu=self.help_menu)
-        
-        self.help_menu.add_command(label="Support the Developer ☕", command=self.open_support_link)
-
-        #Achievement menu
-        self.file_menu.add_command(label="My Achievements", command=lambda: open_achievements_window(self))
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="Enable Web Server", command=self.toggle_web_server)
-        self.file_menu.add_separator()
-
-    def build_info_components(self, parent):
-        self.cover_frame = ttk.Frame(parent)
-        self.cover_frame.pack(fill="x", padx=5, pady=10)
-        
-        self.cover_label = ttk.Label(self.cover_frame, text="No Cover Art")
-        self.cover_label.pack(pady=5)
-        
-        self.author_label = ttk.Label(self.cover_frame, text="", font=("Segoe UI", 10, "italic"))
-        self.author_label.pack(pady=2)
-        
-        self.current_cover_photo = None
-
-    def build_library_components(self, parent):
-        self.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
-        self.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
-
-        lib_frame = ttk.LabelFrame(self.main_paned, text="", padding=10)
-        self.main_paned.add(lib_frame, weight=1)
-
-        self.queue_frame = ttk.LabelFrame(self.main_paned, text="Active Downloads", padding=10)
-        
-        queue_controls = ttk.Frame(self.queue_frame)
-        queue_controls.pack(fill="x", pady=(0, 5))
-        ttk.Button(queue_controls, text="Cancel All Downloads", command=self.cancel_all_downloads).pack(side=tk.RIGHT)
-
-        # sv_ttk background color applied to the canvas
-        self.queue_canvas = tk.Canvas(self.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
-        queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_canvas.yview)
-        
-
-        # sv_ttk background color applied to the inner frame
-        self.queue_inner = tk.Frame(self.queue_canvas, bg="#1c1c1c")
-
-        self.queue_inner.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
-        self.queue_canvas.create_window((0, 0), window=self.queue_inner, anchor="nw")
-        self.queue_canvas.configure(yscrollcommand=queue_scroll.set)
-
-        self.queue_canvas.pack(side="left", fill="both", expand=True)
-        queue_scroll.pack(side="right", fill="y")
-
-        self.queue_ui_elements = {}
-
-        filter_frame = ttk.Frame(lib_frame)
-        filter_frame.pack(fill="x", pady=(0, 5))
-
-        ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *args: self.refresh_library_ui()) 
-        search_entry = ttk.Entry(filter_frame, textvariable=self.search_var, width=35)
-        search_entry.pack(side=tk.LEFT, padx=(0, 20))
-
-        ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.filter_var = tk.StringVar(value="All")
-        filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
-        filter_combo.pack(side=tk.LEFT)
-        filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
-
-        ttk.Label(filter_frame, text="Shelf:").pack(side=tk.LEFT, padx=(10, 5))
-        self.shelf_filter_var = tk.StringVar(value="All Shelves")
-        self.shelf_combo = ttk.Combobox(filter_frame, textvariable=self.shelf_filter_var, state="readonly", width=15)
-        self.shelf_combo.pack(side=tk.LEFT)
-        self.shelf_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_library_ui())
-
-        self.view_btn = ttk.Button(filter_frame, text="Grid View", command=self.toggle_library_view)
-        self.view_btn.pack(side=tk.RIGHT, padx=5)
-
-        self.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=self.toggle_queue_visibility)
-        self.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
-
-        self.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=self.start_download_all)
-        self.dl_all_btn.pack(side=tk.RIGHT, padx=(5, 5))
-
-        tree_frame = ttk.Frame(lib_frame)
-        tree_frame.pack(fill="both", expand=True, pady=5)
-
-        scroll = ttk.Scrollbar(tree_frame)
-        scroll.pack(side=tk.RIGHT, fill="y")
-
-        self.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status"), show="headings", yscrollcommand=scroll.set)
-        scroll.config(command=self.library_tree.yview)
-        self.library_tree.bind("<<TreeviewSelect>>", self.on_item_select)
-        
-        self.current_view_mode = "list"
-        self.grid_images_ref = [] 
-        
-        
-        self.grid_canvas = tk.Canvas(tree_frame, bg="#1c1c1c", highlightthickness=0)
-        self.grid_inner = tk.Frame(self.grid_canvas, bg="#1c1c1c")
-        self.grid_window_id = self.grid_canvas.create_window((0, 0), window=self.grid_inner, anchor="nw")
-        
-        
-        self.grid_canvas.configure(yscrollcommand=scroll.set)
-        self.grid_inner.bind("<Configure>", lambda e: self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all")))
-        
-        
-        self.grid_canvas.bind("<Configure>", self.on_canvas_resize)
-        self.root.bind_all("<MouseWheel>", self._on_grid_scroll)  
-        self.root.bind_all("<Button-4>", self._on_grid_scroll)    
-        self.root.bind_all("<Button-5>", self._on_grid_scroll)    
-        self.root.bind_all("<Button-3>", self.show_context_menu)
-
-        self.empty_state_frame = tk.Frame(tree_frame)
-        self.empty_state_img_label = ttk.Label(self.empty_state_frame)
-        self.empty_state_img_label.pack(pady=(80, 20))
-        
-
-        empty_text = (
-            "Your library is completely empty.\n\n"
-            "To get started:\n"
-            "1. Navigate to 'File -> Authentication & Profiles' to link your Audible account.\n"
-            "2. Download your library or drag and drop .aax or .m4b files directly into this window to import local media."
-        )
-        ttk.Label(self.empty_state_frame, text=empty_text, justify="center", font=("Segoe UI", 12)).pack()
-
-        for col in self.library_tree["columns"]:
-            self.library_tree.heading(col, text=col, command=lambda _col=col: self.sort_treeview(self.library_tree, _col, False))
-            
-        self.library_tree.column("Title", width=250)
-        self.library_tree.column("Author", width=120)
-        self.library_tree.column("Series", width=120)
-        self.library_tree.column("Duration", width=70)
-        self.library_tree.column("ASIN", width=90)
-        self.library_tree.column("Status", width=110)
-        self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        self.library_tree.bind("<Double-1>", self.master_play)
-
-        btn_frame = ttk.Frame(lib_frame)
-        btn_frame.pack(fill="x", pady=2)
-        ttk.Button(btn_frame, text="Refresh Cloud", command=self.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Download Selected", command=lambda: self.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Convert Selected", command=lambda: self.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Convert All", command=self.start_convert_all_thread).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Manage Shelves", command=self.manage_shelves_prompt).pack(side=tk.LEFT, padx=5)
-
-        local_btn_frame = ttk.Frame(lib_frame)
-        local_btn_frame.pack(fill="x", pady=2)
-        ttk.Button(local_btn_frame, text="Add Local File", command=self.add_local_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(local_btn_frame, text="Remove from List", command=self.remove_local_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(local_btn_frame, text="Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape")).pack(side=tk.LEFT, padx=5)
-
-        dl_prog_frame = ttk.Frame(lib_frame)
-        dl_prog_frame.pack(fill="x", padx=5)
-        
-        self.dl_status_var = tk.StringVar(value="Idle")
-        self.dl_progress_var = tk.DoubleVar()
-        ttk.Label(dl_prog_frame, textvariable=self.dl_status_var).pack(side=tk.TOP, anchor="w")
-        ttk.Progressbar(dl_prog_frame, variable=self.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
-
-        self.refresh_library_ui()
-
-    def build_player_components(self, parent):
-        play_frame = ttk.LabelFrame(parent, text="Playback", padding=10)
-        play_frame.pack(fill="x", expand=True, padx=5, pady=5)
-
-        self.is_playing = False
-        self.is_paused = False
-        self.chapter_duration = 0
-        self.current_play_time = 0
-
-        top_row = ttk.Frame(play_frame)
-        top_row.pack(fill="x", pady=2)
-        
-        self.info_label = ttk.Label(top_row, text="", justify="left")
-        self.info_label.pack(side=tk.LEFT, padx=5)
-        
-        self.time_label = ttk.Label(top_row, text="00:00 / 00:00")
-        self.time_label.pack(side=tk.RIGHT, padx=5)
-
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(play_frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill="x", padx=5, pady=5)
-
-        controls_frame = ttk.Frame(play_frame)
-        controls_frame.pack(pady=5)
-
-        ttk.Button(controls_frame, text="<< Prev Chapter", width=14, command=self.prev_chapter).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="-30s", width=5, command=lambda: self.seek_audio(-30)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Play", width=8, command=self.master_play).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Pause", width=8, command=self.pause_audio).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="+30s", width=5, command=lambda: self.seek_audio(30)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="Next Chapter >>", width=14, command=self.next_chapter).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls_frame, text="🔖 Bookmark", width=12, command=self.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Button(controls_frame, text="📑 Chapters", command=lambda: open_chapter_window(self)).pack(side=tk.LEFT, padx=(15, 2))
-
-        self.playback_speed = tk.StringVar(value="1.0x")
-        speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
-        
-        speed_menu = ttk.Combobox(controls_frame, textvariable=self.playback_speed, values=speed_options, state="readonly", width=5)
-        speed_menu.bind("<<ComboboxSelected>>", self.on_speed_change)
-        speed_menu.pack(side=tk.LEFT, padx=10)
-
-        self.volume_var = tk.DoubleVar(value=100.0)
-        vol_frame = ttk.Frame(controls_frame)
-        vol_frame.pack(side=tk.LEFT, padx=5)
-        ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
-        self.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.volume_var, command=self.on_volume_change, length=80)
-        self.vol_slider.pack(side=tk.LEFT)
-
-        timer_frame = ttk.Frame(controls_frame)
-        timer_frame.pack(side=tk.LEFT, padx=15)
-        
-        self.timer_btn = ttk.Button(timer_frame, text="Sleep: Off", command=lambda: open_sleep_menu(self), width=16)
-        self.timer_btn.pack(side=tk.LEFT)
-        
-        self.timer_countdown_var = tk.StringVar(value="")
-        ttk.Label(timer_frame, textvariable=self.timer_countdown_var, width=5).pack(side=tk.LEFT)
-
-        self.voice_boost_var = tk.BooleanVar(value=False)
-        self.skip_silence_var = tk.BooleanVar(value=False)
-        
-        filters_frame = ttk.Frame(play_frame)
-        filters_frame.pack(fill="x", pady=(5, 0))
-        
-        ttk.Label(filters_frame, text="Filters:").pack(side=tk.LEFT, padx=(5, 10))
-        
-        ttk.Checkbutton(
-            filters_frame, text="Voice Boost (Compressor)", 
-            variable=self.voice_boost_var, command=self.on_filter_change
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Checkbutton(
-            filters_frame, text="Skip Silence", 
-            variable=self.skip_silence_var, command=self.on_filter_change
-        ).pack(side=tk.LEFT, padx=5)
-
     def build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
         
@@ -896,30 +610,6 @@ class AAXManagerApp:
         self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
         self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
         self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
-
-    def build_bookmarks_components(self, parent):
-        self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
-        self.bm_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        scroll = ttk.Scrollbar(self.bm_frame)
-        scroll.pack(side=tk.RIGHT, fill="y")
-
-        self.bm_tree = ttk.Treeview(self.bm_frame, columns=("Time", "Note"), show="headings", yscrollcommand=scroll.set, height=5)
-        self.bm_tree.heading("Time", text="Time")
-        self.bm_tree.heading("Note", text="Note")
-        
-        self.bm_tree.column("Time", width=140, anchor="w", stretch=False)
-        self.bm_tree.column("Note", width=150, anchor="w")
-        self.bm_tree.pack(fill="both", expand=True)
-
-        scroll.config(command=self.bm_tree.yview)
-
-        # Double click to jump to the bookmark
-        self.bm_tree.bind("<Double-1>", self.jump_to_bookmark)
-        
-        btn_frame = ttk.Frame(self.bm_frame)
-        btn_frame.pack(fill="x", pady=(5, 0))
-        ttk.Button(btn_frame, text="Delete Selected", command=self.delete_bookmark).pack(side=tk.RIGHT)
 
     def show_context_menu(self, event):
         # If we are in the list view, select the item under the cursor first
@@ -957,8 +647,6 @@ class AAXManagerApp:
             self.current_play_time = 0.0
             
             self.play_chapter()
-
-
 
     def on_item_select(self, event=None):
         if self.current_view_mode == "list":
@@ -1159,6 +847,7 @@ class AAXManagerApp:
 
             self.settings[f"last_played_{self.active_profile}"] = self.file_path
             self.db.save_settings(self.settings)
+    
     def sync_playhead_from_remote(self, abs_position):
         """Called by the web server when the phone updates the current book's time."""
         try:
@@ -1189,8 +878,6 @@ class AAXManagerApp:
         last_path = self.settings.get(f"last_played_{self.active_profile}")
         if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
             self.load_specific_file(last_path)
-
-
     
     def load_cloud_cache(self):
         if os.path.exists(self.cloud_cache_path):
@@ -1394,7 +1081,6 @@ class AAXManagerApp:
         else:
             self.main_paned.add(self.queue_frame, weight=0)
 
-
     def toggle_queue_drawer(self, show=True):
         current_panes = self.main_paned.panes()
         queue_str = str(self.queue_frame)
@@ -1581,7 +1267,9 @@ class AAXManagerApp:
         tree.heading(col, command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
 
     def setup_ui(self):
-        self.build_menu_bar() # NEW
+        setup_menu_bar(self)
+        setup_player_bar(self)
+        
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -1603,10 +1291,8 @@ class AAXManagerApp:
         bottom_panel = tk.Frame(main_vbox)
         bottom_panel.grid(row=1, column=0, sticky="ew")
 
-        self.build_library_components(left_panel)
-        self.build_info_components(right_panel)
-        self.build_bookmarks_components(right_panel)
-        self.build_player_components(bottom_panel)
+        setup_library_view(self, left_panel)
+        setup_sidebar(self, right_panel)
 
     def export_csv_worker(self):
         output_file = filedialog.asksaveasfilename(
@@ -1855,7 +1541,6 @@ class AAXManagerApp:
                 self.logger.warning(f"Failed to dynamically load auth for {owner}: {e}")
         
         return ["-activation_bytes", self.auth_bytes.get().strip()]
-            
 
     def remove_local_file(self):
         selected = self.library_tree.focus()
@@ -2320,6 +2005,22 @@ class AAXManagerApp:
             percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
             self.progress_var.set(percent)
 
+    def on_progress_click(self, event):
+        if not hasattr(self, 'chapter_duration') or self.chapter_duration <= 0:
+            return
+            
+        # Calculate percentage based on where the mouse clicked relative to the width
+        click_x = event.x
+        bar_width = self.progress_bar.winfo_width()
+        
+        if bar_width > 0:
+            percent = click_x / bar_width
+            target_time = self.chapter_duration * percent
+            
+            # Since your seek method takes an offset, we calculate the difference
+            offset = target_time - self.current_play_time
+            self.seek(offset)
+
     def on_speed_change(self, event=None):
         speed_val = float(self.playback_speed.get().replace("x", ""))
         self.playback.set_speed(speed_val)
@@ -2404,4 +2105,3 @@ class AAXManagerApp:
         if self.chapters:
             title = self.chapters[self.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.current_chapter_idx + 1}")
             self.info_label.config(text=f"Playing:\n{title}")
-
