@@ -190,3 +190,41 @@ class MetadataManager:
                     self.on_display_ready(filepath, None, authors, "Failed to load metadata")
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def sync_missing_covers(self, on_complete_cb=None):
+        """Background worker to download missing covers for cloud items."""
+        def worker():
+            self.logger("Starting background cover sync...")
+            covers_downloaded = 0
+            
+            for item in getattr(self.library_manager, 'cloud_items', []):
+                asin = item.get("asin")
+                if not asin: continue
+                    
+                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+                if os.path.exists(cover_path):
+                    continue 
+                    
+                images = item.get("product_images", {})
+                img_url = images.get("500") or images.get("252")
+                
+                if img_url:
+                    try:
+                        img_data = requests.get(img_url, timeout=10).content
+                        with open(cover_path, "wb") as f:
+                            f.write(img_data)
+                        covers_downloaded += 1
+                    except requests.RequestException as e:
+                        self.logger(f"Network error downloading cover for {asin}: {e}")
+                    except Exception as e:
+                        self.logger(f"Unexpected error saving cover for {asin}: {e}")
+                        
+            if covers_downloaded > 0:
+                self.logger(f"Downloaded {covers_downloaded} new covers.")
+                if on_complete_cb:
+                    on_complete_cb()
+                    
+        import threading
+        import os
+        import requests
+        threading.Thread(target=worker, daemon=True).start()

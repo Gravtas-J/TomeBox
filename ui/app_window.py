@@ -540,47 +540,6 @@ class AAXManagerApp:
         # Schedule the next check in 15 minutes (900000 milliseconds)
         self.root.after(900000, self.run_background_sync)
 
-    # def db_monitor_worker(self):
-    #     import time
-    #     import os
-        
-    #     while True:
-    #         ui_needs_refresh = False
-            
-    #         # 1. Check if any actual audio files were deleted from the hard drive
-    #         missing_paths = [path for path in list(self.library_manager.local_library.keys()) if not os.path.exists(path)]
-            
-    #         if missing_paths:
-    #             for path in missing_paths:
-    #                 del self.library_manager.local_library[path]
-                    
-    #             self.logger.info(f"Detected {len(missing_paths)} deleted files. Updating library...")
-                
-    #             # Save via the manager's locked method
-    #             self.db.save_local_db(self.library_manager.local_library)
-    #             ui_needs_refresh = True
-
-    #         # 2. Check if the SQLite database file was edited externally
-    #         if hasattr(self.db, 'db_path') and os.path.exists(self.db.db_path):
-    #             try:
-    #                 current_mtime = os.path.getmtime(self.db.db_path)
-                    
-    #                 if self.db.last_db_mtime == 0:
-    #                     self.db.last_db_mtime = current_mtime
-    #                 elif current_mtime > self.db.last_db_mtime:
-    #                     self.logger.info("External DB change detected. Syncing local library...")
-    #                     self.db.last_db_mtime = current_mtime
-    #                     self.library_manager.local_library = self.db.load_local_db()
-    #                     ui_needs_refresh = True
-    #             except Exception as e:
-    #                 self.logger.error(f"DB Monitor Error: {e}")
-            
-    #         # Redraw the screen if either of the above checks triggered a change
-    #         if ui_needs_refresh:
-    #             self.root.after(0, self.refresh_library_ui)
-                
-    #         time.sleep(2)
-
     def build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
         
@@ -742,40 +701,6 @@ class AAXManagerApp:
             if self.tray_icon:
                 self.tray_icon.stop()
             self.on_closing()
-
-    # def silent_sync_worker(self):
-    #     if not self.api_client.auth:
-    #         return
-
-    #     try:
-    #         self.logger.info("Background sync: Polling Audible API...")
-    #         client = audible.Client(auth=self.api_client.auth)
-    #         response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
-    #         new_items = response.get("items", [])
-            
-    #         self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
-            
-    #         if len(new_items) != len(self.library_manager.cloud_items):
-    #             self.logger.info(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
-    #             self.library_manager.cloud_items = new_items
-    #             self.save_cloud_cache()
-    #             self.root.after(0, self.refresh_library_ui)
-    #         else:
-    #             self.logger.info("Background sync: No changes detected.")
-                
-    #     except (httpx.ConnectError, httpx.TimeoutException) as e:
-    #         self.logger.error(f"Network offline: {e}")
-    #         self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
-            
-    #     except httpx.HTTPStatusError as e:
-    #         self.logger.error(f"Audible API Error: {e.response.status_code}")
-    #         if e.response.status_code == 429:
-    #             self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
-    #         elif e.response.status_code >= 500:
-    #             self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
-                
-    #     except Exception as e:
-    #         self.logger.info(f"Background sync failed silently: {e}")
     
     def on_closing(self):
         try:
@@ -813,30 +738,23 @@ class AAXManagerApp:
         state = self.playback.get_current_state()
         if state:
             self.library_manager.save_playback_state(state, self.active_profile)
-
+    
     def sync_playhead_from_remote(self, abs_position):
         """Called by the web server when the phone updates the current book's time."""
         try:
-            # Don't interrupt if the PC is actively playing audio right now
-            if getattr(self.player, 'is_playing', False):
-                return 
+            # Let the playback controller handle the chapter/time math
+            if self.playback.seek_to_absolute(abs_position):
                 
-            # Update the PC's internal memory so it doesn't save stale data on close
-            if self.chapters and self.chapters:
-                for idx, ch in enumerate(self.chapters):
-                    start = float(ch.get("start_time", 0))
-                    end = float(ch.get("end_time", 0))
-                    if start <= abs_position <= end:
-                        self.current_chapter_idx = idx
-                        self.current_play_time = abs_position - start
-                        break
-            
-            # Visually move the progress bar on the PC screen
-            if hasattr(self, 'progress_var') and self.chapters:
-                total_duration = float(self.chapters[-1].get("end_time", 0))
-                if total_duration > 0:
-                    self.progress_var.set((abs_position / total_duration) * 100)
-                    
+                # Keep local UI variables synced with the controller's new reality
+                self.current_chapter_idx = self.playback.current_chapter_idx
+                self.current_play_time = self.playback.current_play_time
+                
+                # Visually move the progress bar on the PC screen
+                if hasattr(self, 'progress_var') and self.chapters:
+                    total_duration = float(self.chapters[-1].get("end_time", 0))
+                    if total_duration > 0:
+                        self.progress_var.set((abs_position / total_duration) * 100)
+                        
         except Exception as e:
             self.logger.error(f"Failed to sync remote playhead: {e}")
             
@@ -1397,7 +1315,9 @@ class AAXManagerApp:
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
-            self.thread_pool.submit(self.background_cover_downloader)
+            self.metadata_manager.sync_missing_covers(
+                on_complete_cb=lambda: self.root.after(0, lambda: self.refresh_library_ui() if self.current_view_mode == 'grid' else None)
+            )
             
         except httpx.ConnectError:
             self.logger.error("Network offline during library sync.")
@@ -1412,38 +1332,6 @@ class AAXManagerApp:
                 self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
         finally:
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
-
-    def background_cover_downloader(self):
-        self.logger.info("Starting background cover sync...")
-        covers_downloaded = 0
-        
-        for item in self.library_manager.cloud_items:
-            asin = item.get("asin")
-            if not asin: continue
-                
-            cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
-            if os.path.exists(cover_path):
-                continue 
-                
-            images = item.get("product_images", {})
-            img_url = images.get("500") or images.get("252")
-            
-            if img_url:
-                try:
-                    img_data = requests.get(img_url, timeout=10).content
-                    with open(cover_path, "wb") as f:
-                        f.write(img_data)
-                    covers_downloaded += 1
-                except requests.RequestException as e:
-                    self.logger.warning(f"Network error downloading cover for {asin}: {e}")
-                except Exception as e:
-                    self.logger.error(f"Unexpected error saving cover for {asin}: {e}")
-                    
-        if covers_downloaded > 0:
-            self.logger.info(f"Downloaded {covers_downloaded} new covers.")
-
-            if self.current_view_mode == 'grid':
-                self.root.after(0, self.refresh_library_ui)
 
     def update_cloud_ui(self, items):
         for row in self.cloud_tree.get_children():

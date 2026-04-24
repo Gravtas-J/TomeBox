@@ -192,3 +192,31 @@ class PlaybackController:
             "rel_time": self.current_play_time,
             "abs_time": abs_time
         }
+    
+    def seek_to_absolute(self, abs_position):
+        """Calculates and sets chapter index and relative time from an absolute position."""
+        if self.is_playing:
+            return False # Don't interrupt active playback on the host machine
+            
+        if not self.chapters:
+            return False
+            
+        for idx, ch in enumerate(self.chapters):
+            start = float(ch.get("start_time", 0))
+            end = float(ch.get("end_time", 0))
+            if start <= abs_position <= end:
+                self.current_chapter_idx = idx
+                self.current_play_time = abs_position - start
+                self.chapter_duration = end - start
+                return True
+                
+        # Catch-all if position somehow overshoots the last chapter
+        if abs_position > float(self.chapters[-1].get("end_time", 0)):
+            self.current_chapter_idx = len(self.chapters) - 1
+            start = float(self.chapters[-1].get("start_time", 0))
+            end = float(self.chapters[-1].get("end_time", 0))
+            self.current_play_time = end - start
+            self.chapter_duration = end - start
+            return True
+            
+        return False
