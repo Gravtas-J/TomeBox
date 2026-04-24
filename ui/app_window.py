@@ -987,11 +987,15 @@ class AAXManagerApp:
         # 4. Handle Empty State
         is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
 
+        # 4. Handle Empty State
+        is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
+
         if is_completely_empty:
             self.library_tree.pack_forget()
             self.grid_canvas.pack_forget()
+            self.empty_state_frame.pack(fill="both", expand=True)
         else:
-                
+            self.empty_state_frame.pack_forget()
             if self.current_view_mode == "list":
                 self.grid_canvas.pack_forget()
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
