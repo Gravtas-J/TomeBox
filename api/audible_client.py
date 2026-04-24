@@ -129,3 +129,25 @@ class AudibleClient:
             a_key, a_iv = find_key_iv(decrypted_voucher)
 
         return download_url, a_key, a_iv
+    
+    def get_drm_flags(self, filepath, local_data, active_profile, auth_bytes, data_dir, logger=None):
+        a_key = local_data.get("audible_key")
+        a_iv = local_data.get("audible_iv")
+        if a_key and a_iv:
+            return ["-audible_key", a_key, "-audible_iv", a_iv]
+
+        owner = local_data.get("owner", active_profile)
+        if owner == active_profile and auth_bytes:
+            return ["-activation_bytes", auth_bytes]
+            
+        owner_auth_path = os.path.join(data_dir, f"auth_{owner}.json")
+        if os.path.exists(owner_auth_path):
+            try:
+                temp_auth = audible.Authenticator.from_file(owner_auth_path)
+                dynamic_bytes = temp_auth.get_activation_bytes()
+                if dynamic_bytes:
+                    return ["-activation_bytes", dynamic_bytes]
+            except Exception as e:
+                if logger: logger.warning(f"Failed to dynamically load auth for {owner}: {e}")
+        
+        return ["-activation_bytes", auth_bytes] if auth_bytes else []

@@ -45,6 +45,7 @@ from core.controllers.download_manager import DownloadManager
 from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
+from core.controllers.stats_manager import StatsManager
 
 class AAXManagerApp:
     def __init__(self, root, base_dir):
@@ -100,6 +101,11 @@ class AAXManagerApp:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.converter = AudioConverter(self.write_log)
         self.thread_pool = AppThreadPool(logger=self.write_log)
+
+        self.stats_manager = StatsManager(
+            self.db, 
+            callbacks={"on_achievement": lambda title, desc: self.root.after(0, lambda: show_achievement_toast(self, title, desc))}
+        )
         self.download_manager = DownloadManager(
             api_client=self.api_client,
             logger=self.write_log,
@@ -130,7 +136,9 @@ class AAXManagerApp:
             logger=self.write_log,
             covers_dir=self.covers_dir,
             thread_pool=self.thread_pool,
-            get_drm_flags_cb=lambda path: self.get_drm_flags(path) if path.endswith((".aax", ".aaxc")) else None,
+            get_drm_flags_cb=lambda path: self.api_client.get_drm_flags(
+                path, self.library_manager.local_library.get(path, {}), self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir, self.logger
+            ),
             callbacks={
                 "on_status": lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                 "on_progress": lambda pct: self.root.after(0, self.dl_progress_var.set, pct),
@@ -217,7 +225,11 @@ class AAXManagerApp:
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
         threading.Thread(target=lambda: self.system_manager.cleanup_orphaned_files(self.settings.get("download_dir", "")), daemon=True).start()
-        threading.Thread(target=self.db_monitor_worker, daemon=True).start()
+        threading.Thread(
+            target=self.library_manager.monitor_local_files, 
+            args=(self.logger, lambda: self.root.after(0, self.refresh_library_ui)), 
+            daemon=True
+        ).start()
 
         if "stats" not in self.settings:
             self.settings["stats"] = {
@@ -308,7 +320,7 @@ class AAXManagerApp:
     def _on_dl_complete(self, filepath, title, post_action):
         """Called when a file successfully finishes saving to disk."""
         def update():
-            self.add_stat("books_downloaded", 1)
+            self.stats_manager.add_stat("books_downloaded", 1)
             self.refresh_library_ui()
             
             if post_action in ["play", "convert"]:
@@ -344,7 +356,7 @@ class AAXManagerApp:
             # Achievement Tracking
             self.session_listen_buffer += real_time_delta
             if self.session_listen_buffer >= 60.0:
-                self.add_stat("seconds_listened", self.session_listen_buffer)
+                self.stats_manager.add_stat("seconds_listened", self.session_listen_buffer)
                 self.session_listen_buffer = 0.0
 
             # Database Saving (Every ~10 seconds)
@@ -386,27 +398,6 @@ class AAXManagerApp:
             on_error_cb=on_error
         )
 
-    def has_enough_disk_space(self, target_dir, required_bytes):
-        import shutil
-        try:
-            # If the directory doesn't exist yet, check the drive it belongs to
-            check_dir = target_dir
-            while not os.path.exists(check_dir) and os.path.dirname(check_dir) != check_dir:
-                check_dir = os.path.dirname(check_dir)
-                
-            total, used, free = shutil.disk_usage(check_dir)
-            return free > required_bytes
-        except Exception as e:
-            self.logger.error(f"Disk space check failed: {e}")
-            return True # Fail open so we don't accidentally block valid operations
-
-    def add_stat(self, stat_name, amount=1):
-        stats = self.settings.get("stats", {})
-        stats[stat_name] = stats.get(stat_name, 0) + amount
-        self.settings["stats"] = stats
-        self.db.save_settings(self.settings)
-        self.check_achievements()
-
     def on_file_drop(self, event):
         # 1. Parse the dropped string into a tuple of file paths
         raw_files = self.root.tk.splitlist(event.data)
@@ -437,19 +428,6 @@ class AAXManagerApp:
             on_complete_cb=self._on_import_complete,
             logger=self.write_log
         )
-
-    def check_achievements(self):
-        stats = self.settings.get("stats", {})
-        unlocked = stats.get("unlocked_achievements", [])
-        
-        for ach_id, data in self.achievements.items():
-            if ach_id not in unlocked:
-                current_val = stats.get(data["type"], 0)
-                if current_val >= data["threshold"]:
-                    unlocked.append(ach_id)
-                    self.settings["stats"]["unlocked_achievements"] = unlocked
-                    self.db.save_settings(self.settings)
-                    show_achievement_toast(self, data["title"], data["desc"])
     
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
@@ -553,50 +531,55 @@ class AAXManagerApp:
                 webbrowser.open("https://ffmpeg.org/download.html")
 
     def run_background_sync(self):
-        self.thread_pool.submit(self.silent_sync_worker)
+        self.thread_pool.submit(
+            self.library_manager.silent_cloud_sync, 
+            self.logger, 
+            lambda msg: self.root.after(0, lambda: self.dl_status_var.set(msg)), 
+            lambda: self.root.after(0, self.refresh_library_ui)
+        )
         # Schedule the next check in 15 minutes (900000 milliseconds)
         self.root.after(900000, self.run_background_sync)
-    
-    def db_monitor_worker(self):
-        import time
-        import os
-        
-        while True:
-            ui_needs_refresh = False
-            
-            # 1. Check if any actual audio files were deleted from the hard drive
-            missing_paths = [path for path in list(self.library_manager.local_library.keys()) if not os.path.exists(path)]
-            
-            if missing_paths:
-                for path in missing_paths:
-                    del self.library_manager.local_library[path]
-                    
-                self.logger.info(f"Detected {len(missing_paths)} deleted files. Updating library...")
-                
-                # Save via the manager's locked method
-                self.db.save_local_db(self.library_manager.local_library)
-                ui_needs_refresh = True
 
-            # 2. Check if the SQLite database file was edited externally
-            if hasattr(self.db, 'db_path') and os.path.exists(self.db.db_path):
-                try:
-                    current_mtime = os.path.getmtime(self.db.db_path)
-                    
-                    if self.db.last_db_mtime == 0:
-                        self.db.last_db_mtime = current_mtime
-                    elif current_mtime > self.db.last_db_mtime:
-                        self.logger.info("External DB change detected. Syncing local library...")
-                        self.db.last_db_mtime = current_mtime
-                        self.library_manager.local_library = self.db.load_local_db()
-                        ui_needs_refresh = True
-                except Exception as e:
-                    self.logger.error(f"DB Monitor Error: {e}")
+    # def db_monitor_worker(self):
+    #     import time
+    #     import os
+        
+    #     while True:
+    #         ui_needs_refresh = False
             
-            # Redraw the screen if either of the above checks triggered a change
-            if ui_needs_refresh:
-                self.root.after(0, self.refresh_library_ui)
+    #         # 1. Check if any actual audio files were deleted from the hard drive
+    #         missing_paths = [path for path in list(self.library_manager.local_library.keys()) if not os.path.exists(path)]
+            
+    #         if missing_paths:
+    #             for path in missing_paths:
+    #                 del self.library_manager.local_library[path]
+                    
+    #             self.logger.info(f"Detected {len(missing_paths)} deleted files. Updating library...")
                 
-            time.sleep(2)
+    #             # Save via the manager's locked method
+    #             self.db.save_local_db(self.library_manager.local_library)
+    #             ui_needs_refresh = True
+
+    #         # 2. Check if the SQLite database file was edited externally
+    #         if hasattr(self.db, 'db_path') and os.path.exists(self.db.db_path):
+    #             try:
+    #                 current_mtime = os.path.getmtime(self.db.db_path)
+                    
+    #                 if self.db.last_db_mtime == 0:
+    #                     self.db.last_db_mtime = current_mtime
+    #                 elif current_mtime > self.db.last_db_mtime:
+    #                     self.logger.info("External DB change detected. Syncing local library...")
+    #                     self.db.last_db_mtime = current_mtime
+    #                     self.library_manager.local_library = self.db.load_local_db()
+    #                     ui_needs_refresh = True
+    #             except Exception as e:
+    #                 self.logger.error(f"DB Monitor Error: {e}")
+            
+    #         # Redraw the screen if either of the above checks triggered a change
+    #         if ui_needs_refresh:
+    #             self.root.after(0, self.refresh_library_ui)
+                
+    #         time.sleep(2)
 
     def build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -760,39 +743,39 @@ class AAXManagerApp:
                 self.tray_icon.stop()
             self.on_closing()
 
-    def silent_sync_worker(self):
-        if not self.api_client.auth:
-            return
+    # def silent_sync_worker(self):
+    #     if not self.api_client.auth:
+    #         return
 
-        try:
-            self.logger.info("Background sync: Polling Audible API...")
-            client = audible.Client(auth=self.api_client.auth)
-            response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
-            new_items = response.get("items", [])
+    #     try:
+    #         self.logger.info("Background sync: Polling Audible API...")
+    #         client = audible.Client(auth=self.api_client.auth)
+    #         response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
+    #         new_items = response.get("items", [])
             
-            self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
+    #         self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
             
-            if len(new_items) != len(self.library_manager.cloud_items):
-                self.logger.info(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
-                self.library_manager.cloud_items = new_items
-                self.save_cloud_cache()
-                self.root.after(0, self.refresh_library_ui)
-            else:
-                self.logger.info("Background sync: No changes detected.")
+    #         if len(new_items) != len(self.library_manager.cloud_items):
+    #             self.logger.info(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
+    #             self.library_manager.cloud_items = new_items
+    #             self.save_cloud_cache()
+    #             self.root.after(0, self.refresh_library_ui)
+    #         else:
+    #             self.logger.info("Background sync: No changes detected.")
                 
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            self.logger.error(f"Network offline: {e}")
-            self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
+    #     except (httpx.ConnectError, httpx.TimeoutException) as e:
+    #         self.logger.error(f"Network offline: {e}")
+    #         self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
             
-        except httpx.HTTPStatusError as e:
-            self.logger.error(f"Audible API Error: {e.response.status_code}")
-            if e.response.status_code == 429:
-                self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
-            elif e.response.status_code >= 500:
-                self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
+    #     except httpx.HTTPStatusError as e:
+    #         self.logger.error(f"Audible API Error: {e.response.status_code}")
+    #         if e.response.status_code == 429:
+    #             self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
+    #         elif e.response.status_code >= 500:
+    #             self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
                 
-        except Exception as e:
-            self.logger.info(f"Background sync failed silently: {e}")
+    #     except Exception as e:
+    #         self.logger.info(f"Background sync failed silently: {e}")
     
     def on_closing(self):
         try:
@@ -827,27 +810,10 @@ class AAXManagerApp:
                 os._exit(0)
 
     def save_playback_state(self):
-        if self.file_path and self.file_path in self.library_manager.local_library:
-            chap_idx = self.current_chapter_idx
-            rel_time = self.current_play_time
-            
-            self.library_manager.local_library[self.file_path]["last_chapter"] = chap_idx
-            self.library_manager.local_library[self.file_path]["last_time"] = rel_time
-            
-            abs_time = rel_time
-            if self.chapters and chap_idx < len(self.chapters):
-                abs_time = float(self.chapters[chap_idx].get("start_time", 0)) + rel_time
-                self.library_manager.local_library[self.file_path]["last_position"] = abs_time
+        state = self.playback.get_current_state()
+        if state:
+            self.library_manager.save_playback_state(state, self.active_profile)
 
-            if "progress" not in self.library_manager.local_library[self.file_path]:
-                self.library_manager.local_library[self.file_path]["progress"] = {}
-            self.library_manager.local_library[self.file_path]["progress"][self.active_profile] = abs_time
-                
-            self.db.save_local_db(self.library_manager.local_library)
-
-            self.settings[f"last_played_{self.active_profile}"] = self.file_path
-            self.db.save_settings(self.settings)
-    
     def sync_playhead_from_remote(self, abs_position):
         """Called by the web server when the phone updates the current book's time."""
         try:
@@ -879,22 +845,6 @@ class AAXManagerApp:
         if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
             self.load_specific_file(last_path)
     
-    def load_cloud_cache(self):
-        if os.path.exists(self.cloud_cache_path):
-            try:
-                with open(self.cloud_cache_path, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return []
-
-    def save_cloud_cache(self):
-        try:
-            with open(self.cloud_cache_path, "w") as f:
-                json.dump(self.library_manager.cloud_items, f, indent=4)
-        except Exception as e:
-            self.logger.error(f"Failed to save cloud cache: {e}")
-
     def set_download_folder(self):
         directory = filedialog.askdirectory(title="Select Default Download Folder")
         if directory:
@@ -1438,14 +1388,11 @@ class AAXManagerApp:
     def fetch_library_worker(self):
         try:
             self.logger.info("Querying Audible Library API...")
-            client = audible.Client(auth=self.api_client.auth)
-
-            response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
             
-            self.library_manager.cloud_items = response.get("items", [])
+            # 1. Delegate entirely to the LibraryManager (this handles the API call AND saving the cache)
+            self.library_manager.fetch_cloud_library()
+            
             self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
-            
-            self.save_cloud_cache()
 
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
@@ -1455,12 +1402,14 @@ class AAXManagerApp:
         except httpx.ConnectError:
             self.logger.error("Network offline during library sync.")
             self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to Audible servers. Check your internet connection."))
-        except audible.exceptions.AudibleError as e:
-            self.logger.error(f"Audible API rejected the request: {e}")
-            self.root.after(0, lambda: messagebox.showerror("Audible API Error", "Your session may have expired. Please log in again via Settings."))
         except Exception as e:
-            self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
-            self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
+            # 2. Safely catch auth/API errors without relying on a specific audible package exception
+            if "401" in str(e) or "unauthorized" in str(e).lower() or "Not authenticated" in str(e):
+                self.logger.error(f"Audible API rejected the request: {e}")
+                self.root.after(0, lambda: messagebox.showerror("Audible API Error", "Your session may have expired. Please log in again via Settings."))
+            else:
+                self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
+                self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
         finally:
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
@@ -1516,31 +1465,6 @@ class AAXManagerApp:
             except Exception as e:
                 if self.debug_mode.get():
                     self.logger.info(f"DEBUG - Failed to parse UI for item: {e}")
-
-    def get_drm_flags(self, filepath):
-        data = self.library_manager.local_library.get(filepath, {})
-        a_key = data.get("audible_key")
-        a_iv = data.get("audible_iv")
-
-        if a_key and a_iv:
-            return ["-audible_key", a_key, "-audible_iv", a_iv]
-
-        owner = data.get("owner", self.active_profile)
-        
-        if owner == self.active_profile and self.auth_bytes.get().strip():
-            return ["-activation_bytes", self.auth_bytes.get().strip()]
-            
-        owner_auth_path = os.path.join(self.data_dir, f"auth_{owner}.json")
-        if os.path.exists(owner_auth_path):
-            try:
-                temp_auth = audible.Authenticator.from_file(owner_auth_path)
-                dynamic_bytes = temp_auth.get_activation_bytes()
-                if dynamic_bytes:
-                    return ["-activation_bytes", dynamic_bytes]
-            except Exception as e:
-                self.logger.warning(f"Failed to dynamically load auth for {owner}: {e}")
-        
-        return ["-activation_bytes", self.auth_bytes.get().strip()]
 
     def remove_local_file(self):
         selected = self.library_tree.focus()
@@ -1858,7 +1782,22 @@ class AAXManagerApp:
 
     def verify_bytes(self, filepath):
         cmd = ["ffmpeg", "-v", "error"]
-        cmd.extend(self.get_drm_flags(filepath))
+        
+        
+        local_data = self.library_manager.local_library.get(filepath, {})
+        auth_bytes = self.auth_bytes.get().strip()
+        
+        drm_flags = self.api_client.get_drm_flags(
+            filepath=filepath, 
+            local_data=local_data, 
+            active_profile=self.active_profile, 
+            auth_bytes=auth_bytes, 
+            data_dir=self.db.data_dir, 
+            logger=self.logger
+        )
+        cmd.extend(drm_flags)
+        
+        
         cmd.extend(["-i", filepath, "-t", "0.1", "-f", "null", "-"])
         try:
             result = ProcessRunner.run_blocking(cmd)
@@ -1949,7 +1888,7 @@ class AAXManagerApp:
         self.resume_playback()
 
     def resume_playback(self):
-        drm_flags = self.get_drm_flags(self.file_path) if self.file_path.endswith((".aax", ".aaxc")) else None
+        drm_flags = self.api_client.get_drm_flags(self.file_path, self.library_manager.local_library.get(self.file_path, {}), self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
         
         # Make sure the controller has the latest UI settings before playing
         self.playback.set_speed(float(self.playback_speed.get().replace("x", "")))
@@ -2082,7 +2021,7 @@ class AAXManagerApp:
         else:
             # Controller reported False (we were on the last chapter)
             self.stop_audio()
-            self.add_stat("books_finished", 1)
+            self.stats_manager.add_stat("books_finished", 1)
             self.info_label.config(text="Finished Book")
 
     def prev_chapter(self):

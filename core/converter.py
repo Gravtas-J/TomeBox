@@ -32,7 +32,7 @@ class AudioConverter:
     def __init__(self, logger):
         self.logger = logger
         # Suppress the black command prompt window on Windows
-        self.creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        # self.creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         self.current_process = None
         self.is_cancelled = False
@@ -50,7 +50,7 @@ class AudioConverter:
     def get_metadata_and_chapters(self, filepath):
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", filepath]
         try:
-            result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", check=True, creationflags=self.creationflags)
+            result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
             return json.loads(result.stdout)
         except Exception as e:
             self.logger(f"FFprobe error on {filepath}: {e}")
@@ -59,7 +59,7 @@ class AudioConverter:
     def get_duration(self, filepath):
         try:
             cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
-            res = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=self.creationflags)
+            res = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8")
             return float(res.stdout.strip())
         except Exception:
             return 0.0
@@ -117,7 +117,7 @@ class AudioConverter:
             try:
                 self.current_process = ProcessRunner.run_async(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, 
-                    universal_newlines=True, creationflags=self.creationflags
+                    universal_newlines=True
                 )
             except FileNotFoundError:
                 raise Exception("CRITICAL: FFmpeg not found. Please ensure FFmpeg is installed and added to your system PATH.")
@@ -195,5 +195,5 @@ class AudioConverter:
                 cmd.extend(drm_flags)
             cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", out_path])
             
-            ProcessRunner.run_blocking(cmd, check=True, creationflags=self.creationflags)
+            ProcessRunner.run_blocking(cmd, check=True)
         return True

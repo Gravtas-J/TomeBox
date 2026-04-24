@@ -149,3 +149,16 @@ class SystemManager:
     def stop_server_sync(self):
         if self.web_server is not None:
             self.web_server.should_exit = True
+
+    def has_enough_disk_space(self, target_dir, required_bytes):
+        import shutil
+        import os
+        try:
+            check_dir = target_dir
+            while not os.path.exists(check_dir) and os.path.dirname(check_dir) != check_dir:
+                check_dir = os.path.dirname(check_dir)
+            total, used, free = shutil.disk_usage(check_dir)
+            return free > required_bytes
+        except Exception as e:
+            self.logger(f"Disk space check failed: {e}")
+            return True # Fail open so we don't accidentally block valid operations

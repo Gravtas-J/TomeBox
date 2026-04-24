@@ -177,3 +177,18 @@ class PlaybackController:
         
         ch = self.chapters[self.current_chapter_idx]
         self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
+
+    def get_current_state(self):
+        """Returns the calculated playback state for saving."""
+        if not self.file_path: return None
+        
+        abs_time = self.current_play_time
+        if self.chapters and self.current_chapter_idx < len(self.chapters):
+            abs_time = float(self.chapters[self.current_chapter_idx].get("start_time", 0)) + self.current_play_time
+            
+        return {
+            "file_path": self.file_path,
+            "chapter_idx": self.current_chapter_idx,
+            "rel_time": self.current_play_time,
+            "abs_time": abs_time
+        }
