@@ -71,24 +71,8 @@ class AudioConverter:
         # --- SMART COVER RESOLUTION ---
         actual_cover = None
         if cover_path:
-            cover_dir = os.path.dirname(cover_path)
-            filename = os.path.basename(cover_path)
-            raw_asin, _ = os.path.splitext(filename)
-            padded_asin = str(raw_asin).zfill(10)
-
-            # Hunt for the cover handling dropped zeros and scraper defaults
-            candidates = [
-                cover_path,                                    
-                os.path.join(cover_dir, f"{padded_asin}.jpg"), 
-                os.path.join(cover_dir, f"{padded_asin}.png"), 
-                os.path.join(cover_dir, "cover.jpg"),          
-                os.path.join(cover_dir, "folder.jpg")          
-            ]
-            
-            for candidate in candidates:
-                if os.path.exists(candidate):
-                    actual_cover = candidate
-                    break
+            raw_asin, _ = os.path.splitext(os.path.basename(cover_path))
+            actual_cover = resolve_cover_path(cover_path, raw_asin)
         # ------------------------------
 
         base, ext = os.path.splitext(output_path)

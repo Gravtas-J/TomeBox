@@ -14,16 +14,15 @@ class DatabaseManager:
         self.db_lock = threading.Lock()
         self.last_db_mtime = 0
         
+        # Establish a single, persistent, thread-safe connection
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL") # Faster, safer concurrent writes
+        
         self._initialize_tables()
-
-    def _get_connection(self):
-        # check_same_thread=False allows FastAPI and Tkinter to share the connection safely
-        return sqlite3.connect(self.db_path, check_same_thread=False)
 
     def _initialize_tables(self):
         with self.db_lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             # Document-store approach: perfectly preserves existing structures
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -37,14 +36,12 @@ class DatabaseManager:
                     data TEXT
                 )
             """)
-            conn.commit()
-            conn.close()
+            self.conn.commit()
 
     def load_settings(self):
         settings_dict = {}
         with self.db_lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             cursor.execute("SELECT key, value FROM settings")
             for key, value in cursor.fetchall():
                 try:
@@ -59,17 +56,15 @@ class DatabaseManager:
                     "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", 
                     ("auth_token", json.dumps(new_token))
                 )
-            conn.close()
+                self.conn.commit()
         return settings_dict
 
     def save_settings(self, settings_dict):
         with self.db_lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             for key, val in settings_dict.items():
                 cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(val)))
-            conn.commit()
-            conn.close()
+            self.conn.commit()
 
     def load_local_db(self):
         library = {}
@@ -77,8 +72,7 @@ class DatabaseManager:
             if not os.path.exists(self.db_path):
                 return {}
                 
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             cursor.execute("SELECT path, data FROM library")
             for path, data_str in cursor.fetchall():
                 if os.path.exists(path):  # Clean up missing files on load
@@ -86,13 +80,11 @@ class DatabaseManager:
                         library[path] = json.loads(data_str)
                     except Exception:
                         pass
-            conn.close()
         return library
 
     def save_local_db(self, library_dict):
         with self.db_lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = self.conn.cursor()
             
             # 1. Get current paths in DB to handle deletions
             cursor.execute("SELECT path FROM library")
@@ -108,8 +100,7 @@ class DatabaseManager:
             for path, data in library_dict.items():
                 cursor.execute("INSERT OR REPLACE INTO library (path, data) VALUES (?, ?)", (path, json.dumps(data)))
                 
-            conn.commit()
-            conn.close()
+            self.conn.commit()
             
             if os.path.exists(self.db_path):
                 self.last_db_mtime = os.path.getmtime(self.db_path)

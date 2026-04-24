@@ -1,4 +1,5 @@
 import csv
+import html
 
 class LibraryExporter:
     @staticmethod
@@ -78,7 +79,7 @@ class LibraryExporter:
             cloud_titles.append(title)
             
             raw_authors = item.get("authors") or []
-            authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+            authors = html.escape(", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)]))
             
             raw_series = item.get("series") or []
             series_list = []

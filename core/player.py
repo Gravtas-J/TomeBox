@@ -26,7 +26,17 @@ class AudioPlayer:
             cmd.extend(["-volume", str(volume)])
             
         filters = []
-        if speed != 1.0: filters.append(f"atempo={speed}")
+        if speed != 1.0: 
+            # FFmpeg atempo must be between 0.5 and 2.0. Chain them for extreme speeds.
+            temp_speed = speed
+            while temp_speed > 2.0:
+                filters.append("atempo=2.0")
+                temp_speed /= 2.0
+            while temp_speed < 0.5:
+                filters.append("atempo=0.5")
+                temp_speed *= 2.0
+            filters.append(f"atempo={temp_speed}")
+            
         if voice_boost: filters.append("acompressor=threshold=-15dB:ratio=3:makeup=5dB")
         if skip_silence: filters.append("silenceremove=stop_periods=-1:stop_duration=0.5:stop_threshold=-40dB")
         

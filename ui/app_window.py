@@ -31,7 +31,6 @@ from core.converter import AudioConverter
 from api.audible_client import AudibleClient
 from core.player import AudioPlayer
 from ui.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
-# from core.downloader import AudiobookDownloader
 from ui.theme import apply_theme
 from core.exporter import LibraryExporter
 from core.controllers.library_manager import LibraryManager
@@ -51,8 +50,6 @@ class AAXManagerApp:
         self.base_dir = base_dir  
         self.current_sort_col = "Title"  
         self.current_sort_descending = False
-        # self.enforce_single_instance()
-        # self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         # 1. Initialize Database Manager FIRST
         self.db = DatabaseManager(self.base_dir)
@@ -462,7 +459,6 @@ class AAXManagerApp:
 
     def setup_tray_icon(self):
         try:
-            # FIX: Look for the icon in the ui folder
             icon_path = os.path.join(self.base_dir, "ui", "tomebox.png")
             
             if not os.path.exists(icon_path):
@@ -611,7 +607,6 @@ class AAXManagerApp:
         self.file_menu.add_command(label="Set Download Folder", command=self.set_download_folder)
         self.file_menu.add_command(label="Authentication & Profiles", command=lambda: open_auth_window(self))
         self.file_menu.add_separator()
-        # self.file_menu.add_command(label="Pair Mobile Device (QR)", command=lambda: open_pairing_window(self))
         self.file_menu.add_checkbutton(
             label="Minimize to Tray on Close", 
             variable=self.minimize_to_tray_var, 
@@ -894,7 +889,6 @@ class AAXManagerApp:
         
         # Playback Controls
         self.context_menu.add_command(label="▶ Play", command=self.master_play)
-        # self.context_menu.add_command(label="⏸ Pause", command=self.pause_audio)
         self.context_menu.add_separator()
 
 
@@ -902,7 +896,6 @@ class AAXManagerApp:
         self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
         self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
         self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
-        # self.context_menu.add_separator()
 
     def build_bookmarks_components(self, parent):
         self.bm_frame = ttk.LabelFrame(parent, text="Bookmarks & Notes", padding=10)
@@ -959,10 +952,8 @@ class AAXManagerApp:
             # Stop current playback
             self.stop_audio()
                 
-            # 1. FIXED: Correct variable name (idx instead of index)
             self.current_chapter_idx = target_idx
             
-            # 2. FIXED: Reset relative time to the start of the chapter
             self.current_play_time = 0.0
             
             self.play_chapter()
@@ -1091,7 +1082,6 @@ class AAXManagerApp:
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
             new_items = response.get("items", [])
             
-            # FIXED: Changed status_var to dl_status_var
             self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
             
             if len(new_items) != len(self.library_manager.cloud_items):
@@ -1104,16 +1094,13 @@ class AAXManagerApp:
                 
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             self.logger.error(f"Network offline: {e}")
-            # FIXED: Changed status_var to dl_status_var
             self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
             
         except httpx.HTTPStatusError as e:
             self.logger.error(f"Audible API Error: {e.response.status_code}")
             if e.response.status_code == 429:
-                # FIXED: Changed status_var to dl_status_var
                 self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
             elif e.response.status_code >= 500:
-                # FIXED: Changed status_var to dl_status_var
                 self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
                 
         except Exception as e:
@@ -1459,9 +1446,6 @@ class AAXManagerApp:
         
         self._current_filtered_data = filtered_rows
 
-        # 3. Update Shelf Dropdown
-
-
         # 4. Handle Empty State
         is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
 
@@ -1656,14 +1640,11 @@ class AAXManagerApp:
             messagebox.showerror("Export Failed", f"Failed to generate HTML:\n{e}")
 
     def write_log(self, message):
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_entry = f"[{timestamp}] {message}\n"
-            try:
-                with open(self.log_file_path, "a", encoding="utf-8") as f:
-                    f.write(log_entry)
-            except Exception:
-                pass
+        """Bridge method routing legacy log calls into the standard logger."""
+        if hasattr(self, 'logger'):
+            self.logger.info(message)
+        else:
+            print(message)
 
     def auto_load_auth(self):
         self.logger.info("DEBUG: auto_load_auth fired from startup timer.")

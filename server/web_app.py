@@ -177,6 +177,7 @@ def create_server_app(tomebox):
 
     @api.get("/api/stream")
     def stream_audio(path: str, request: Request):
+        mime_type = "audio/mpeg" if path.lower().endswith(".mp3") else "audio/mp4"
         if not path or not os.path.exists(path):
             raise HTTPException(status_code=404, detail="Audio file not found.")
 
@@ -184,7 +185,7 @@ def create_server_app(tomebox):
         range_header = request.headers.get("Range")
 
         if not range_header:
-            headers = {"Accept-Ranges": "bytes", "Content-Length": str(file_size), "Content-Type": "audio/mp4"}
+            headers = {"Accept-Ranges": "bytes", "Content-Length": str(file_size), "Content-Type": mime_type}
             def full_file_iterator():
                 with open(path, "rb") as f: yield from f
             return StreamingResponse(full_file_iterator(), headers=headers)
@@ -209,7 +210,12 @@ def create_server_app(tomebox):
                     bytes_left -= len(data)
                     yield data
 
-        headers = {"Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}", "Accept-Ranges": "bytes", "Content-Length": str(chunk_size), "Content-Type": "audio/mp4"}
+        headers = {
+            "Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}", 
+            "Accept-Ranges": "bytes", 
+            "Content-Length": str(chunk_size), 
+            "Content-Type": mime_type
+        }
         return StreamingResponse(chunk_generator(), status_code=206, headers=headers)
 
     return api

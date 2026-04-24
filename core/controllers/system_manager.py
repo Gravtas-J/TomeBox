@@ -9,6 +9,12 @@ class SystemManager:
         self.web_server = None
         self.lock_socket = None
         self.lock_port = 43128
+        
+        # Set Windows async policy once on boot
+        import sys
+        if sys.platform == 'win32':
+            import asyncio
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     def enforce_single_instance(self, on_wake_callback):
         """Ensures only one instance of TomeBox is running via TCP port locking."""
@@ -118,9 +124,6 @@ class SystemManager:
                 import uvicorn
                 import asyncio
                 from server.web_app import create_server_app
-
-                if sys.platform == 'win32':
-                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
                 # Pass the TomeBox app instance to the server so it can read library/settings
                 api = create_server_app(app_instance)
