@@ -1,6 +1,7 @@
 import subprocess
 import os
 import json
+from core.utils.process_runner import ProcessRunner
 
 def resolve_cover_path(base_cover_path, asin):
     """
@@ -49,7 +50,7 @@ class AudioConverter:
     def get_metadata_and_chapters(self, filepath):
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", filepath]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True, creationflags=self.creationflags)
+            result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", check=True, creationflags=self.creationflags)
             return json.loads(result.stdout)
         except Exception as e:
             self.logger(f"FFprobe error on {filepath}: {e}")
@@ -58,7 +59,7 @@ class AudioConverter:
     def get_duration(self, filepath):
         try:
             cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
-            res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=self.creationflags)
+            res = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=self.creationflags)
             return float(res.stdout.strip())
         except Exception:
             return 0.0
@@ -130,7 +131,7 @@ class AudioConverter:
         try:
             # TRAP 1: MISSING FFMPEG
             try:
-                self.current_process = subprocess.Popen(
+                self.current_process = ProcessRunner.run_async(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, 
                     universal_newlines=True, creationflags=self.creationflags
                 )
@@ -210,5 +211,5 @@ class AudioConverter:
                 cmd.extend(drm_flags)
             cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", out_path])
             
-            subprocess.run(cmd, check=True, creationflags=self.creationflags)
+            ProcessRunner.run_blocking(cmd, check=True, creationflags=self.creationflags)
         return True

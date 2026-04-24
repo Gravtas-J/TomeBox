@@ -15,7 +15,8 @@ except ImportError:
     keep = KeepDummy()
 
 class DownloadManager:
-    def __init__(self, api_client, logger, library_manager, callbacks):
+    def __init__(self, api_client, logger, library_manager, callbacks, thread_pool):
+        self.thread_pool = thread_pool
         self.logger = logger
         self.library_manager = library_manager
         self.downloader = AudiobookDownloader(api_client, logger)
@@ -48,7 +49,7 @@ class DownloadManager:
 
             if not self.is_processing:
                 self.is_processing = True
-                threading.Thread(target=self._process_queue_worker, daemon=True).start()
+                self.thread_pool.submit(self._process_queue_worker)
 
     def queue_batch(self, items, save_dir):
         """Adds multiple items to the queue at once."""
@@ -68,9 +69,9 @@ class DownloadManager:
                 })
                 self.active_flags[asin] = False
                 
-            if not self.is_processing and self.queue:
+            if not self.is_processing:
                 self.is_processing = True
-                threading.Thread(target=self._process_queue_worker, daemon=True).start()
+                self.thread_pool.submit(self._process_queue_worker)
 
     def cancel_download(self, asin):
         """Flags an active or pending download for cancellation."""

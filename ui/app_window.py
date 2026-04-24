@@ -1,3 +1,5 @@
+from core.utils.thread_pool import AppThreadPool
+from core.utils.process_runner import ProcessRunner
 import subprocess
 import json
 import threading
@@ -92,11 +94,12 @@ class AAXManagerApp:
         self.auth_save_path = self.db.get_auth_path(self.active_profile)
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.converter = AudioConverter(self.write_log)
-        
+        self.thread_pool = AppThreadPool(logger=self.write_log)
         self.download_manager = DownloadManager(
             api_client=self.api_client,
             logger=self.write_log,
             library_manager=self.library_manager,
+            thread_pool=self.thread_pool,  
             callbacks={
                 "on_status": self._on_dl_status,
                 "on_progress": self._on_dl_progress,
@@ -121,6 +124,7 @@ class AAXManagerApp:
             library_manager=self.library_manager,
             logger=self.write_log,
             covers_dir=self.covers_dir,
+            thread_pool=self.thread_pool,
             get_drm_flags_cb=lambda path: self.get_drm_flags(path) if path.endswith((".aax", ".aaxc")) else None,
             callbacks={
                 "on_status": lambda msg: self.root.after(0, self.dl_status_var.set, msg),
@@ -160,6 +164,48 @@ class AAXManagerApp:
         except Exception as e:
             self.write_log(f"Could not load app icon: {e}")
         self.build_context_menu()
+        # UI & View State
+        self.current_view_mode = "list"
+        self._selected_grid_item = None
+        self._last_selected_card_frame = None
+        self._current_filtered_data = []
+        self._last_canvas_width = 0
+        self._resize_timer = None
+        self.cover_cache = {}
+        
+        # Window / Dialog State
+        self.chapter_win = None
+        self.sleep_menu_popup = None
+        self.current_cover_photo = None
+        
+        # File & Playback State
+        self.file_path = ""
+        self.chapters = []
+        self.current_chapter_idx = 0
+        self.current_play_time = 0.0
+        self.chapter_duration = 0.0
+        self.is_playing = False
+        self.is_paused = False
+        
+        # Sleep Timer State
+        self.sleep_mode = None
+        self.sleep_timer_seconds = 0
+        self.sleep_chapters_remaining = 0
+        self._sleep_timer_id = None
+        self.sleep_timer_active = False
+        
+        # Directory Paths
+        self.default_download_dir = self.settings.get("download_dir", self.base_dir)
+        
+        # Background Workers
+        self._last_disk_save_time = 0.0
+        
+        # Timers & UI Flags
+        self.tray_icon = None
+        self._sleep_timer_id = None
+        self._resize_timer = None
+        self.browser_login_btn = None
+
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
         self.setup_tray_icon()
@@ -204,7 +250,7 @@ class AAXManagerApp:
             messagebox.showinfo("Success", "Metadata scraped and applied!")
             self.refresh_library_ui()
             # Reload the player if the user is currently listening to the file we just tagged
-            if getattr(self, 'file_path', "") == filepath:
+            if self.file_path == filepath:
                 self.load_specific_file(filepath)
         self.root.after(0, update)
 
@@ -212,7 +258,7 @@ class AAXManagerApp:
         """Updates the side panel when the user clicks a book."""
         def update():
             # If the user clicked another book while the image was downloading, ignore this update
-            if getattr(self, 'file_path', "") != filepath and not getattr(self, '_selected_grid_item', None):
+            if self.file_path != filepath and not self._selected_grid_item:
                 return
                 
             self.author_label.config(text=authors)
@@ -298,8 +344,6 @@ class AAXManagerApp:
 
             # Database Saving (Every ~10 seconds)
             now = time.time()
-            if not hasattr(self, '_last_disk_save_time'):
-                self._last_disk_save_time = now
             if now - self._last_disk_save_time > 10:
                 self.save_playback_state()
                 self._last_disk_save_time = now
@@ -506,7 +550,7 @@ class AAXManagerApp:
                 webbrowser.open("https://ffmpeg.org/download.html")
 
     def run_background_sync(self):
-        threading.Thread(target=self.silent_sync_worker, daemon=True).start()
+        self.thread_pool.submit(self.silent_sync_worker)
         # Schedule the next check in 15 minutes (900000 milliseconds)
         self.root.after(900000, self.run_background_sync)
     
@@ -884,7 +928,7 @@ class AAXManagerApp:
 
     def show_context_menu(self, event):
         # If we are in the list view, select the item under the cursor first
-        if getattr(self, 'current_view_mode', 'list') == "list":
+        if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
             if item:
                 self.library_tree.selection_set(item)
@@ -924,7 +968,7 @@ class AAXManagerApp:
 
 
     def on_item_select(self, event=None):
-        if getattr(self, 'current_view_mode', 'list') == "list":
+        if self.current_view_mode == "list":
             selected = self.library_tree.focus()
             if not selected: return
             item = self.library_tree.item(selected)
@@ -932,7 +976,7 @@ class AAXManagerApp:
             authors = item['values'][1]
             asin = item['values'][4]
         else:
-            if not getattr(self, '_selected_grid_item', None): return
+            if not self._selected_grid_item: return
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
@@ -942,7 +986,7 @@ class AAXManagerApp:
             self.author_label.config(text=authors)
         
         cover_path = None
-        covers_dir = getattr(self, 'covers_dir', self.base_dir)
+        covers_dir = self.covers_dir
         
         if asin and asin != "Unknown":
             padded_asin = str(asin).zfill(10)
@@ -957,7 +1001,7 @@ class AAXManagerApp:
                 cover_path = test_path_raw
                 
         if not cover_path:
-            for p, d in getattr(self, 'local_library', {}).items():
+            for p, d in self.library_manager.local_library.items():
                 if d.get("title") == title:
                     test_local = os.path.splitext(p)[0] + "_cover.jpg"
                     if os.path.exists(test_local):
@@ -978,14 +1022,14 @@ class AAXManagerApp:
             self.cover_label.config(image="", text=title)
 
     def manage_shelves_prompt(self):
-        if getattr(self, 'current_view_mode', 'list') == "list":
+        if self.current_view_mode == "list":
             selected = self.library_tree.focus()
             if not selected:
                 messagebox.showwarning("Selection Required", "Please select an audiobook to tag.")
                 return
             item = self.library_tree.item(selected)
         else:
-            if not hasattr(self, '_selected_grid_item') or not self._selected_grid_item:
+            if not self._selected_grid_item or not self._selected_grid_item:
                 messagebox.showwarning("Selection Required", "Please select an audiobook to tag.")
                 return
             item = self._selected_grid_item
@@ -1022,7 +1066,7 @@ class AAXManagerApp:
 
     def on_filter_change(self):
 
-        if getattr(self, 'is_playing', False):
+        if self.is_playing:
             self.pause_audio()
             self.is_paused = False
             self.resume_playback()
@@ -1031,7 +1075,7 @@ class AAXManagerApp:
         if self.minimize_to_tray_var.get():
             self.hide_window_to_tray()
         else:
-            if hasattr(self, 'tray_icon') and self.tray_icon:
+            if self.tray_icon:
                 self.tray_icon.stop()
             self.on_closing()
 
@@ -1080,12 +1124,12 @@ class AAXManagerApp:
             # 1. Save our place in the audiobook and database
             self.save_playback_state()
 
-            # 2. Trigger the aggressive stop command on our actual player object
-            if hasattr(self, 'player') and self.player:
-                self.player.stop()
+            # 2. Trigger the aggressive stop command on our playback controller
+            if self.playback:
+                self.playback.stop()
 
             # 3. Flag the web server thread to shut down gracefully
-            if hasattr(self, 'web_server') and self.web_server is not None:
+            if self.system_manager:
                 self.system_manager.stop_server_sync()
                 
         except Exception as e:
@@ -1100,24 +1144,21 @@ class AAXManagerApp:
             import subprocess
             if os.name == 'nt':
                 # /T flag = "Tree Kill" (Kills this process and everything it spawned)
-                subprocess.Popen(
-                    ['taskkill', '/F', '/T', '/PID', str(os.getpid())],
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
+                ProcessRunner.run_async(['taskkill', '/F', '/T', '/PID', str(os.getpid())])
             else:
                 # Mac/Linux immediate hard exit
                 os._exit(0)
 
     def save_playback_state(self):
-        if getattr(self, 'file_path', None) and self.file_path in self.library_manager.local_library:
-            chap_idx = getattr(self, 'current_chapter_idx', 0)
-            rel_time = getattr(self, 'current_play_time', 0.0)
+        if self.file_path and self.file_path in self.library_manager.local_library:
+            chap_idx = self.current_chapter_idx
+            rel_time = self.current_play_time
             
             self.library_manager.local_library[self.file_path]["last_chapter"] = chap_idx
             self.library_manager.local_library[self.file_path]["last_time"] = rel_time
             
             abs_time = rel_time
-            if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
+            if self.chapters and chap_idx < len(self.chapters):
                 abs_time = float(self.chapters[chap_idx].get("start_time", 0)) + rel_time
                 self.library_manager.local_library[self.file_path]["last_position"] = abs_time
 
@@ -1137,7 +1178,7 @@ class AAXManagerApp:
                 return 
                 
             # Update the PC's internal memory so it doesn't save stale data on close
-            if hasattr(self, 'chapters') and self.chapters:
+            if self.chapters and self.chapters:
                 for idx, ch in enumerate(self.chapters):
                     start = float(ch.get("start_time", 0))
                     end = float(ch.get("end_time", 0))
@@ -1147,7 +1188,7 @@ class AAXManagerApp:
                         break
             
             # Visually move the progress bar on the PC screen
-            if hasattr(self, 'progress_var') and hasattr(self, 'chapters'):
+            if hasattr(self, 'progress_var') and self.chapters:
                 total_duration = float(self.chapters[-1].get("end_time", 0))
                 if total_duration > 0:
                     self.progress_var.set((abs_position / total_duration) * 100)
@@ -1201,7 +1242,7 @@ class AAXManagerApp:
         title = item['values'][0]
         asin = item['values'][3]
 
-        save_dir = getattr(self, 'default_download_dir', '')
+        save_dir = self.default_download_dir
         if not save_dir:
             save_dir = filedialog.askdirectory(title=f"Select Folder for '{title}'")
             if not save_dir: return
@@ -1214,14 +1255,14 @@ class AAXManagerApp:
         # We check the library manager instead of local_library directly
         local_titles = {data["title"] for path, data in self.library_manager.local_library.items()}
         missing_items = [{"asin": item.get("asin"), "title": item.get("title", "Unknown")} 
-                         for item in getattr(self.library_manager, 'cloud_items', []) 
+                         for item in self.library_manager.cloud_items 
                          if item.get("title") not in local_titles]
 
         if not missing_items:
             messagebox.showinfo("Up to Date", "Your local library already has all cloud items.")
             return
 
-        save_dir = getattr(self, 'default_download_dir', self.base_dir)
+        save_dir = self.default_download_dir
         if messagebox.askyesno("Download All", f"Queue {len(missing_items)} missing audiobooks?"):
             self.dl_all_btn.config(state=tk.DISABLED)
             self.toggle_queue_drawer(True)
@@ -1273,18 +1314,16 @@ class AAXManagerApp:
         if getattr(self, '_last_canvas_width', None) == event.width:
             return
         self._last_canvas_width = event.width
-        if hasattr(self, '_resize_timer'):
+        if self._resize_timer is not None:
             self.root.after_cancel(self._resize_timer)
         self._resize_timer = self.root.after(200, self.draw_grid_view)
 
     def draw_grid_view(self):
-        if getattr(self, 'current_view_mode', 'list') != "grid": return
+        if self.current_view_mode != "grid": return
         
         for widget in self.grid_inner.winfo_children():
             widget.destroy()
 
-        if not hasattr(self, 'cover_cache'):
-            self.cover_cache = {}
 
         style = ttk.Style()
         default_bg = style.lookup("TFrame", "background") or "#f0f0f0"
@@ -1315,7 +1354,7 @@ class AAXManagerApp:
             if asin in self.cover_cache:
                 img_obj = self.cover_cache[asin]
             else:
-                cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
                 if os.path.exists(cover_path):
                     try:
                         img = Image.open(cover_path)
@@ -1419,10 +1458,7 @@ class AAXManagerApp:
         self._current_filtered_data = filtered_rows
 
         # 3. Update Shelf Dropdown
-        if hasattr(self, 'shelf_combo'):
-            self.shelf_combo.config(values=shelf_list)
-            if current_shelf not in shelf_list:
-                self.shelf_filter_var.set("All Shelves")
+
 
         # 4. Handle Empty State
         is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
@@ -1430,11 +1466,7 @@ class AAXManagerApp:
         if is_completely_empty:
             self.library_tree.pack_forget()
             self.grid_canvas.pack_forget()
-            if hasattr(self, 'empty_state_frame'):
-                self.empty_state_frame.pack(fill="both", expand=True)
         else:
-            if hasattr(self, 'empty_state_frame'):
-                self.empty_state_frame.pack_forget()
                 
             if self.current_view_mode == "list":
                 self.grid_canvas.pack_forget()
@@ -1458,7 +1490,7 @@ class AAXManagerApp:
                 return
             item = self.library_tree.item(selected)
         else:
-            if not hasattr(self, '_selected_grid_item'):
+            if not self._selected_grid_item:
                 messagebox.showwarning("Selection Required", "Select a title first.")
                 return
             item = self._selected_grid_item
@@ -1488,7 +1520,7 @@ class AAXManagerApp:
                 self.start_convert_thread()
         else:
             if action_type == "download" or messagebox.askyesno("Download Required", f"'{title}' is not downloaded.\n\nDownload it now?"):
-                save_dir = getattr(self, 'default_download_dir', '')
+                save_dir = self.default_download_dir
                 if not save_dir:
                     save_dir = filedialog.askdirectory(title=f"Select Download Folder for '{title}'")
                     if not save_dir: return
@@ -1660,9 +1692,9 @@ class AAXManagerApp:
             messagebox.showerror("Error", "Could not load auth file. Check the log.")
 
     def start_browser_login_thread(self):
-        if hasattr(self, 'browser_login_btn') and self.browser_login_btn.winfo_exists():
+        if self.browser_login_btn and self.browser_login_btn.winfo_exists():
             self.browser_login_btn.config(text="Connecting...", state=tk.DISABLED)
-        threading.Thread(target=self.browser_login_worker, args=(self.locale.get(),), daemon=True).start()
+        self.thread_pool.submit(self.browser_login_worker, self.locale.get())
 
     def browser_login_worker(self, locale):
         self.write_log(f"Starting external browser login for region: {locale}")
@@ -1716,7 +1748,7 @@ class AAXManagerApp:
         finally:
             self.write_log("Login thread terminated.")
             def restore_btn():
-                if hasattr(self, 'browser_login_btn') and self.browser_login_btn.winfo_exists():
+                if self.browser_login_btn and self.browser_login_btn.winfo_exists():
                     self.browser_login_btn.config(text="Login via Browser", state=tk.NORMAL)
             self.root.after(0, restore_btn)
 
@@ -1732,7 +1764,7 @@ class AAXManagerApp:
         
         self.dl_status_var.set("Fetching data from Amazon... Please wait.")
         
-        threading.Thread(target=self.fetch_library_worker, daemon=True).start()
+        self.thread_pool.submit(self.fetch_library_worker)
 
     def fetch_library_worker(self):
         try:
@@ -1749,7 +1781,7 @@ class AAXManagerApp:
             self.root.after(0, self.refresh_library_ui)
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
-            threading.Thread(target=self.background_cover_downloader, daemon=True).start()
+            self.thread_pool.submit(self.background_cover_downloader)
             
         except Exception as e:
             import traceback
@@ -1761,11 +1793,11 @@ class AAXManagerApp:
         self.write_log("Starting background cover sync...")
         covers_downloaded = 0
         
-        for item in getattr(self, 'cloud_items', []):
+        for item in self.library_manager.cloud_items:
             asin = item.get("asin")
             if not asin: continue
                 
-            cover_path = os.path.join(getattr(self, 'covers_dir', self.base_dir), f"{asin}.jpg")
+            cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
             if os.path.exists(cover_path):
                 continue 
                 
@@ -1784,7 +1816,7 @@ class AAXManagerApp:
         if covers_downloaded > 0:
             self.write_log(f"Downloaded {covers_downloaded} new covers.")
 
-            if getattr(self, 'current_view_mode', 'list') == 'grid':
+            if self.current_view_mode == 'grid':
                 self.root.after(0, self.refresh_library_ui)
 
     def update_cloud_ui(self, items):
@@ -1858,7 +1890,7 @@ class AAXManagerApp:
 
     def set_sleep_timer(self, mode, value=0):
 
-        if hasattr(self, '_sleep_timer_id'):
+        if self._sleep_timer_id is not None:
             self.root.after_cancel(self._sleep_timer_id)
             
         if hasattr(self, 'sleep_menu_popup') and self.sleep_menu_popup.winfo_exists():
@@ -1887,14 +1919,14 @@ class AAXManagerApp:
             self.timer_btn.config(text=text)
 
     def sleep_timer_tick(self):
-        if getattr(self, 'sleep_mode', None) != "time":
+        if self.sleep_mode != "time":
             return
             
         if self.sleep_timer_seconds <= 0:
             self.sleep_mode = None
             self.timer_btn.config(text="Sleep: Off")
             
-            if getattr(self, 'is_playing', False):
+            if self.is_playing:
                 self.write_log("Sleep timer (minutes) finished. Pausing playback.")
                 self.pause_audio()
             return
@@ -1907,7 +1939,7 @@ class AAXManagerApp:
     def on_sleep_timer_set(self, event=None):
         val = self.sleep_time_var.get()
 
-        if hasattr(self, '_sleep_timer_id'):
+        if self._sleep_timer_id is not None:
             self.root.after_cancel(self._sleep_timer_id)
             
         if val == "Off":
@@ -1924,7 +1956,7 @@ class AAXManagerApp:
         self.sleep_timer_tick()
 
     def _on_grid_scroll(self, event):
-        if getattr(self, 'current_view_mode', 'list') != "grid":
+        if self.current_view_mode != "grid":
             return
 
         if str(self.grid_canvas) not in str(event.widget):
@@ -1940,7 +1972,7 @@ class AAXManagerApp:
             self.grid_canvas.yview_scroll(1, "units")
 
     def master_play(self, event=None):
-        if getattr(self, 'current_view_mode', 'list') == "list":
+        if self.current_view_mode == "list":
             selected = self.library_tree.focus()
             if not selected:
                 if self.file_path:
@@ -1950,7 +1982,7 @@ class AAXManagerApp:
                 return
             item = self.library_tree.item(selected)
         else:
-            if not hasattr(self, '_selected_grid_item') or not self._selected_grid_item:
+            if not self._selected_grid_item or not self._selected_grid_item:
                 if self.file_path:
                     self.play_chapter()
                 else:
@@ -1981,7 +2013,7 @@ class AAXManagerApp:
 
         self.stop_audio()
 
-        threading.Thread(target=self.metadata_manager.fetch_display_metadata(local_path), args=(local_path,), daemon=True).start()
+        self.metadata_manager.fetch_display_metadata(local_path) # Use local_path in master_play
         
         self.handle_action_on_selected("play")
 
@@ -2054,11 +2086,11 @@ class AAXManagerApp:
             percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
             self.progress_var.set(percent)
 
-        threading.Thread(target=self.metadata_manager.fetch_display_metadata(filepath), args=(filepath,), daemon=True).start()
+        self.metadata_manager.fetch_display_metadata(filepath)
         self.refresh_bookmarks_ui()
 
     def add_bookmark(self):
-        if not getattr(self, 'file_path', None):
+        if not self.file_path:
             messagebox.showwarning("No File", "Please load an audiobook first.")
             return
 
@@ -2066,8 +2098,8 @@ class AAXManagerApp:
         if was_playing:
             self.pause_audio()
 
-        current_time = getattr(self, 'current_play_time', 0.0)
-        chapter_idx = getattr(self, 'current_chapter_idx', 0)
+        current_time = self.current_play_time
+        chapter_idx = self.current_chapter_idx
 
         abs_time = current_time
         if self.chapters:
@@ -2101,7 +2133,7 @@ class AAXManagerApp:
         for row in self.bm_tree.get_children():
             self.bm_tree.delete(row)
             
-        if not getattr(self, 'file_path', None): return
+        if not self.file_path: return
         
         local_data = self.library_manager.local_library.get(self.file_path, {})
         bookmarks = local_data.get("bookmarks", [])
@@ -2112,7 +2144,7 @@ class AAXManagerApp:
             chap_idx = bm.get("chapter_idx", 0)
 
             chap_title = f"Chapter {chap_idx + 1}"
-            if hasattr(self, 'chapters') and self.chapters and chap_idx < len(self.chapters):
+            if self.chapters and chap_idx < len(self.chapters):
                 chap_title = self.chapters[chap_idx].get("tags", {}).get("title", chap_title)
                 
             t_str = self.format_time(bm.get("time", 0))
@@ -2153,7 +2185,7 @@ class AAXManagerApp:
         cmd.extend(self.get_drm_flags(filepath))
         cmd.extend(["-i", filepath, "-t", "0.1", "-f", "null", "-"])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            result = ProcessRunner.run_blocking(cmd)
             if result.returncode != 0:
                 return False, result.stderr if result.stderr else "FFmpeg rejected the file."
             return True, ""
@@ -2290,7 +2322,7 @@ class AAXManagerApp:
         self.current_play_time = self.playback.current_play_time
         
         # If paused, update the UI visually (if playing, the background tick will handle it)
-        if getattr(self, 'is_paused', False):
+        if self.is_paused:
             curr_str = self.format_time(self.current_play_time)
             dur_str = self.format_time(self.chapter_duration)
             self.time_label.config(text=f"{curr_str} / {dur_str}")
@@ -2333,7 +2365,7 @@ class AAXManagerApp:
             self.chapter_duration = self.playback.chapter_duration
             
             # 3. Handle Chapter Sleep Timer
-            if getattr(self, 'sleep_mode', None) == "chapters":
+            if self.sleep_mode == "chapters":
                 self.sleep_chapters_remaining -= 1
                 if self.sleep_chapters_remaining <= 0:
                     self.sleep_mode = None

@@ -15,7 +15,8 @@ except ImportError:
     keep = KeepDummy()
 
 class ConversionManager:
-    def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb):
+    def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb, thread_pool):
+        self.thread_pool = thread_pool
         self.converter = converter
         self.library_manager = library_manager
         self.logger = logger
@@ -91,7 +92,7 @@ class ConversionManager:
                 if self.on_progress:
                     self.on_progress(0)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self.thread_pool.submit(worker)
 
     def split_book(self, input_path, output_dir, chapters):
         def worker():
@@ -136,7 +137,7 @@ class ConversionManager:
                 if self.on_progress:
                     self.on_progress(0)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self.thread_pool.submit(worker)
 
     def convert_batch(self, file_list):
         def worker():
@@ -204,4 +205,4 @@ class ConversionManager:
                 if self.on_complete:
                     self.on_complete("Batch conversion complete!")
 
-        threading.Thread(target=worker, daemon=True).start()
+        self.thread_pool.submit(worker)

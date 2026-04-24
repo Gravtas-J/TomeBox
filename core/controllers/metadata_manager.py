@@ -7,6 +7,7 @@ try:
     import audible
 except ImportError:
     pass
+from core.utils.process_runner import ProcessRunner
 
 class MetadataManager:
     def __init__(self, api_client, library_manager, logger, covers_dir, callbacks):
@@ -106,10 +107,8 @@ class MetadataManager:
                         temp_path
                     ])
                     
-                    res = subprocess.run(
-                        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, 
-                        text=True, encoding="utf-8", 
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    res = ProcessRunner.run_blocking(
+                        cmd, capture_output=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
                     )
                     
                     if res.returncode == 0:

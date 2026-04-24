@@ -2,6 +2,7 @@ import os
 import subprocess
 import threading
 import time
+from core.utils.process_runner import ProcessRunner
 
 class AudioPlayer:
     def __init__(self, logger, on_complete_cb, on_error_cb):
@@ -35,28 +36,29 @@ class AudioPlayer:
 
         self.logger(f"Starting player: {' '.join(cmd)}")
 
-        self.process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        # stdout/stderr go to DEVNULL to prevent buffer lockups.
+        # stdin stays as PIPE to keep FFplay alive and prevent instant EOF exit.
+        self.process = ProcessRunner.run_async(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE
         )
         
         self.is_playing = True
         self.is_paused = False
         
-        # Monitor the process in the background
         threading.Thread(target=self._monitor, args=(self.process,), daemon=True).start()
 
     def _monitor(self, proc):
-        for line in proc.stderr:
-            if line.strip(): 
-                self.logger(f"[PLAYER ERROR]: {line.strip()}")
-        
+        # We simply wait for FFplay to hit its -t limit and exit naturally.
         proc.wait()
         
         if self.process == proc and self.is_playing:
             if proc.returncode == 0:
                 self.on_complete()  # Trigger next chapter
             else:
+                self.logger(f"FFplay exited with error code: {proc.returncode}")
                 self.on_error(proc.returncode)
 
     def stop(self):
@@ -66,18 +68,16 @@ class AudioPlayer:
         if self.process:
             try:
                 if os.name == 'nt':
-                    # Windows: Ruthlessly kill the process tree instantly
-                    subprocess.run(
+                    ProcessRunner.run_blocking(
                         ['taskkill', '/F', '/T', '/PID', str(self.process.pid)], 
+                        capture_output=False,
                         stdout=subprocess.DEVNULL, 
-                        stderr=subprocess.DEVNULL,
-                        creationflags=subprocess.CREATE_NO_WINDOW
+                        stderr=subprocess.DEVNULL
                     )
                 else:
-                    # Mac/Linux: Send SIGKILL (instant) instead of SIGTERM (polite)
                     self.process.kill()
-            except Exception:
-                # Ultimate fallback if the OS-level kill somehow fails
+            except Exception as e:
+                self.logger(f"Clean kill failed, forcing terminate: {e}")
                 try:
                     self.process.terminate()
                 except:
