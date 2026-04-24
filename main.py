@@ -10,13 +10,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from ui.app_window import AAXManagerApp
 
 def main():
-    # Tell Windows this is a unique app to fix taskbar grouping
-    try:
-        myappid = 'gravtas.tomebox.audiomanager.1'
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-    except Exception:
-        pass
-
     # The base directory is the root TomeBox folder
     base_dir = os.path.dirname(os.path.abspath(__file__))
     if platform.system() == 'Windows':

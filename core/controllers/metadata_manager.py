@@ -107,9 +107,7 @@ class MetadataManager:
                         temp_path
                     ])
                     
-                    res = ProcessRunner.run_blocking(
-                        cmd, capture_output=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-                    )
+                    res = ProcessRunner.run_blocking(cmd, capture_output=False, stderr=subprocess.PIPE)
                     
                     if res.returncode == 0:
                         shutil.move(temp_path, filepath)
@@ -215,16 +213,13 @@ class MetadataManager:
                             f.write(img_data)
                         covers_downloaded += 1
                     except requests.RequestException as e:
-                        self.logger.error(f"Network error downloading cover for {asin}: {e}")
+                        self.logger(f"Network error downloading cover for {asin}: {e}")
                     except Exception as e:
-                        self.logger.warning(f"Unexpected error saving cover for {asin}: {e}")
+                        self.logger(f"Unexpected error saving cover for {asin}: {e}")
                         
             if covers_downloaded > 0:
-                self.logger.info(f"Downloaded {covers_downloaded} new covers.")
+                self.logger(f"Downloaded {covers_downloaded} new covers.")
                 if on_complete_cb:
                     on_complete_cb()
                     
-        import threading
-        import os
-        import requests
         threading.Thread(target=worker, daemon=True).start()

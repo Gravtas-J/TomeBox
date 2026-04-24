@@ -3,7 +3,8 @@ from tkinter import ttk
 
 def setup_library_view(app, parent):
     """Builds the main library grid, list, and queue views."""
-    
+    style = ttk.Style()
+    default_bg = style.lookup("TFrame", "background") or "#f0f0f0"
     app.main_paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
     app.main_paned.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -17,12 +18,11 @@ def setup_library_view(app, parent):
     ttk.Button(queue_controls, text="Cancel All Downloads", command=app.cancel_all_downloads).pack(side=tk.RIGHT)
 
     # sv_ttk background color applied to the canvas
-    app.queue_canvas = tk.Canvas(app.queue_frame, height=120, bg="#1c1c1c", highlightthickness=0)
+    app.queue_canvas = tk.Canvas(app.queue_frame, height=120, bg=default_bg, highlightthickness=0)
     queue_scroll = ttk.Scrollbar(app.queue_frame, orient="vertical", command=app.queue_canvas.yview)
+    app.queue_inner = tk.Frame(app.queue_canvas, bg=default_bg)
     
-    # sv_ttk background color applied to the inner frame
-    app.queue_inner = tk.Frame(app.queue_canvas, bg="#1c1c1c")
-
+    
     app.queue_inner.bind("<Configure>", lambda e: app.queue_canvas.configure(scrollregion=app.queue_canvas.bbox("all")))
     app.queue_canvas.create_window((0, 0), window=app.queue_inner, anchor="nw")
     app.queue_canvas.configure(yscrollcommand=queue_scroll.set)
@@ -77,8 +77,8 @@ def setup_library_view(app, parent):
     app.current_view_mode = "list"
     app.grid_images_ref = [] 
     
-    app.grid_canvas = tk.Canvas(tree_frame, bg="#1c1c1c", highlightthickness=0)
-    app.grid_inner = tk.Frame(app.grid_canvas, bg="#1c1c1c")
+    app.grid_canvas = tk.Canvas(tree_frame, bg=default_bg, highlightthickness=0)
+    app.grid_inner = tk.Frame(app.grid_canvas, bg=default_bg)
     app.grid_window_id = app.grid_canvas.create_window((0, 0), window=app.grid_inner, anchor="nw")
     
     app.grid_canvas.configure(yscrollcommand=scroll.set)

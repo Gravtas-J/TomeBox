@@ -31,19 +31,16 @@ def resolve_cover_path(base_cover_path, asin):
 class AudioConverter:
     def __init__(self, logger):
         self.logger = logger
-        # Suppress the black command prompt window on Windows
-        # self.creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         self.current_process = None
         self.is_cancelled = False
 
     def cancel(self):
-        """Forcefully kills the running FFmpeg process."""
         self.is_cancelled = True
         if self.current_process:
             try:
                 self.current_process.terminate()  # Sends SIGTERM to ffmpeg.exe
-                self.logger.info("FFmpeg process terminated by user.")
+                self.logger("FFmpeg process terminated by user.")
             except Exception as e:
                 pass # Process might have already finished
             
