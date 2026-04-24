@@ -1,3 +1,4 @@
+from core.utils.logger import setup_logger
 from core.utils.thread_pool import AppThreadPool
 from core.utils.process_runner import ProcessRunner
 import subprocess
@@ -82,7 +83,8 @@ class AAXManagerApp:
 
         # 3. Load Settings and Global Paths
         self.settings = self.db.load_settings()
-        self.log_file_path = os.path.join(self.base_dir, "aax_manager.log")
+        self.logger = setup_logger(self.base_dir, debug_mode=self.settings.get("debug_mode", False))
+        self.logger.info("=== TomeBox Application Started ===")
         self.covers_dir = os.path.join(self.base_dir, "covers")
         os.makedirs(self.covers_dir, exist_ok=True)
         self.root.after(200, apply_taskbar_icon)
@@ -162,7 +164,7 @@ class AAXManagerApp:
                 icon_img = tk.PhotoImage(file=icon_path)
                 self.root.iconphoto(True, icon_img) # "True" applies it to all future dialog windows too
         except Exception as e:
-            self.write_log(f"Could not load app icon: {e}")
+            self.logger.warning(f"Could not load app icon: {e}")
         self.build_context_menu()
         # UI & View State
         self.current_view_mode = "list"
@@ -393,7 +395,7 @@ class AAXManagerApp:
             total, used, free = shutil.disk_usage(check_dir)
             return free > required_bytes
         except Exception as e:
-            self.write_log(f"Disk space check failed: {e}")
+            self.logger.error(f"Disk space check failed: {e}")
             return True # Fail open so we don't accidentally block valid operations
 
     def add_stat(self, stat_name, amount=1):
@@ -464,7 +466,7 @@ class AAXManagerApp:
             icon_path = os.path.join(self.base_dir, "ui", "tomebox.png")
             
             if not os.path.exists(icon_path):
-                self.write_log(f"System tray icon not found at: {icon_path}")
+                self.logger.warning(f"System tray icon not found at: {icon_path}")
                 return
                 
             image = Image.open(icon_path)
@@ -479,7 +481,7 @@ class AAXManagerApp:
             # Run the tray icon loop in a background thread so it doesn't block Tkinter
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
         except Exception as e:
-            self.write_log(f"Failed to initialize system tray: {e}")
+            self.logger.info(f"Failed to initialize system tray: {e}")
 
     def hide_window_to_tray(self):
         # Withdraw hides the window from the taskbar and screen
@@ -495,7 +497,7 @@ class AAXManagerApp:
 
     def open_support_link(self):
         import webbrowser
-        self.write_log("Opening Buy Me a Coffee link...")
+        self.logger.info("Opening Buy Me a Coffee link...")
         webbrowser.open("https://buymeacoffee.com/ProblematicSyntax")
 
     def add_new_profile(self):
@@ -533,7 +535,7 @@ class AAXManagerApp:
         ffplay_installed = shutil.which("ffplay") is not None
         
         if not ffmpeg_installed or not ffplay_installed:
-            self.write_log("WARNING: FFmpeg or FFplay not found in system PATH.")
+            self.logger.warning("WARNING: FFmpeg or FFplay not found in system PATH.")
             
             msg = (
                 "FFmpeg is missing from your system.\n\n"
@@ -546,7 +548,7 @@ class AAXManagerApp:
             user_wants_link = messagebox.askyesno("Missing Dependency: FFmpeg", msg)
             
             if user_wants_link:
-                self.write_log("Opening FFmpeg download page in browser...")
+                self.logger.info("Opening FFmpeg download page in browser...")
                 webbrowser.open("https://ffmpeg.org/download.html")
 
     def run_background_sync(self):
@@ -568,7 +570,7 @@ class AAXManagerApp:
                 for path in missing_paths:
                     del self.library_manager.local_library[path]
                     
-                self.write_log(f"Detected {len(missing_paths)} deleted files. Updating library...")
+                self.logger.info(f"Detected {len(missing_paths)} deleted files. Updating library...")
                 
                 # Save via the manager's locked method
                 self.db.save_local_db(self.library_manager.local_library)
@@ -582,12 +584,12 @@ class AAXManagerApp:
                     if self.db.last_db_mtime == 0:
                         self.db.last_db_mtime = current_mtime
                     elif current_mtime > self.db.last_db_mtime:
-                        self.write_log("External DB change detected. Syncing local library...")
+                        self.logger.info("External DB change detected. Syncing local library...")
                         self.db.last_db_mtime = current_mtime
                         self.library_manager.local_library = self.db.load_local_db()
                         ui_needs_refresh = True
                 except Exception as e:
-                    self.write_log(f"DB Monitor Error: {e}")
+                    self.logger.error(f"DB Monitor Error: {e}")
             
             # Redraw the screen if either of the above checks triggered a change
             if ui_needs_refresh:
@@ -1084,7 +1086,7 @@ class AAXManagerApp:
             return
 
         try:
-            self.write_log("Background sync: Polling Audible API...")
+            self.logger.info("Background sync: Polling Audible API...")
             client = audible.Client(auth=self.api_client.auth)
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
             new_items = response.get("items", [])
@@ -1093,20 +1095,20 @@ class AAXManagerApp:
             self.root.after(0, lambda: self.dl_status_var.set("Library Synced (Online)"))
             
             if len(new_items) != len(self.library_manager.cloud_items):
-                self.write_log(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
+                self.logger.info(f"Background sync: Detected library change. Old: {len(self.library_manager.cloud_items)}, New: {len(new_items)}")
                 self.library_manager.cloud_items = new_items
                 self.save_cloud_cache()
                 self.root.after(0, self.refresh_library_ui)
             else:
-                self.write_log("Background sync: No changes detected.")
+                self.logger.info("Background sync: No changes detected.")
                 
         except (httpx.ConnectError, httpx.TimeoutException) as e:
-            self.write_log(f"Network offline: {e}")
+            self.logger.error(f"Network offline: {e}")
             # FIXED: Changed status_var to dl_status_var
             self.root.after(0, lambda: self.dl_status_var.set("Offline - Check Connection"))
             
         except httpx.HTTPStatusError as e:
-            self.write_log(f"Audible API Error: {e.response.status_code}")
+            self.logger.error(f"Audible API Error: {e.response.status_code}")
             if e.response.status_code == 429:
                 # FIXED: Changed status_var to dl_status_var
                 self.root.after(0, lambda: self.dl_status_var.set("Rate Limited by Audible"))
@@ -1115,11 +1117,11 @@ class AAXManagerApp:
                 self.root.after(0, lambda: self.dl_status_var.set("Audible Servers Down"))
                 
         except Exception as e:
-            self.write_log(f"Background sync failed silently: {e}")
+            self.logger.info(f"Background sync failed silently: {e}")
     
     def on_closing(self):
         try:
-            self.write_log("Initiating shutdown sequence...")
+            self.logger.info("Initiating shutdown sequence...")
             
             # 1. Save our place in the audiobook and database
             self.save_playback_state()
@@ -1133,7 +1135,7 @@ class AAXManagerApp:
                 self.system_manager.stop_server_sync()
                 
         except Exception as e:
-            self.write_log(f"Error during shutdown: {e}")
+            self.logger.error(f"Error during shutdown: {e}")
             
         finally:
             # 4. Hide the UI instantly so the app feels snappy and responsive
@@ -1194,7 +1196,7 @@ class AAXManagerApp:
                     self.progress_var.set((abs_position / total_duration) * 100)
                     
         except Exception as e:
-            self.write_log(f"Failed to sync remote playhead: {e}")
+            self.logger.error(f"Failed to sync remote playhead: {e}")
             
     def cue_last_played(self):
         last_path = self.settings.get(f"last_played_{self.active_profile}")
@@ -1217,7 +1219,7 @@ class AAXManagerApp:
             with open(self.cloud_cache_path, "w") as f:
                 json.dump(self.library_manager.cloud_items, f, indent=4)
         except Exception as e:
-            self.write_log(f"Failed to save cloud cache: {e}")
+            self.logger.error(f"Failed to save cloud cache: {e}")
 
     def set_download_folder(self):
         directory = filedialog.askdirectory(title="Select Default Download Folder")
@@ -1230,7 +1232,7 @@ class AAXManagerApp:
     def cancel_all_downloads(self):
         if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):
             self.download_manager.cancel_all()
-            self.write_log("User initiated Cancel All Downloads.")
+            self.logger.info("User initiated Cancel All Downloads.")
 
     def cancel_download(self, asin):
         self.download_manager.cancel_download(asin)
@@ -1664,31 +1666,31 @@ class AAXManagerApp:
                 pass
 
     def auto_load_auth(self):
-        self.write_log("DEBUG: auto_load_auth fired from startup timer.")
+        self.logger.info("DEBUG: auto_load_auth fired from startup timer.")
         if self.api_client.load_auth_from_file(self.auth_save_path):
             activation_bytes = self.api_client.get_activation_bytes()
             self.auth_bytes.set(activation_bytes)
-            self.write_log(f"Session loaded automatically. Activation Bytes: {activation_bytes}")
+            self.logger.info(f"Session loaded automatically. Activation Bytes: {activation_bytes}")
             self.fetch_cloud_library()
         else:
-            self.write_log("No saved session found. Please log in.")
+            self.logger.info("No saved session found. Please log in.")
 
     def load_auth_file_prompt(self):
         filepath = filedialog.askopenfilename(filetypes=[("JSON Auth File", "*.json")], title="Select Audible Auth File")
         if not filepath: return
 
-        self.write_log(f"Loading auth from external file: {filepath}")
+        self.logger.info(f"Loading auth from external file: {filepath}")
         try:
             if self.api_client.load_auth_from_file(filepath):
                 activation_bytes = self.api_client.get_activation_bytes()
                 self.auth_bytes.set(activation_bytes)
-                self.write_log(f"Activation Bytes Received: {activation_bytes}")
+                self.logger.info(f"Activation Bytes Received: {activation_bytes}")
                 self.api_client.save_auth_to_file(self.auth_save_path)
                 
                 messagebox.showinfo("Success", "Auth file loaded! You can now fetch your library.")
                 self.fetch_cloud_library()
         except Exception as e:
-            self.write_log(f"ERROR: {traceback.format_exc()}")
+            self.logger.error(f"ERROR: {traceback.format_exc()}")
             messagebox.showerror("Error", "Could not load auth file. Check the log.")
 
     def start_browser_login_thread(self):
@@ -1697,10 +1699,10 @@ class AAXManagerApp:
         self.thread_pool.submit(self.browser_login_worker, self.locale.get())
 
     def browser_login_worker(self, locale):
-        self.write_log(f"Starting external browser login for region: {locale}")
+        self.logger.info(f"Starting external browser login for region: {locale}")
         
         def custom_login_callback(login_url):
-            self.write_log("Opening default web browser...")
+            self.logger.info("Opening default web browser...")
             webbrowser.open(login_url)
             
             result = [None]
@@ -1726,41 +1728,41 @@ class AAXManagerApp:
             return result[0].strip()
 
         try:
-            self.write_log("Waiting for user to complete browser login and paste URL...")
+            self.logger.info("Waiting for user to complete browser login and paste URL...")
             if self.api_client.login_with_browser(locale, custom_login_callback):
                 activation_bytes = self.api_client.get_activation_bytes()
                 
                 self.root.after(0, self.auth_bytes.set, activation_bytes)
-                self.write_log(f"Activation Bytes Received: {activation_bytes}")
+                self.logger.info(f"Activation Bytes Received: {activation_bytes}")
                 
                 self.api_client.save_auth_to_file(self.auth_save_path)
-                self.write_log(f"Session saved locally to {self.auth_save_path}")
+                self.logger.info(f"Session saved locally to {self.auth_save_path}")
 
                 self.root.after(0, lambda: messagebox.showinfo("Success", "Connected to Audible!"))
                 self.root.after(0, self.fetch_cloud_library)
                 
         except Exception as e:
             error_trace = traceback.format_exc()
-            self.write_log("ERROR DURING LOGIN:")
-            self.write_log(error_trace)
+            self.logger.error("ERROR DURING LOGIN:")
+            self.logger.error(error_trace)
             self.root.after(0, lambda: messagebox.showerror("Login Failed", str(e)))
             
         finally:
-            self.write_log("Login thread terminated.")
+            self.logger.info("Login thread terminated.")
             def restore_btn():
                 if self.browser_login_btn and self.browser_login_btn.winfo_exists():
                     self.browser_login_btn.config(text="Login via Browser", state=tk.NORMAL)
             self.root.after(0, restore_btn)
 
     def fetch_cloud_library(self):
-        self.write_log("DEBUG: fetch_cloud_library method started executing.")
+        self.logger.info("DEBUG: fetch_cloud_library method started executing.")
         
         if not self.api_client.auth:
-            self.write_log("DEBUG: fetch_cloud_library aborted - self.api_client.auth is missing or None.")
+            self.logger.info("DEBUG: fetch_cloud_library aborted - self.api_client.auth is missing or None.")
             messagebox.showwarning("Not Logged In", "Please login via the Settings tab first.")
             return
 
-        self.write_log("DEBUG: self.api_client.auth verified. Launching fetch_library_worker thread...")
+        self.logger.info("DEBUG: self.api_client.auth verified. Launching fetch_library_worker thread...")
         
         self.dl_status_var.set("Fetching data from Amazon... Please wait.")
         
@@ -1768,13 +1770,13 @@ class AAXManagerApp:
 
     def fetch_library_worker(self):
         try:
-            self.write_log("Querying Audible Library API...")
+            self.logger.info("Querying Audible Library API...")
             client = audible.Client(auth=self.api_client.auth)
 
             response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
             
             self.library_manager.cloud_items = response.get("items", [])
-            self.write_log(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
+            self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
             
             self.save_cloud_cache()
 
@@ -1783,14 +1785,20 @@ class AAXManagerApp:
 
             self.thread_pool.submit(self.background_cover_downloader)
             
+        except httpx.ConnectError:
+            self.logger.error("Network offline during library sync.")
+            self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to Audible servers. Check your internet connection."))
+        except audible.exceptions.AudibleError as e:
+            self.logger.error(f"Audible API rejected the request: {e}")
+            self.root.after(0, lambda: messagebox.showerror("Audible API Error", "Your session may have expired. Please log in again via Settings."))
         except Exception as e:
-            import traceback
-            self.write_log(f"ERROR FETCHING LIBRARY:\n{traceback.format_exc()}")
-            self.root.after(0, lambda: messagebox.showerror("Library Error", "Failed to fetch cloud library."))
+            self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
+            self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
+        finally:
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
     def background_cover_downloader(self):
-        self.write_log("Starting background cover sync...")
+        self.logger.info("Starting background cover sync...")
         covers_downloaded = 0
         
         for item in self.library_manager.cloud_items:
@@ -1810,11 +1818,13 @@ class AAXManagerApp:
                     with open(cover_path, "wb") as f:
                         f.write(img_data)
                     covers_downloaded += 1
+                except requests.RequestException as e:
+                    self.logger.warning(f"Network error downloading cover for {asin}: {e}")
                 except Exception as e:
-                    pass
+                    self.logger.error(f"Unexpected error saving cover for {asin}: {e}")
                     
         if covers_downloaded > 0:
-            self.write_log(f"Downloaded {covers_downloaded} new covers.")
+            self.logger.info(f"Downloaded {covers_downloaded} new covers.")
 
             if self.current_view_mode == 'grid':
                 self.root.after(0, self.refresh_library_ui)
@@ -1838,7 +1848,7 @@ class AAXManagerApp:
                 self.cloud_tree.insert("", "end", values=(title, authors, duration_str, asin))
             except Exception as e:
                 if self.debug_mode.get():
-                    self.write_log(f"DEBUG - Failed to parse UI for item: {e}")
+                    self.logger.info(f"DEBUG - Failed to parse UI for item: {e}")
 
     def get_drm_flags(self, filepath):
         data = self.library_manager.local_library.get(filepath, {})
@@ -1861,7 +1871,7 @@ class AAXManagerApp:
                 if dynamic_bytes:
                     return ["-activation_bytes", dynamic_bytes]
             except Exception as e:
-                self.write_log(f"Failed to dynamically load auth for {owner}: {e}")
+                self.logger.warning(f"Failed to dynamically load auth for {owner}: {e}")
         
         return ["-activation_bytes", self.auth_bytes.get().strip()]
             
@@ -1927,7 +1937,7 @@ class AAXManagerApp:
             self.timer_btn.config(text="Sleep: Off")
             
             if self.is_playing:
-                self.write_log("Sleep timer (minutes) finished. Pausing playback.")
+                self.logger.info("Sleep timer (minutes) finished. Pausing playback.")
                 self.pause_audio()
             return
             
@@ -2370,7 +2380,7 @@ class AAXManagerApp:
                 if self.sleep_chapters_remaining <= 0:
                     self.sleep_mode = None
                     self.timer_btn.config(text="Sleep: Off")
-                    self.write_log("Sleep timer (chapters) finished. Pausing playback.")
+                    self.logger.info("Sleep timer (chapters) finished. Pausing playback.")
                     
                     self.is_paused = True
                     self.update_info()

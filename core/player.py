@@ -80,8 +80,8 @@ class AudioPlayer:
                 self.logger(f"Clean kill failed, forcing terminate: {e}")
                 try:
                     self.process.terminate()
-                except:
-                    pass
+                except OSError as e:
+                    self.logger.error(f"CRITICAL: Failed to terminate FFplay zombie process: {e}")
                     
             self.process = None
 

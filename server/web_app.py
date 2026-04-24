@@ -93,7 +93,10 @@ def create_server_app(tomebox):
                             for item in json.load(file):
                                 if item.get("asin"): master_metadata[item["asin"]] = item
                                 if item.get("title"): master_metadata[item["title"]] = item
-                    except Exception: pass
+                    except json.JSONDecodeError as e: 
+                        print(f"[ERROR] Corrupted cloud cache file {f}: {e}")
+                    except OSError as e:
+                        print(f"[ERROR] File access error on {f}: {e}")
 
         for item in getattr(tomebox.library_manager, 'cloud_items', []):
             if item.get("asin"): master_metadata[item["asin"]] = item
