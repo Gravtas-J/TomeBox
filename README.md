@@ -33,7 +33,6 @@ If you want to run TomeBox from source, contribute to development, or you're on 
 4. **Launch:** Use the newly created desktop shortcut to open the application.
 5. **Login:** Go to `File → Authentication & Profiles`, follow the prompts to log in and begin downloading.
 
-> *Source installs include a built-in auto-updater. Launching the app via the shortcut will silently check GitHub for updates and pull the latest code before booting.*
 
 ## System Requirements
 
