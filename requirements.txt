@@ -11,7 +11,9 @@ rsa
 # --- Companion Web Server ---
 fastapi
 uvicorn
+httpx
 
 # --- System Utilities ---
 wakepy
 pycaw
+qrcode

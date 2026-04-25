@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <title>TomeBox</title>
+            <link rel="manifest" href="/static/manifest.json">
+            <meta name="theme-color" content="#121212">
+            <link rel="apple-touch-icon" href="/static/icon.png">
+            <meta name="apple-mobile-web-app-capable" content="yes">
+            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+            <meta name="apple-mobile-web-app-title" content="TomeBox">
+            <link rel="stylesheet" href="/static/css/styles.css">
+        </head>
+        <body>
+            <header>
+                <div>TomeBox Library</div>
+                <div class="header-controls">
+                    <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
+                    <div class="filter-row">
+                        <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
+                            <option value="all">All Shelves</option>
+                        </select>
+                        <select id="profile-selector" class="ui-select" onchange="changeProfile()"></select>
+                    </div>
+                </div>
+            </header>
+            
+            <main id="library-grid"></main>
+
+            <div id="player-bar">
+                <div id="progress-container" onclick="seekAudio(event)">
+                    <div id="progress-fill"></div>
+                </div>
+                
+                <div class="player-top-row">
+                    <div class="player-info">
+                        <p id="now-playing-title">Select a book</p>
+                        <p id="now-playing-author">...</p>
+                    </div>
+                </div>
+
+                <div class="player-secondary-row">
+                    <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
+                    <div class="side-tools">
+                        <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
+                        <button class="tool-btn" onclick="openChapterMenu()">📑</button>
+                    </div>
+                </div>
+
+                <div class="player-main-row">
+                    <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
+                    <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
+                    <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+                    <button class="skip-btn" onclick="skipAudio(15)">↻</button>
+                    <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
+                </div>
+                
+                <audio id="main-audio"></audio>
+            </div>
+
+            <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span>Sleep Timer</span>
+                        <button class="close-btn" onclick="closeModals()">✕</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
+                        <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
+                        <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
+                        <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
+                        <div class="list-item custom-sleep-row">
+                            <div class="sleep-input-group">
+                                <span>After</span>
+                                <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
+                                <span>Chapters</span>
+                            </div>
+                            <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
+                        </div>
+                        <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span>Chapters</span>
+                        <button class="close-btn" onclick="closeModals()">✕</button>
+                    </div>
+                    <div class="modal-body" id="chapter-list"></div>
+                </div>
+            </div>
+            <script src="/static/js/mobile_client.js"></script>
+        </body>
+        </html>

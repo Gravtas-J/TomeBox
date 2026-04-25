@@ -1,5 +1,6 @@
 *.json
 *.log
+ui/covers
 /covers
 test_aax_player.py
 test_results_log.txt
@@ -10,3 +11,14 @@ start_tomebox.sh
 start_tomebox.bat
 .tomebox_version
 start_tomebox.vbs
+/data
+/unit_tests
+*.exe
+migrate_to_sqlite.py
+/tests
+/old
+*.md
+/logs
+/release
+*.spec
+*.coverage
