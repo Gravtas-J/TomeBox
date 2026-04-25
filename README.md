@@ -54,7 +54,7 @@ Or with the pre-built EXE:
 
     TomeBox.exe --headless
 
-A QR code prints to the terminal — scan it with your phone to pair instantly.
+A QR code prints to the terminal — scan it with your phone to pair instantly. Go to <your-ip>:8000/pair to pair new devices from already authed devices.
 
 ### Windows Service
 
@@ -147,7 +147,7 @@ Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
 ### Local Companion Web Server
 * **Embedded Daemon:** FastAPI server runs in a background thread inside the desktop process, avoiding GUI blocking.
 * **Menu Integration:** Toggleable via the desktop File menu; automatically retrieves and displays the host machine's local IP address.
-* **QR Code Pairing:** Scan a QR code from the desktop to securely pair your phone with the server in one tap.
+* **QR Code Pairing:** Scan a QR code from the desktop to securely pair your phone with the server in one tap. Go to <your-ip>:8000/pair to pair new devices from already authed devices.
 * **Chunked Audio Streaming:** Implements HTTP 206 Partial Content endpoints to stream `.m4b` files in 64KB chunks, allowing timeline scrubbing without loading full files into memory.
 * **Metadata Hydration:** API dynamically merges library data with the cloud cache and local cover directory to serve complete book profiles (authors, shelves, covers) to the frontend.
 
