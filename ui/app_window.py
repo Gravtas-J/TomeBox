@@ -703,7 +703,7 @@ class AAXManagerApp:
                 return
             item = self.library_tree.item(selected)
         else:
-            if not self._selected_grid_item or not self._selected_grid_item:
+            if not self._selected_grid_item:
                 messagebox.showwarning("Selection Required", "Please select an audiobook to tag.")
                 return
             item = self._selected_grid_item
@@ -722,8 +722,8 @@ class AAXManagerApp:
         current_shelves_str = ", ".join(current_shelves)
 
         new_shelves_str = simpledialog.askstring(
-            "Manage Shelves", 
-            f"Enter custom shelves for:\n{title}\n\n(Separate multiple tags with commas)", 
+            "Manage Shelves",
+            f"Enter custom shelves for:\n{title}\n\n(Separate multiple tags with commas)",
             initialvalue=current_shelves_str
         )
 
@@ -731,7 +731,6 @@ class AAXManagerApp:
             tags = [t.strip() for t in new_shelves_str.split(",") if t.strip()]
             self.settings["shelves_db"][asin] = tags
             self.db.save_settings(self.settings)
-            
             self.refresh_library_ui()
 
     def save_tray_setting(self):
@@ -1030,15 +1029,16 @@ class AAXManagerApp:
 
         # 2. Ask the Controller for the data
         filtered_rows, shelf_list = self.library_manager.get_view_data(
-            search_query=search_query, 
-            filter_type=current_filter, 
+            search_query=search_query,
+            filter_type=current_filter,
             shelf_filter=current_shelf
         )
-        
+
         self._current_filtered_data = filtered_rows
 
-        # 4. Handle Empty State
-        is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
+        # 3. Repopulate the shelf filter dropdown so new shelves appear
+        if hasattr(self, 'shelf_combo'):
+            self.shelf_combo['values'] = shelf_list
 
         # 4. Handle Empty State
         is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
@@ -1052,17 +1052,16 @@ class AAXManagerApp:
             if self.current_view_mode == "list":
                 self.grid_canvas.pack_forget()
                 self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
-                
+
                 for row in filtered_rows:
                     self.library_tree.insert("", "end", values=row)
-                    
+
                 if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
                     self.sort_treeview(self.library_tree, self.current_sort_col, self.current_sort_descending)
             else:
                 self.library_tree.pack_forget()
                 self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
                 self.draw_grid_view()
-
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
