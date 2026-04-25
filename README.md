@@ -68,9 +68,7 @@ A QR code prints to the terminal — scan it with your phone to pair instantly.
     sudo systemctl start tomebox
 
 The service runs as a dedicated `tomebox` user with hardened permissions.
-> **Note:** The systemd installer is included for completeness but is currently 
-> untested by the maintainer. If you try it and hit issues, please open an issue 
-> with details — fixes welcome via PR.
+
 ### Docker
 
     docker compose up -d
