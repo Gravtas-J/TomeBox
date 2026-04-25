@@ -162,7 +162,8 @@ def create_server_app(tomebox):
                 tomebox.db.save_local_db(tomebox.library_manager.local_library)
 
                 if getattr(tomebox, 'file_path', None) == path:
-                    tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
+                    if tomebox.root:  # Only sync to GUI if GUI exists
+                        tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")

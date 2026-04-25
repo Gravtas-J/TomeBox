@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  tomebox:
+    build: .
+    container_name: tomebox
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./covers:/app/covers
+      - ./audiobooks:/audiobooks  # Optional: mount your audiobook library
+    environment:
+      - TZ=UTC  # Adjust to your timezone, e.g., Australia/Brisbane

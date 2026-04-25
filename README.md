@@ -41,6 +41,45 @@ If you want to run TomeBox from source, contribute to development, or you're on 
 * **~500MB disk space** (includes bundled FFmpeg)
 * **Internet connection** for Audible features (offline playback works without)
 
+## Headless / Server Deployment
+
+TomeBox can run without a desktop UI, perfect for NAS, home servers, or 
+always-on machines. Three deployment paths supported:
+
+### Quick Headless (any platform)
+
+    python main.py --headless
+
+Or with the pre-built EXE:
+
+    TomeBox.exe --headless
+
+A QR code prints to the terminal — scan it with your phone to pair instantly.
+
+### Windows Service
+
+1. Install [NSSM](https://nssm.cc/download) and add it to your PATH
+2. Right-click `service/install_windows_service.bat` → Run as administrator
+3. Manage via Windows Services panel or `nssm start TomeBox`
+
+### Linux systemd
+
+    sudo bash service/install_linux_service.sh
+    sudo systemctl start tomebox
+
+The service runs as a dedicated `tomebox` user with hardened permissions.
+> **Note:** The systemd installer is included for completeness but is currently 
+> untested by the maintainer. If you try it and hit issues, please open an issue 
+> with details — fixes welcome via PR.
+### Docker
+
+    docker compose up -d
+
+Mount `./audiobooks` to your library directory in `docker-compose.yml`.
+
+By default the headless server binds to all interfaces on port 8000. 
+Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
+
 ## Screenshots
 
 ### Unified List View
