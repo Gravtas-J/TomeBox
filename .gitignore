@@ -21,3 +21,4 @@ migrate_to_sqlite.py
 /logs
 /release
 *.spec
+*.coverage

@@ -7,6 +7,39 @@ except ImportError:
     pass
 import time
 
+def find_url_in_response(d):
+    """Recursively hunts for an offline_url anywhere in a nested API response."""
+    if isinstance(d, dict):
+        if "offline_url" in d:
+            return d["offline_url"]
+        for v in d.values():
+            res = find_url_in_response(v)
+            if res:
+                return res
+    elif isinstance(d, list):
+        for item in d:
+            res = find_url_in_response(item)
+            if res:
+                return res
+    return None
+
+
+def find_key_iv_in_voucher(d):
+    """Recursively hunts for a (key, iv) pair anywhere in a decrypted voucher."""
+    if isinstance(d, dict):
+        if "key" in d and "iv" in d:
+            return d["key"], d["iv"]
+        for val in d.values():
+            k, i = find_key_iv_in_voucher(val)
+            if k and i:
+                return k, i
+    elif isinstance(d, list):
+        for val in d:
+            k, i = find_key_iv_in_voucher(val)
+            if k and i:
+                return k, i
+    return None, None
+
 class AudibleClient:
     def __init__(self):
         self.auth = None
@@ -82,19 +115,7 @@ class AudibleClient:
         body = {"drm_type": "Adrm", "consumption_type": "Download"}
         resp = client.post(f"1.0/content/{clean_asin}/licenserequest", body=body)
         
-        def find_url(d):
-            if isinstance(d, dict):
-                if "offline_url" in d: return d["offline_url"]
-                for k, v in d.items():
-                    res = find_url(v)
-                    if res: return res
-            elif isinstance(d, list):
-                for item in d:
-                    res = find_url(item)
-                    if res: return res
-            return None
-            
-        download_url = find_url(resp)
+        download_url = find_url_in_response(resp)
         if not download_url:
             raise Exception("Could not find the offline download URL in the API response.")
 
@@ -114,19 +135,7 @@ class AudibleClient:
                 a_iv = decrypted[16:].hex()
         else:
             decrypted_voucher = decrypt_voucher_from_licenserequest(self.auth, resp)
-            def find_key_iv(d):
-                k, i = None, None
-                if isinstance(d, dict):
-                    if "key" in d and "iv" in d: return d["key"], d["iv"]
-                    for val in d.values():
-                        k, i = find_key_iv(val)
-                        if k and i: return k, i
-                elif isinstance(d, list):
-                    for val in d:
-                        k, i = find_key_iv(val)
-                        if k and i: return k, i
-                return k, i
-            a_key, a_iv = find_key_iv(decrypted_voucher)
+            a_key, a_iv = find_key_iv_in_voucher(decrypted_voucher)
 
         return download_url, a_key, a_iv
     

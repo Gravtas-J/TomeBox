@@ -126,8 +126,16 @@ def create_server_app(tomebox):
 
     @api.get("/api/cover/{asin}")
     def get_cover(asin: str):
-        cover_path = os.path.join(getattr(tomebox, 'covers_dir', tomebox.base_dir), f"{asin}.jpg")
-        if os.path.exists(cover_path): return FileResponse(cover_path)
+        from core.converter import resolve_cover_path
+        
+        covers_dir = getattr(tomebox, 'covers_dir', tomebox.base_dir)
+        base_path = os.path.join(covers_dir, f"{asin}.jpg")
+        
+        # Use the same smart resolver the desktop uses
+        resolved = resolve_cover_path(base_path, asin)
+        if resolved:
+            return FileResponse(resolved)
+        
         raise HTTPException(status_code=404, detail="Cover not found")
 
     @api.post("/api/progress")
