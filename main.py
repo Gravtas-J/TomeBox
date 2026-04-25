@@ -145,6 +145,11 @@ def run_headless(base_dir, host, port):
     finally:
         logger("TomeBox Headless Server stopped.")
 
+def setup_tkinter_exception_handler(root, logger):
+    def handler(exc, val, tb):
+        import traceback
+        logger.error(f"Tkinter callback exception:\n{''.join(traceback.format_exception(exc, val, tb))}")
+    root.report_callback_exception = handler
 
 def run_gui(base_dir):
     """Runs the standard desktop application."""

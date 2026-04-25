@@ -1756,7 +1756,7 @@ class AAXManagerApp:
             return
             
         required_bytes = sum(os.path.getsize(p) for p in to_convert if os.path.exists(p))
-        if not self.has_enough_disk_space(self.base_dir, required_bytes + (500 * 1024 * 1024)): 
+        if not self.system_manager.has_enough_disk_space(self.base_dir, required_bytes + (500 * 1024 * 1024)):
             required_gb = required_bytes / (1024**3)
             messagebox.showerror(
                 "Insufficient Storage", 
