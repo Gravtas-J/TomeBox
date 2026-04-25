@@ -98,6 +98,7 @@ def run_headless(base_dir, host, port):
             pass
         
         return ips or ["127.0.0.1"]
+    
     def print_qr_to_terminal(url, logger):
         import qrcode
         qr = qrcode.QRCode(border=1)

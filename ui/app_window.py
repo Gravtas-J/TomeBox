@@ -35,6 +35,8 @@ from ui.components.player_bar import setup_player_bar
 from ui.components.library_view import setup_library_view
 from ui.components.sidebar import setup_sidebar
 
+from core.utils.paths import get_resource_path
+
 from core.database import DatabaseManager
 from core.converter import AudioConverter
 from core.player import AudioPlayer
@@ -64,9 +66,8 @@ class AAXManagerApp:
         self.library_manager = LibraryManager(self.db, self.api_client, self.base_dir)
 
         # 2. Setup Assets (Icons are in the ui folder)
-        ui_dir = os.path.join(self.base_dir, "ui")
-        icon_ico = os.path.join(ui_dir, "tomebox.ico")
-        icon_png = os.path.join(ui_dir, "tomebox.png")
+        icon_ico = get_resource_path("ui", "tomebox.ico")
+        icon_png = get_resource_path("ui", "tomebox.png")
 
         
         def apply_taskbar_icon():
@@ -170,7 +171,7 @@ class AAXManagerApp:
         self.root.after(100, self.check_dependencies)
         
         try:
-            icon_path = os.path.join(self.base_dir, "tomebox.png")
+            icon_path = get_resource_path("ui", "tomebox.ico")
             if os.path.exists(icon_path):
                 icon_img = tk.PhotoImage(file=icon_path)
                 self.root.iconphoto(True, icon_img) # "True" applies it to all future dialog windows too
@@ -493,7 +494,7 @@ class AAXManagerApp:
 
     def setup_tray_icon(self):
         try:
-            icon_path = os.path.join(self.base_dir, "ui", "tomebox.png")
+            icon_path = get_resource_path("ui", "tomebox.ico")
             
             if not os.path.exists(icon_path):
                 self.logger.warning(f"System tray icon not found at: {icon_path}")
