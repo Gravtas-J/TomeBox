@@ -250,6 +250,57 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
 
+    def ensure_download_folder(self):
+        """
+        Confirms or sets the download folder before starting downloads.
+        Returns the chosen folder path, or None if the user cancels entirely.
+        """
+        folder = self.settings.get("download_folder")
+        if folder and os.path.isdir(folder):
+            return folder
+        
+        # Step 1: Confirm they want to proceed
+        proceed = messagebox.askyesno(
+            "Set Download Folder",
+            "No download folder is set. Would you like to choose one now?\n\n"
+            "Click 'Yes' to pick a folder, or 'No' to cancel the download."
+        )
+        if not proceed:
+            return None
+        
+        # Step 2: Show folder picker
+        folder = filedialog.askdirectory(title="Select Download Folder")
+        
+        # Step 3: User closed the picker without choosing — offer fallback
+        if not folder:
+            default_folder = os.path.join(os.path.expanduser("~"), "Downloads", "TomeBox")
+            
+            use_default = messagebox.askyesno(
+                "Use Default Location?",
+                f"No folder was selected.\n\n"
+                f"Would you like to download to the default location?\n\n"
+                f"{default_folder}\n\n"
+                f"Click 'Yes' to use this location, or 'No' to cancel the download."
+            )
+            
+            if not use_default:
+                return None
+            
+            os.makedirs(default_folder, exist_ok=True)
+            folder = default_folder
+            
+            # Confirm where it landed
+            messagebox.showinfo(
+                "Download Folder Set",
+                f"Audiobooks will be saved to:\n\n{folder}\n\n"
+                f"You can change this later via File → Set Download Folder."
+            )
+        
+        # Save for next time
+        self.settings["download_folder"] = folder
+        self.db.save_settings(self.settings)
+        return folder
+
     def _on_scrape_search_results(self, filepath, products):
         """Called when the Audible search returns results."""
         def update():
@@ -767,7 +818,7 @@ class AAXManagerApp:
         directory = filedialog.askdirectory(title="Select Default Download Folder")
         if directory:
             self.default_download_dir = directory
-            self.settings["download_dir"] = directory
+            self.settings["download_folder"] = directory
             self.db.save_settings(self.settings)
             messagebox.showinfo("Folder Saved", f"Default download folder updated to:\n{directory}")
 
@@ -790,7 +841,9 @@ class AAXManagerApp:
             messagebox.showinfo("Up to Date", "Your local library already has all cloud items.")
             return
 
-        save_dir = self.default_download_dir
+        save_dir = self.ensure_download_folder()
+        if not save_dir:
+            return
         if messagebox.askyesno("Download All", f"Queue {len(missing_items)} missing audiobooks?"):
             self.dl_all_btn.config(state=tk.DISABLED)
             self.toggle_queue_drawer(True)
@@ -1048,11 +1101,9 @@ class AAXManagerApp:
                 self.start_convert_thread()
         else:
             if action_type == "download" or messagebox.askyesno("Download Required", f"'{title}' is not downloaded.\n\nDownload it now?"):
-                save_dir = self.default_download_dir
+                save_dir = self.ensure_download_folder()
                 if not save_dir:
-                    save_dir = filedialog.askdirectory(title=f"Select Download Folder for '{title}'")
-                    if not save_dir: return
-
+                    return
                 self.add_queue_ui_row(asin, title)
                 self.download_manager.queue_download(asin, title, save_dir, post_action=action_type)
 

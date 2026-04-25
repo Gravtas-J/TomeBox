@@ -3,6 +3,14 @@ from logging.handlers import RotatingFileHandler
 import os
 import sys
 
+class CallableLogger:
+    def __init__(self, logger):
+        self._logger = logger
+    def __call__(self, msg):
+        self._logger.info(msg)
+    def __getattr__(self, name):
+        return getattr(self._logger, name)
+
 def setup_logger(base_dir, debug_mode=False):
     """Configures a rotating, thread-safe logger for the entire application."""
     log_dir = os.path.join(base_dir, "logs")
@@ -36,4 +44,4 @@ def setup_logger(base_dir, debug_mode=False):
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    return logger
+    return CallableLogger(logger)
