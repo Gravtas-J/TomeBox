@@ -2,36 +2,59 @@
 
 **TomeBox** is a local-first audiobook manager and self-hosted media server. It combines a powerful desktop application for downloading, converting, and playing your Audible library with a built-in companion web app for streaming to your mobile devices. Featuring on-the-fly DRM decryption, multi-user cross-device progress syncing, and native lock-screen controls, TomeBox gives you complete ownership of your audiobooks without relying on cloud subscriptions.
 
-# Community
+## Community
 
-For users of **TomeBox** looking to report bugs, ask questions, submit feedback and request features, visit us at [R/Tomebox](https://www.reddit.com/r/TomeBox/).
+For users of **TomeBox** looking to report bugs, ask questions, submit feedback and request features, visit us at [r/TomeBox](https://www.reddit.com/r/TomeBox/).
 
-## Get Started (Zero-Config Installation)
+## Get Started
 
-TomeBox is designed to be completely portable and requires zero technical configuration. The automated setup scripts handle Python installation, dependency management, and FFmpeg binary acquisition seamlessly.
+TomeBox offers two installation paths depending on your needs.
+
+### Option 1: Pre-built Release (Recommended for Most Users)
+
+The fastest way to get started — no Python, no terminals, no setup.
+
+1. **Download** the latest `TomeBox-Windows.zip` from the [Releases page](https://github.com/yourusername/tomebox/releases).
+2. **Extract** the entire folder anywhere you like (Documents, Desktop, Program Files — your choice).
+3. **Run** `TomeBox.exe` to launch the application.
+4. *(Optional)* Run `create_shortcut.bat` to add a desktop shortcut for quick access.
+5. **Login:** Click `File → Authentication & Profiles`, choose your region, and follow the prompts to link your Audible account.
+
+> **Windows SmartScreen Notice:** The first time you run TomeBox, Windows may flag it as "unrecognised". This is normal for indie software without a paid code-signing certificate. Click **More info → Run anyway** to proceed. The application is open source — you can verify the code yourself in this repository.
+
+### Option 2: From Source (For Developers / Linux / Mac)
+
+If you want to run TomeBox from source, contribute to development, or you're on a non-Windows platform:
 
 1. **Download and Extract** the TomeBox repository folder.
 2. **Windows:** Double-click `setup.bat`. 
    * *If Python is missing, it will silently download and install it. It will also fetch portable FFmpeg binaries and drop a shortcut on your desktop.*
 3. **Mac/Linux:** Open your terminal, navigate to the folder, and run `bash setup.command`.
 4. **Launch:** Use the newly created desktop shortcut to open the application.
-5. **Login** Go to File -> Authentication & Profiles, follow the prompts to log in and begin downlaoding.
-   
-*(Note: TomeBox includes a built-in auto-updater. Launching the app via the shortcut will silently check GitHub for updates and pull the latest code before booting).*
+5. **Login:** Go to `File → Authentication & Profiles`, follow the prompts to log in and begin downloading.
+
+> *Source installs include a built-in auto-updater. Launching the app via the shortcut will silently check GitHub for updates and pull the latest code before booting.*
+
+## System Requirements
+
+* **Windows 10 or 11 (64-bit)** for the pre-built release
+* **Windows / macOS / Linux** for source installs (Python 3.11+ recommended)
+* **~250MB disk space** (includes bundled FFmpeg)
+* **Internet connection** for Audible features (offline playback works without)
 
 ## Screenshots
 
 ### Unified List View
 ![TomeBox List View](assets/list_view.png)
 ![TomeBox List View](assets/list_view_context.png)
-*Managing cloud and local files in the classic list view. Now with Context Menues!*
+*Managing cloud and local files in the classic list view. Now with Context Menus!*
 
 ### Dynamic Grid View
 ![TomeBox Grid View](assets/grid_view.png)
 ![TomeBox Grid View](assets/grid_view_context.png)
 *Browsing the library with fetched high-res cover art.*
 
-### Colour Pallets
+### Colour Palettes
 ![TomeBox Light mode](assets/lightmode.png)
 ![TomeBox Terminal mode](assets/terminal_mode.png)
 ![TomeBox Cyberpunk mode](assets/cyberpunk.png)
@@ -44,6 +67,7 @@ TomeBox is designed to be completely portable and requires zero technical config
 ![TomeBox Mobile-player](assets/mobile-player.png)
 
 *Daaaaaammmmnnn*
+
 ## Features
 
 ### Advanced Playback Engine
@@ -64,7 +88,7 @@ TomeBox is designed to be completely portable and requires zero technical config
 * **Live Cover Previews:** Single-click integration on library items that dynamically fetches and displays high-resolution cover art in the side panel without triggering audio playback.
 
 ### Multi-User Authentication & Decryption
-* **Dynamic Key Swapping:** Share a single `library.json` and download folder with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
+* **Dynamic Key Swapping:** Share a single library with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
 * **Native DRM Handling:** Automatically requests the `Adrm` content license via the API to extract offline AAXC encryption keys (`audible_key` and `audible_iv`).
 * **Multi-Region Support:** Built-in locale switching (US, UK, AU, CA, DE, FR, JP) for accurate catalog querying.
 
@@ -82,62 +106,66 @@ TomeBox is designed to be completely portable and requires zero technical config
 ### User Interface & Export
 * **Dual Engine Architecture:** Switch between the modern Windows 11 style (`sv_ttk`) and the classic engine (featuring 8 hardcoded developer themes like Solarized, Dracula, Cyberpunk, and Nordic Slate).
 * **Data Export:** Dump your library to a flattened CSV file or generate an offline, CSS-styled HTML gallery of your collection.
-* **System Tray Intergration:** Minimizes to system tray for neat and clean runtime. 
+* **System Tray Integration:** Minimizes to system tray for neat and clean runtime. 
 
 ### Local Companion Web Server
-* **Embedded Daemon:** FastAPI server runs in a background thread inside the Tkinter process, avoiding GUI blocking.
-
+* **Embedded Daemon:** FastAPI server runs in a background thread inside the desktop process, avoiding GUI blocking.
 * **Menu Integration:** Toggleable via the desktop File menu; automatically retrieves and displays the host machine's local IP address.
-
-* **Chunked Audio Streaming:** Implements HTTP 206 Partial Content endpoints to stream .m4b files in 64KB chunks, allowing timeline scrubbing without loading full files into memory.
-
-* **Metadata Hydration:** API dynamically merges library.json data with the cloud_cache and local .jpg directory to serve complete book profiles (authors, shelves, covers) to the frontend.
+* **QR Code Pairing:** Scan a QR code from the desktop to securely pair your phone with the server in one tap.
+* **Chunked Audio Streaming:** Implements HTTP 206 Partial Content endpoints to stream `.m4b` files in 64KB chunks, allowing timeline scrubbing without loading full files into memory.
+* **Metadata Hydration:** API dynamically merges library data with the cloud cache and local cover directory to serve complete book profiles (authors, shelves, covers) to the frontend.
 
 ### Web Player Interface
 * **Mobile-First SPA:** Responsive single-page application built in vanilla HTML/CSS/JS without build steps or heavy frameworks.
-
-* **Live Filtering:*** Client-side grid filtering by search query (title/author) and custom desktop shelves.
-
+* **PWA Installable:** Add the web player to your phone's home screen for a native app feel — full-screen, no browser chrome, persistent across sessions.
+* **Live Filtering:** Client-side grid filtering by search query (title/author) and custom desktop shelves.
 * **MediaSession Hook:** Pushes cover art, title, and author data to OS-level media controllers (lock screens, smartwatches, Bluetooth car displays).
 
 ### Playback & Controls
 * **Dynamic Chapter Parsing:** Executes ffprobe on demand to extract MP4 chapter markers, generating an interactive chapter selection menu.
-
 * **Hardware Skip Integration:** Maps physical OS media buttons (previous/next track) to audiobook chapter skips and 15-second jumps.
-
 * **Playback Speed:** Cycles through 1.0x to 2.0x speeds, maintaining state across track changes.
-
 * **Advanced Sleep Timer:** Configurable by raw minutes (15/30/60) or custom chapter counts. Chapter-based sleep calculates the exact future timestamp and pauses precisely on the chapter boundary.
 
 ### Progress Sync & Multi-User Tracking
 * **Profile Integration:** Fetches desktop user profiles and isolates playback progress within the database, preventing multiple users from overriding each other.
-
 * **Heartbeat Sync:** Browser posts the current timestamp to the backend every 10 seconds during active playback.
-
-* **Bi-Directional Format Translation:** Desktop GUI translates absolute time (from the web) into chapter-relative time (for ffplay), allowing seamless resuming between PC and mobile devices.
+* **Bi-Directional Format Translation:** Desktop translates absolute time (from the web) into chapter-relative time (for ffplay), allowing seamless resuming between PC and mobile devices.
 
 ## Application Data
 
 TomeBox respects your system and does not bury files in hidden AppData folders. It generates the following local files directly in its root directory:
-* `library.json`: Tracks local file paths, metadata, custom shelves, and playback history.
-* `cloud_cache.json`: Caches your Audible library metadata to reduce API calls.
-* `auth_[ProfileName].json`: Stores your active Audible session data.
-* `settings.json`: Stores application preferences, UI themes, and your achievement/stats database.
-* `aax_manager.log`: Output log for debugging and process tracking.
-* `.tomebox_version`: Local hash file used by the auto-updater.
 
-# Roadmap
+* `data/tomebox.db`: SQLite database tracking local file paths, metadata, custom shelves, settings, and playback history.
+* `data/cloud_[ProfileName].json`: Caches your Audible library metadata to reduce API calls.
+* `data/auth_[ProfileName].json`: Stores your active Audible session data.
+* `covers/`: Directory of cached high-resolution cover art (one `.jpg` per ASIN).
+* `logs/tomebox.log`: Rotating output log for debugging and process tracking.
 
-## Ui changes
+## Troubleshooting
 
-### UI Engine Replacement: 
-Migrating the frontend away from Tkinter.
+**TomeBox won't launch / crashes immediately:** Check `logs/tomebox.log` for the error trace. The most common cause is missing FFmpeg binaries in the install folder.
 
-## Phase 2: The Ecosystem Shift
+**Downloads fail with "Not authenticated":** Re-link your Audible account via `File → Authentication & Profiles`. Tokens occasionally expire and need refreshing.
 
-### Multi-Provider Support: 
-Abstract the Audible API logic to support adding modules for Soundbooth Theater or other DRM-free stores.
+**Web companion can't connect:** Make sure your phone and PC are on the same Wi-Fi network. The companion only works on local networks unless you set up your own VPN.
 
+**Windows SmartScreen blocks the EXE:** Click "More info" then "Run anyway". This happens with all unsigned indie software.
+
+**Found a bug?** Please report it on [GitHub Issues](https://github.com/yourusername/tomebox/issues) or in [r/TomeBox](https://www.reddit.com/r/TomeBox/).
+
+## Roadmap
+
+### Phase 1: UI Modernisation
+* **Web-Based UI:** Replace the Tkinter desktop interface with a unified web frontend, accessible both natively (via embedded webview) and through any browser.
+* **Headless Mode:** Run TomeBox as a background service on a NAS or home server with no UI at all — manage everything through the web companion.
+
+### Phase 2: Ecosystem Expansion
+* **Multi-Provider Support:** Abstract the Audible-specific logic to support DRM-free providers like Libro.fm, Downpour, Soundbooth Theater, and others.
+* **Unified Library:** One interface for every audiobook you own, regardless of where you bought it.
+
+### Phase 3: Worldwide Access
+* **Embedded VPN:** Native Kotlin mobile app with built-in WireGuard tunnel via Headscale, enabling secure remote access to your library from anywhere in the world without router configuration or third-party services.
 
 ## Acknowledgments
 
@@ -148,4 +176,29 @@ TomeBox stands on the shoulders of giants. This project is only possible thanks 
 * **[sv-ttk (Sun Valley TTK)](https://github.com/rdbende/Sun-Valley-ttk-theme):** For bringing a beautiful, modern, Windows-native dark theme to classic Tkinter.
 * **[Pillow (PIL)](https://python-pillow.org/):** Handling the high-res cover art processing, resizing, and rendering for the visual grid.
 * **[Pycaw](https://github.com/AndreMiras/pycaw):** Enabling the native OS-level volume mixer hooks on Windows.
-* **[Gyan.dev](https://www.gyan.dev/ffmpeg/builds/):** For providing the highly available, pre-compiled portable FFmpeg Windows binaries used in the automated installer.
+* **[FastAPI](https://fastapi.tiangolo.com/):** Powering the embedded companion web server with modern async HTTP handling and automatic API documentation.
+* **[Gyan.dev](https://www.gyan.dev/ffmpeg/builds/):** For providing the highly available, pre-compiled portable FFmpeg Windows binaries.
+
+## License
+
+MIT License
+
+Copyright (c) 2026 Jesse Dale
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
