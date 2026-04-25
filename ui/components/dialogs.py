@@ -277,6 +277,8 @@ def show_achievement_toast(app, title, desc):
     app.root.after(5000, toast.destroy)
 
 def open_pairing_window(app):
+    import socket
+    
     # Dynamically grab the host machine's local IP
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -287,34 +289,69 @@ def open_pairing_window(app):
     finally:
         s.close()
 
-    # Construct the secure URL
     token = app.db.load_settings().get("auth_token")
     pairing_url = f"http://{local_ip}:8000/auth?token={token}"
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
-    top.geometry("400x500")
     top.configure(bg="#2b2b2b")
+    top.transient(app.root)
+    top.resizable(False, False)
+    
+    # Build all widgets, then size the window to fit
+    main_frame = tk.Frame(top, bg="#2b2b2b", padx=25, pady=20)
+    main_frame.pack(fill="both", expand=True)
+    
+    tk.Label(main_frame, text="Scan to Connect", font=("Arial", 16, "bold"), 
+             bg="#2b2b2b", fg="white").pack(pady=(0, 10))
+    
+    tk.Label(main_frame, text="Point your phone's camera at this code\nto securely load your library.",
+             bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center").pack(pady=(0, 15))
 
-    tk.Label(top, text="Scan to Connect", font=("Arial", 16, "bold"), bg="#2b2b2b", fg="white").pack(pady=15)
-    tk.Label(top, text="Point your phone's camera at this code to securely load your library.", 
-             bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center").pack(pady=5)
-
-    # Generate the QR Code
-    qr = qrcode.QRCode(box_size=9, border=2)
+    # Generate QR
+    qr = qrcode.QRCode(box_size=8, border=2)
     qr.add_data(pairing_url)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
-
-    # Convert to a Tkinter-compatible image
     tk_image = ImageTk.PhotoImage(img)
 
-    qr_label = tk.Label(top, image=tk_image, bg="#2b2b2b")
-    qr_label.image = tk_image  # Keep a reference to prevent garbage collection
-    qr_label.pack(pady=20)
+    qr_label = tk.Label(main_frame, image=tk_image, bg="#2b2b2b")
+    qr_label.image = tk_image
+    qr_label.pack(pady=(0, 15))
 
-    # Provide the raw URL for manual entry if needed
-    url_entry = tk.Entry(top, width=45, justify="center")
-    url_entry.insert(0, pairing_url)
-    url_entry.configure(state="readonly")
-    url_entry.pack(pady=10)
+    tk.Label(main_frame, text="Or open this URL manually:",
+             bg="#2b2b2b", fg="#cccccc", font=("Arial", 9)).pack(pady=(0, 5))
+
+    # URL display - use a Text widget for proper wrapping with monospace
+    url_text = tk.Text(main_frame, height=2, wrap="word", bg="#1e1e1e", fg="#bb86fc",
+                      font=("Consolas", 9), relief="flat", padx=10, pady=8)
+    url_text.insert("1.0", pairing_url)
+    url_text.config(state="disabled")
+    url_text.pack(fill="x", pady=(0, 5))
+
+    # Copy button for convenience
+    def copy_url():
+        top.clipboard_clear()
+        top.clipboard_append(pairing_url)
+        copy_btn.config(text="Copied!")
+        top.after(1500, lambda: copy_btn.config(text="Copy URL"))
+    
+    copy_btn = tk.Button(main_frame, text="Copy URL", command=copy_url,
+                         bg="#bb86fc", fg="#1e1e1e", font=("Arial", 9, "bold"),
+                         relief="flat", padx=15, pady=5)
+    copy_btn.pack(pady=(5, 0))
+
+    # Now size the window to fit its contents
+    top.update_idletasks()
+    
+    # Centre on parent window
+    parent_x = app.root.winfo_x()
+    parent_y = app.root.winfo_y()
+    parent_w = app.root.winfo_width()
+    parent_h = app.root.winfo_height()
+    win_w = top.winfo_reqwidth()
+    win_h = top.winfo_reqheight()
+    
+    x = parent_x + (parent_w // 2) - (win_w // 2)
+    y = parent_y + (parent_h // 2) - (win_h // 2)
+    top.geometry(f"+{x}+{y}")

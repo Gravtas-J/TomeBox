@@ -1,0 +1,17 @@
+.git
+.gitignore
+release/
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+*.md
+*.bat
+*.sh
+service/
+ui/tomebox.ico

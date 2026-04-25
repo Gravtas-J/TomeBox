@@ -12,7 +12,7 @@ def create_server_app(tomebox):
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
         # Allow static files and the new auth endpoint to bypass the check
-        if request.url.path in ["/auth", "/favicon.ico"] or request.url.path.startswith("/static"):
+        if request.url.path in ["/auth", "/favicon.ico", "/pairing"] or request.url.path.startswith("/static"):
             return await call_next(request)
 
         server_token = tomebox.db.load_settings().get("auth_token")
@@ -162,12 +162,82 @@ def create_server_app(tomebox):
                 tomebox.db.save_local_db(tomebox.library_manager.local_library)
 
                 if getattr(tomebox, 'file_path', None) == path:
-                    tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
+                    if tomebox.root:  # Only sync to GUI if GUI exists
+                        tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")
         return {"status": "success"}
-
+    @api.get("/pairing", response_class=HTMLResponse)
+    def show_pairing_page(request: Request):
+        """Renders a pairing QR code page accessible to already-paired devices."""
+        # Allow access if already paired OR if explicitly bypassing for first-time setup
+        server_token = tomebox.db.load_settings().get("auth_token")
+        client_token = request.cookies.get("tomebox_token")
+        
+        if client_token != server_token:
+            # Not authenticated — show a minimal page explaining how to pair
+            return HTMLResponse("""
+            <!DOCTYPE html>
+            <html><head><title>TomeBox Pairing</title>
+            <style>
+                body { font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0;
+                    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+                    margin: 0; padding: 20px; text-align: center; }
+                .box { max-width: 500px; }
+                h1 { color: #bb86fc; }
+            </style></head>
+            <body><div class="box">
+                <h1>Pairing Required</h1>
+                <p>To pair this device, run the following on the TomeBox server:</p>
+                <pre style="background: #1e1e1e; padding: 15px; border-radius: 8px;">tomebox --show-qr</pre>
+                <p>Or check the server's startup logs for the pairing URL.</p>
+            </div></body></html>
+            """, status_code=401)
+        
+        # Authenticated — show the QR for adding new devices
+        import qrcode
+        import io
+        import base64
+        
+        # Determine which IP the request came in on so we generate a usable QR
+        host = request.headers.get("host", "localhost:8000")
+        pairing_url = f"http://{host}/auth?token={server_token}"
+        
+        qr = qrcode.QRCode(box_size=10, border=2)
+        qr.add_data(pairing_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        qr_b64 = base64.b64encode(buf.getvalue()).decode()
+        
+        return HTMLResponse(f"""
+        <!DOCTYPE html>
+        <html><head><title>TomeBox - Add Device</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{ font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0;
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                min-height: 100vh; margin: 0; padding: 20px; }}
+            .box {{ background: #1e1e1e; padding: 30px; border-radius: 12px; text-align: center;
+                    max-width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+            h1 {{ color: #bb86fc; margin-top: 0; }}
+            img {{ background: white; padding: 15px; border-radius: 8px; margin: 20px 0; max-width: 280px; }}
+            .url {{ background: #2a2a2a; padding: 12px; border-radius: 6px; word-break: break-all;
+                    font-family: monospace; font-size: 0.85em; margin-top: 15px; }}
+            .back {{ display: inline-block; margin-top: 20px; color: #bb86fc; text-decoration: none; }}
+        </style></head>
+        <body><div class="box">
+            <h1>Add a New Device</h1>
+            <p>Scan this QR code with the device you want to pair.</p>
+            <img src="data:image/png;base64,{qr_b64}" alt="Pairing QR Code">
+            <p style="font-size: 0.9em; opacity: 0.8;">Or copy this URL:</p>
+            <div class="url">{pairing_url}</div>
+            <a href="/" class="back">&larr; Back to Library</a>
+        </div></body></html>
+        """)
     @api.get("/api/chapters")
     def get_chapters(path: str):
         if not path or not os.path.exists(path): return []
@@ -227,3 +297,5 @@ def create_server_app(tomebox):
         return StreamingResponse(chunk_generator(), status_code=206, headers=headers)
 
     return api
+
+    
