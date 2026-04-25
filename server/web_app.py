@@ -4,10 +4,10 @@ import subprocess
 from fastapi import FastAPI, Request, HTTPException, status, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-
+from core.utils.paths import get_resource_path
 def create_server_app(tomebox):
     api = FastAPI()
-    static_dir = os.path.join(tomebox.base_dir, "server", "static")
+    static_dir = get_resource_path("server", "static")
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
@@ -57,7 +57,7 @@ def create_server_app(tomebox):
     
     @api.get("/", response_class=HTMLResponse)
     def web_interface():
-        html_path = os.path.join(tomebox.base_dir, "server", "mobile_ui.html")
+        html_path = get_resource_path("server", "mobile_ui.html")
         try:
             with open(html_path, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())

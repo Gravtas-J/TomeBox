@@ -3,7 +3,6 @@ import json
 import sqlite3
 import threading
 import uuid
-
 class DatabaseManager:
     def __init__(self, base_dir):
         self.base_dir = base_dir

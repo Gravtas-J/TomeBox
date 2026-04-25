@@ -546,8 +546,8 @@ class AAXManagerApp:
         self.settings["active_profile"] = selected
         self.db.save_settings(self.settings)
         
-        self.auth_save_path = os.path.join(self.base_dir, "data", f"auth_{self.active_profile}.json")
-        self.cloud_cache_path = os.path.join(self.base_dir, "data", f"cloud_{self.active_profile}.json")
+        self.auth_save_path = get_resource_path( "data", f"auth_{self.active_profile}.json")
+        self.cloud_cache_path = get_resource_path( "data", f"cloud_{self.active_profile}.json")
         
         # Clear current session
         self.api_client.auth = None
