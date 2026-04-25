@@ -38,7 +38,7 @@ If you want to run TomeBox from source, contribute to development, or you're on 
 
 * **Windows 10 or 11 (64-bit)** for the pre-built release
 * **Windows / macOS / Linux** for source installs (Python 3.11+ recommended)
-* **~250MB disk space** (includes bundled FFmpeg)
+* **~500MB disk space** (includes bundled FFmpeg)
 * **Internet connection** for Audible features (offline playback works without)
 
 ## Screenshots
