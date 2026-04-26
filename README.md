@@ -203,7 +203,6 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 
 ### Phase 1: UI Modernisation
 * **Web-Based UI:** Replace the Tkinter desktop interface with a unified web frontend, accessible both natively (via embedded webview) and through any browser.
-* **Headless Mode:** Run TomeBox as a background service on a NAS or home server with no UI at all — manage everything through the web companion.
 
 ### Phase 2: Ecosystem Expansion
 * **Multi-Provider Support:** Abstract the Audible-specific logic to support DRM-free providers like Libro.fm, Downpour, Soundbooth Theater, and others.
