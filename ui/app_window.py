@@ -480,7 +480,46 @@ class AAXManagerApp:
             on_complete_cb=self._on_import_complete,
             logger=self.logger
         )
-    
+
+    def import_folder(self):
+        """Prompts the user to select a folder and recursively imports all audio files."""
+        folder = filedialog.askdirectory(title="Select Folder Containing Audiobooks")
+        if not folder:
+            return
+        
+        self.dl_status_var.set("Scanning folder...")
+        
+        def on_status(msg):
+            self.root.after(0, lambda: self.dl_status_var.set(msg))
+        
+        def on_complete(count):
+            def update_ui():
+                self.dl_status_var.set("Idle")
+                self.refresh_library_ui()
+                
+                if count > 0:
+                    messagebox.showinfo(
+                        "Import Complete",
+                        f"Successfully imported {count} audiobook{'s' if count != 1 else ''}."
+                    )
+                else:
+                    messagebox.showinfo(
+                        "No Files Found",
+                        "No audio files (.aax, .aaxc, .m4b, .mp3) were found in the selected folder.\n\n"
+                        "If you expected to see files, make sure the folder contains them directly or in subfolders."
+                    )
+            
+            self.root.after(0, update_ui)
+        
+        self.library_manager.import_folder(
+            folder_path=folder,
+            converter=self.converter,
+            active_profile=self.active_profile,
+            on_status_cb=on_status,
+            on_complete_cb=on_complete,
+            logger=self.logger
+        )
+
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
         self.root.deiconify()
@@ -1106,7 +1145,41 @@ class AAXManagerApp:
                     return
                 self.add_queue_ui_row(asin, title)
                 self.download_manager.queue_download(asin, title, save_dir, post_action=action_type)
-
+    def match_to_audible_prompt(self):
+        """Opens the manual match dialog for the currently selected library item."""
+        from ui.components.dialogs import open_match_to_audible_window
+        
+        # Get the selected file
+        if self.current_view_mode == "list":
+            selected = self.library_tree.focus()
+            if not selected:
+                messagebox.showwarning("Selection Required", "Please select a local file to match.")
+                return
+            item = self.library_tree.item(selected)
+        else:
+            if not self._selected_grid_item:
+                messagebox.showwarning("Selection Required", "Please select a local file to match.")
+                return
+            item = self._selected_grid_item
+        
+        title = item['values'][0]
+        
+        # Find the actual filepath for this title
+        filepath = None
+        for path, data in self.library_manager.local_library.items():
+            if data.get("title") == title:
+                filepath = path
+                break
+        
+        if not filepath:
+            messagebox.showinfo(
+                "Cloud-Only Item",
+                "This item is in your Audible library but hasn't been downloaded yet.\n\n"
+                "Use 'Download Selected' or 'Download Missing' to fetch it."
+            )
+            return
+        
+        open_match_to_audible_window(self, filepath)
     def start_scrape_thread(self, filepath):
         if not self.api_client.auth:
             messagebox.showwarning("Not Logged In", "An Audible login is required to search the catalog for ASINs.")
@@ -1245,6 +1318,12 @@ class AAXManagerApp:
             activation_bytes = self.api_client.get_activation_bytes()
             self.auth_bytes.set(activation_bytes)
             self.logger.info(f"Session loaded automatically. Activation Bytes: {activation_bytes}")
+            
+            # Reset filters before fetch so UI shows everything when worker completes
+            self.filter_var.set("All")
+            self.shelf_filter_var.set("All Shelves")
+            self.search_var.set("")
+            
             self.fetch_cloud_library()
         else:
             self.logger.info("No saved session found. Please log in.")
@@ -1313,6 +1392,9 @@ class AAXManagerApp:
                 self.logger.info(f"Session saved locally to {self.auth_save_path}")
 
                 self.root.after(0, lambda: messagebox.showinfo("Success", "Connected to Audible!"))
+                self.filter_var.set("All")
+                self.shelf_filter_var.set("All Shelves")
+                self.search_var.set("")
                 self.root.after(0, self.fetch_cloud_library)
                 
         except Exception as e:

@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
+
 def setup_library_view(app, parent):
     """Builds the main library grid, list, and queue views."""
     style = ttk.Style()
@@ -126,9 +127,11 @@ def setup_library_view(app, parent):
     local_btn_frame = ttk.Frame(lib_frame)
     local_btn_frame.pack(fill="x", pady=2)
     ttk.Button(local_btn_frame, text="Add Local File", command=app.add_local_file).pack(side=tk.LEFT, padx=5)
+    ttk.Button(local_btn_frame, text="Import Folder", command=app.import_folder).pack(side=tk.LEFT, padx=5)
     ttk.Button(local_btn_frame, text="Remove from List", command=app.remove_local_file).pack(side=tk.LEFT, padx=5)
     ttk.Button(local_btn_frame, text="Scrape Metadata", command=lambda: app.handle_action_on_selected("scrape")).pack(side=tk.LEFT, padx=5)
-
+    # ttk.Button(local_btn_frame, text="Match to Audible", command=lambda: app.match_to_audible_prompt()).pack(side=tk.LEFT, padx=5)
+    
     dl_prog_frame = ttk.Frame(lib_frame)
     dl_prog_frame.pack(fill="x", padx=5)
     

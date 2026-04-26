@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import socket
 import qrcode
 from PIL import Image, ImageTk
+import os
 
 def open_auth_window(app):
     if getattr(app, 'auth_window', None) and app.auth_window.winfo_exists():
@@ -355,3 +356,187 @@ def open_pairing_window(app):
     x = parent_x + (parent_w // 2) - (win_w // 2)
     y = parent_y + (parent_h // 2) - (win_h // 2)
     top.geometry(f"+{x}+{y}")
+
+def open_match_to_audible_window(app, filepath):
+    """Lets the user manually search Audible's catalog and link a file to a cloud item."""
+    if not app.api_client.auth:
+        messagebox.showwarning(
+            "Not Logged In",
+            "You need to be logged into Audible to search the catalog.\n\n"
+            "Go to File > Authentication & Profiles to sign in."
+        )
+        return
+    
+    # Get the file's current title for the initial search
+    local_data = app.library_manager.local_library.get(filepath, {})
+    initial_query = local_data.get("title", "")
+    
+    win = tk.Toplevel(app.root)
+    win.title("Match File to Audible")
+    win.geometry("600x500")
+    win.transient(app.root)
+    
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    win.configure(bg=bg_color)
+    
+    main_frame = ttk.Frame(win, padding=15)
+    main_frame.pack(fill="both", expand=True)
+    
+    ttk.Label(
+        main_frame,
+        text="Search Audible Catalog",
+        font=("Segoe UI", 14, "bold")
+    ).pack(anchor="w", pady=(0, 5))
+    
+    ttk.Label(
+        main_frame,
+        text=f"Linking: {os.path.basename(filepath)}",
+        font=("Segoe UI", 9, "italic"),
+        wraplength=550
+    ).pack(anchor="w", pady=(0, 15))
+    
+    # Search row
+    search_frame = ttk.Frame(main_frame)
+    search_frame.pack(fill="x", pady=(0, 10))
+    
+    search_var = tk.StringVar(value=initial_query)
+    search_entry = ttk.Entry(search_frame, textvariable=search_var)
+    search_entry.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 5))
+    
+    status_var = tk.StringVar(value="")
+    
+    # Results tree
+    tree_frame = ttk.Frame(main_frame)
+    tree_frame.pack(fill="both", expand=True, pady=(0, 10))
+    
+    columns = ("Title", "Author", "ASIN")
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+    tree.heading("Title", text="Title")
+    tree.heading("Author", text="Author")
+    tree.heading("ASIN", text="ASIN")
+    tree.column("Title", width=300)
+    tree.column("Author", width=150)
+    tree.column("ASIN", width=100)
+    
+    scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=scroll.set)
+    tree.pack(side=tk.LEFT, fill="both", expand=True)
+    scroll.pack(side=tk.RIGHT, fill="y")
+    
+    # Status row
+    status_label = ttk.Label(main_frame, textvariable=status_var, font=("Segoe UI", 9))
+    status_label.pack(anchor="w", pady=(0, 5))
+    
+    # Result storage so we can grab the ASIN of the selected row
+    results_by_iid = {}
+    
+    def populate_results(products):
+        # Clear existing rows
+        for row in tree.get_children():
+            tree.delete(row)
+        results_by_iid.clear()
+        
+        if not products:
+            status_var.set("No matches found. Try a different search term.")
+            return
+        
+        for product in products:
+            title = product.get("title", "Unknown")
+            asin = product.get("asin", "")
+            
+            raw_authors = product.get("authors", [])
+            authors = ", ".join([
+                a.get("name", "") for a in raw_authors if isinstance(a, dict)
+            ])
+            
+            iid = tree.insert("", "end", values=(title, authors, asin))
+            results_by_iid[iid] = asin
+        
+        status_var.set(f"Found {len(products)} result{'s' if len(products) != 1 else ''}. Select one and click Apply.")
+    
+    def do_search():
+        query = search_var.get().strip()
+        if not query:
+            status_var.set("Enter a search term.")
+            return
+        
+        status_var.set("Searching Audible...")
+        win.update_idletasks()
+        
+        # Use the metadata manager's existing search but capture results synchronously
+        # via a temporary callback override
+        original_search_complete = app.metadata_manager.on_search_complete
+        original_error = app.metadata_manager.on_error
+        
+        def capture_results(fp, products):
+            app.root.after(0, lambda: populate_results(products))
+            app.metadata_manager.on_search_complete = original_search_complete
+            app.metadata_manager.on_error = original_error
+        
+        def capture_error(msg):
+            app.root.after(0, lambda: status_var.set(f"Error: {msg}"))
+            app.metadata_manager.on_search_complete = original_search_complete
+            app.metadata_manager.on_error = original_error
+        
+        app.metadata_manager.on_search_complete = capture_results
+        app.metadata_manager.on_error = capture_error
+        app.metadata_manager.search_catalog(filepath, query)
+    
+    def do_apply():
+        selection = tree.focus()
+        if not selection:
+            status_var.set("Select a result first.")
+            return
+        
+        asin = results_by_iid.get(selection)
+        if not asin:
+            status_var.set("Invalid selection.")
+            return
+        
+        # Confirm
+        title_picked = tree.item(selection)["values"][0]
+        if not messagebox.askyesno(
+            "Confirm Match",
+            f"Link this file to:\n\n{title_picked}\n\nThis will overwrite any existing metadata."
+        ):
+            return
+        
+        status_var.set("Applying metadata and embedding tags...")
+        win.update_idletasks()
+        
+        # Use the existing apply pipeline
+        original_apply = app.metadata_manager.on_apply_complete
+        original_error = app.metadata_manager.on_error
+        
+        def on_done(fp, new_title):
+            app.root.after(0, lambda: app.refresh_library_ui())
+            app.root.after(0, win.destroy)
+            app.metadata_manager.on_apply_complete = original_apply
+            app.metadata_manager.on_error = original_error
+        
+        def on_error(msg):
+            app.root.after(0, lambda: status_var.set(f"Error: {msg}"))
+            app.metadata_manager.on_apply_complete = original_apply
+            app.metadata_manager.on_error = original_error
+        
+        app.metadata_manager.on_apply_complete = on_done
+        app.metadata_manager.on_error = on_error
+        app.metadata_manager.apply_scraped_metadata(filepath, asin)
+    
+    # Action buttons
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(fill="x")
+    
+    ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(btn_frame, text="Apply Match", command=do_apply).pack(side=tk.RIGHT)
+    ttk.Button(search_frame, text="Search", command=do_search).pack(side=tk.RIGHT)
+    
+    # Allow Enter to trigger search from the entry box
+    search_entry.bind("<Return>", lambda e: do_search())
+    
+    # Auto-search on open if we have a starting query
+    if initial_query:
+        win.after(100, do_search)
+    
+    search_entry.focus_set()

@@ -8,6 +8,99 @@ try:
 except ImportError:
     pass
 
+import re
+
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+from core.utils.process_runner import ProcessRunner
+
+def _normalize_title(title):
+    """Strips common boilerplate and normalises punctuation for comparison."""
+    if not title:
+        return ""
+    
+    t = title.lower()
+    
+    # Normalise fancy quotes to ASCII
+    t = t.replace("\u2018", "'").replace("\u2019", "'")
+    t = t.replace("\u201c", '"').replace("\u201d", '"')
+    
+    # Strip Audible-style suffixes
+    suffixes = [
+        " (unabridged)",
+        " (abridged)",
+        " (audible audio edition)",
+        " (audiobook)",
+        ": a novel",
+    ]
+    for suffix in suffixes:
+        if t.endswith(suffix):
+            t = t[:-len(suffix)]
+    
+    # Strip "Book N" / "Volume N" / "Vol. N" series markers
+    t = re.sub(r",?\s*(book|volume|vol\.?|part)\s+\d+\s*$", "", t)
+    
+    # Remove all punctuation
+    t = re.sub(r"[^\w\s]", " ", t)
+    
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    
+    return t
+
+
+def _find_matching_cloud_item(title, cloud_items, threshold=85):
+    """Returns the best-matching cloud item for a given local title, or None."""
+    if not title or not cloud_items:
+        return None
+    
+    target = _normalize_title(title)
+    if not target:
+        return None
+    
+    if RAPIDFUZZ_AVAILABLE:
+        best_match = None
+        best_score = 0
+        
+        for item in cloud_items:
+            cloud_title = _normalize_title(item.get("title", ""))
+            if not cloud_title:
+                continue
+            
+            # Standard fuzzy match on the full title
+            score = fuzz.token_set_ratio(target, cloud_title)
+            
+            # Series-aware second pass: if the file's title appears to contain 
+            # the series name as a prefix, strip it and try again
+            raw_series = item.get("series", []) or []
+            for series_entry in raw_series:
+                if not isinstance(series_entry, dict):
+                    continue
+                series_name = _normalize_title(series_entry.get("title", ""))
+                if not series_name or len(series_name) < 4:
+                    continue
+                
+                # If the target starts with the series name, strip it and rematch
+                if target.startswith(series_name):
+                    stripped_target = target[len(series_name):].strip()
+                    if stripped_target:
+                        series_score = fuzz.token_set_ratio(stripped_target, cloud_title)
+                        score = max(score, series_score)
+            
+            if score > best_score:
+                best_score = score
+                best_match = item
+        
+        return best_match if best_score >= threshold else None
+    
+    # Fallback: exact match only
+    for item in cloud_items:
+        if _normalize_title(item.get("title", "")) == target:
+            return item
+    return None
 class LibraryManager:
     def __init__(self, db_manager, api_client, base_dir):
         self.db = db_manager
@@ -206,14 +299,33 @@ class LibraryManager:
                     except Exception as e:
                         if logger: logger(f"Failed to read tags for {filename}: {e}")
 
-                # Mutate the library dictionary
-                self.local_library[filepath] = {
-                    "title": title, 
-                    "format": format_clean, 
-                    "path": filepath, 
+                # Try to match against cloud library to avoid duplicates
+                matched_cloud_item = _find_matching_cloud_item(title, self.cloud_items)
+
+                entry = {
+                    "title": title,
+                    "format": format_clean,
+                    "path": filepath,
                     "authors": authors,
                     "owner": active_profile
                 }
+
+                if matched_cloud_item:
+                    # Use the cloud item's title and ASIN so the library view dedupes correctly
+                    entry["title"] = matched_cloud_item.get("title", title)
+                    entry["asin"] = matched_cloud_item.get("asin", "")
+                    
+                    # Pull richer authors from cloud if available
+                    raw_authors = matched_cloud_item.get("authors", [])
+                    if raw_authors:
+                        entry["authors"] = ", ".join([
+                            a.get("name", "") for a in raw_authors if isinstance(a, dict)
+                        ])
+                    
+                    if logger:
+                        logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
+
+                self.local_library[filepath] = entry
                 added_count += 1
                 
             # Save and ping the UI
@@ -325,3 +437,161 @@ class LibraryManager:
                 on_refresh_cb()
                 
             time.sleep(2)
+
+    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+        """Recursively scans a folder for audio files and imports them all."""
+        def worker():
+            if not os.path.isdir(folder_path):
+                if on_complete_cb:
+                    on_complete_cb(0)
+                return
+            
+            # Recursively collect all valid audio files
+            valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
+            file_paths = []
+            
+            if on_status_cb:
+                on_status_cb(f"Scanning folder...")
+            
+            for root_dir, dirs, files in os.walk(folder_path):
+                for filename in files:
+                    if filename.lower().endswith(valid_exts):
+                        file_paths.append(os.path.join(root_dir, filename))
+            
+            if not file_paths:
+                if logger:
+                    logger(f"No audio files found in {folder_path}")
+                if on_complete_cb:
+                    on_complete_cb(0)
+                return
+            
+            if logger:
+                logger(f"Found {len(file_paths)} audio files in {folder_path}")
+            
+            if on_status_cb:
+                on_status_cb(f"Found {len(file_paths)} files. Importing...")
+            
+            # Reuse the existing import_files logic, but synchronously since we're already in a worker
+            valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
+            added_count = 0
+            
+            for filepath in file_paths:
+                if not os.path.exists(filepath):
+                    continue
+                
+                # Skip files already in library
+                if filepath in self.local_library:
+                    continue
+                
+                ext = os.path.splitext(filepath)[1].lower()
+                if ext not in valid_exts:
+                    continue
+                
+                filename = os.path.basename(filepath)
+                title = filename
+                authors = "Unknown Author"
+                format_clean = ext.replace(".", "").upper()
+                embedded_meta = {}
+
+                if on_status_cb:
+                    on_status_cb(f"Importing: {filename}")
+
+                # Scrape tags if it's an M4B or MP3
+                if format_clean in ["M4B", "MP3"]:
+                    try:
+                        data = converter.get_metadata_and_chapters(filepath)
+                        tags = data.get("format", {}).get("tags", {})
+                        
+                        if "title" in tags: title = tags["title"]
+                        if "artist" in tags: authors = tags["artist"]
+                        elif "album_artist" in tags: authors = tags["album_artist"]
+                        
+                        embedded_meta = {
+                            "album": tags.get("album", ""),
+                            "year": tags.get("date", "") or tags.get("year", ""),
+                            "comment": tags.get("comment", ""),
+                            "narrator": tags.get("composer", ""),
+                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60)
+                        }
+                        
+                        if "series" in tags:
+                            embedded_meta["series"] = tags["series"]
+                        elif "show" in tags:
+                            embedded_meta["series"] = tags["show"]
+                        
+                        for stream in data.get("streams", []):
+                            if stream.get("disposition", {}).get("attached_pic") == 1:
+                                embedded_meta["has_embedded_cover"] = True
+                                break
+                                
+                    except Exception as e:
+                        if logger: logger(f"Failed to read tags for {filename}: {e}")
+
+                matched_cloud_item = _find_matching_cloud_item(title, self.cloud_items)
+
+                entry = {
+                    "title": title,
+                    "format": format_clean,
+                    "path": filepath,
+                    "authors": authors,
+                    "owner": active_profile,
+                    "duration_min": embedded_meta.get("duration_min", 0),
+                }
+
+                if embedded_meta.get("series"):
+                    entry["series"] = embedded_meta["series"]
+                if embedded_meta.get("narrator"):
+                    entry["narrator"] = embedded_meta["narrator"]
+                if embedded_meta.get("year"):
+                    entry["year"] = embedded_meta["year"]
+
+                if matched_cloud_item:
+                    entry["title"] = matched_cloud_item.get("title", title)
+                    entry["asin"] = matched_cloud_item.get("asin", "")
+                    
+                    raw_authors = matched_cloud_item.get("authors", [])
+                    if raw_authors:
+                        entry["authors"] = ", ".join([
+                            a.get("name", "") for a in raw_authors if isinstance(a, dict)
+                        ])
+                    
+                    if logger:
+                        logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
+
+                elif embedded_meta.get("has_embedded_cover"):
+                    import hashlib
+                    
+                    fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
+                    cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
+                    
+                    extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
+                    
+                    if not extraction_succeeded:
+                        try:
+                            extract_cmd = [
+                                "ffmpeg", "-y", "-i", filepath,
+                                "-an", "-vcodec", "copy", cover_output
+                            ]
+                            result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
+                            
+                            if result.returncode == 0 and os.path.exists(cover_output) and os.path.getsize(cover_output) > 0:
+                                extraction_succeeded = True
+                                if logger: logger(f"Extracted embedded cover for {title}")
+                        except Exception as e:
+                            if logger: logger(f"Cover extraction failed for {title}: {e}")
+                    
+                    if extraction_succeeded:
+                        entry["asin"] = fake_asin
+
+                self.local_library[filepath] = entry
+                added_count += 1
+                self.local_library[filepath] = entry
+                added_count += 1
+            
+            if added_count > 0:
+                self.db.save_local_db(self.local_library)
+            
+            if on_complete_cb:
+                on_complete_cb(added_count)
+        
+        threading.Thread(target=worker, daemon=True).start()

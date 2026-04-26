@@ -120,8 +120,17 @@ Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
 * **Silent Background Polling:** A daemon thread queries the Audible API every 15 minutes to detect new purchases, updating the cache without interrupting the UI.
 * **Interactive Chapter Navigation:** A table of contents window that displays parsed chapter metadata and timestamps, allowing users to jump directly to specific sections via double-click.
 * **Context Menus:** Native right-click menus integrated into both the list and grid views, providing immediate access to playback controls, timeline seeking, bookmarking, and file operations.
-* **Drag-and-Drop Import:** Direct OS-level drag-and-drop support for adding files to the library, utilizing a background worker to extract metadata via ffprobe without freezing the interface.
 * **Live Cover Previews:** Single-click integration on library items that dynamically fetches and displays high-resolution cover art in the side panel without triggering audio playback.
+
+### Importing Existing Audiobooks
+
+TomeBox can import audiobooks you've already downloaded or liberated:
+
+- **Drag and drop** files directly into the library view
+- **Add Local File** for individual books
+- **Import Folder** to recursively scan a directory 
+
+When importing, TomeBox automatically matches your files against your Audible cloud library by title to avoid duplicates. If a book isn't matched (e.g. it's no longer in your Audible library, or has a significantly different filename), it'll appear as a local-only entry. You can manually link it to a cloud item using **Scrape Metadata**.
 
 ### Multi-User Authentication & Decryption
 * **Dynamic Key Swapping:** Share a single library with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
