@@ -218,7 +218,7 @@ TomeBox stands on the shoulders of giants. This project is only possible thanks 
 * **[FFmpeg & FFplay](https://ffmpeg.org/):** The absolute powerhouse driving the DRM decryption, audio conversion, chapter extraction, and playback engine.
 * **[audible (Python Library)](https://github.com/mkb79/audible):** The brilliant unofficial Audible API wrapper by mkb79 that makes cloud synchronization, authentication, and metadata scraping possible.
 * **[sv-ttk (Sun Valley TTK)](https://github.com/rdbende/Sun-Valley-ttk-theme):** For bringing a beautiful, modern, Windows-native dark theme to classic Tkinter.
-* **[Pillow (PIL)](https://python-pillow.org/):** Handling the high-res cover art processing, resizing, and rendering for the visual grid.
+* **[Pillow (PIL)](https://python-pillow.github.io/):** Handling the high-res cover art processing, resizing, and rendering for the visual grid.
 * **[Pycaw](https://github.com/AndreMiras/pycaw):** Enabling the native OS-level volume mixer hooks on Windows.
 * **[FastAPI](https://fastapi.tiangolo.com/):** Powering the embedded companion web server with modern async HTTP handling and automatic API documentation.
 * **[Gyan.dev](https://www.gyan.dev/ffmpeg/builds/):** For providing the highly available, pre-compiled portable FFmpeg Windows binaries.
