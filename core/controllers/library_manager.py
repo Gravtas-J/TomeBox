@@ -440,39 +440,90 @@ class LibraryManager:
             time.sleep(2)
 
     def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
-        """Recursively scans a folder for audio files and imports them all."""
         def worker():
+            import re
+            
             if not os.path.isdir(folder_path):
-                if on_complete_cb:
-                    on_complete_cb(0)
+                if on_complete_cb: on_complete_cb(0)
                 return
             
-            # Recursively collect all valid audio files
+            if on_status_cb: on_status_cb("Scanning and grouping files...")
+            
+            # Helper for natural sorting (1, 2, 10 instead of 1, 10, 2)
+            def natural_sort_key(s):
+                return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+
+            dir_to_files = {}
             valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
+            
+            # 1. Group all valid audio files by their parent directory
+            for root_dir, dirs, files in os.walk(folder_path):
+                audio_files = [f for f in files if f.lower().endswith(valid_exts)]
+                if audio_files:
+                    dir_to_files[root_dir] = audio_files
+
             file_paths = []
             
-            if on_status_cb:
-                on_status_cb(f"Scanning folder...")
-            
-            for root_dir, dirs, files in os.walk(folder_path):
-                for filename in files:
-                    if filename.lower().endswith(valid_exts):
-                        file_paths.append(os.path.join(root_dir, filename))
-            
+            # 2. Process groups and catch MP3/M4B blobs using Album metadata
+            for directory, files in dir_to_files.items():
+                if len(files) == 1:
+                    file_paths.extend([os.path.join(directory, files[0])])
+                    continue
+                
+                if on_status_cb: on_status_cb(f"Analyzing parts in {os.path.basename(directory)}...")
+                
+                album_groups = {}
+                for f in files:
+                    full_path = os.path.join(directory, f)
+                    ext = f.lower().split('.')[-1]
+                    
+                    # Never merge AAX files
+                    if ext in ['aax', 'aaxc']:
+                        album_groups.setdefault("AAX_NO_MERGE", []).append(full_path)
+                        continue
+                        
+                    try:
+                        # Probe the file for its album tag
+                        data = converter.get_metadata_and_chapters(full_path)
+                        tags = data.get("format", {}).get("tags", {})
+                        album = tags.get("album", os.path.basename(directory))
+                    except Exception:
+                        album = os.path.basename(directory)
+                        
+                    album_groups.setdefault(album, []).append(full_path)
+                    
+                # Process each identified album group
+                for album_name, group_files in album_groups.items():
+                    if album_name == "AAX_NO_MERGE" or len(group_files) == 1:
+                        file_paths.extend(group_files)
+                    else:
+                        safe_album_name = "".join([c for c in album_name if c.isalnum() or c in [' ', '-', '_']]).rstrip()
+                        out_m4b = os.path.join(directory, f"{safe_album_name}.m4b")
+                        
+                        # Prevent naming collision if a file is already named exactly AlbumName.m4b
+                        if os.path.exists(out_m4b) and out_m4b in group_files:
+                            out_m4b = os.path.join(directory, f"{safe_album_name}_merged.m4b")
+                            
+                        if not os.path.exists(out_m4b):
+                            if on_status_cb: on_status_cb(f"Merging {len(group_files)} parts: {safe_album_name}...")
+                            
+                            group_files.sort(key=natural_sort_key)
+                            success = converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger)
+                            
+                            if success:
+                                file_paths.append(out_m4b)
+                            else:
+                                file_paths.extend(group_files)
+                        else:
+                            file_paths.append(out_m4b)
+
             if not file_paths:
-                if logger:
-                    logger(f"No audio files found in {folder_path}")
-                if on_complete_cb:
-                    on_complete_cb(0)
+                if logger: logger(f"No audio files found in {folder_path}")
+                if on_complete_cb: on_complete_cb(0)
                 return
-            
-            if logger:
-                logger(f"Found {len(file_paths)} audio files in {folder_path}")
-            
-            if on_status_cb:
-                on_status_cb(f"Found {len(file_paths)} files. Importing...")
-            
-            # Reuse the existing import_files logic, but synchronously since we're already in a worker
+
+            if on_status_cb: on_status_cb(f"Found {len(file_paths)} formatted books. Importing...")
+
             valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
             added_count = 0
             
