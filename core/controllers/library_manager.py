@@ -176,7 +176,7 @@ class LibraryManager:
             series_list = [f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")]
             series_str = ", ".join(series_list)
             
-            duration_min = item.get("runtime_length_min", 0)
+            duration_min = item.get("runtime_length_min") or 0
             hours, mins = divmod(duration_min, 60)
             duration_str = f"{hours}h {mins}m"
             
@@ -204,7 +204,7 @@ class LibraryManager:
                 if meta.get("series") and loc_series == "N/A":
                     loc_series = ", ".join([f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in meta.get("series") if isinstance(s, dict) and s.get("title")])
 
-                duration_min = meta.get("runtime_length_min") or data.get("duration_min", 0)
+                duration_min = meta.get("runtime_length_min") or data.get("duration_min") or 0
                 loc_duration = f"{duration_min//60}h {duration_min%60}m" if duration_min > 0 else "N/A"
 
                 if asin == "Unknown" and meta.get("asin"):

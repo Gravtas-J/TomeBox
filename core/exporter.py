@@ -38,7 +38,7 @@ class LibraryExporter:
                             series_list.append(s_title)
                 series_str = ", ".join(series_list)
 
-                duration = item.get("runtime_length_min", 0)
+                duration = item.get("runtime_length_min") or 0
                 asin = item.get("asin", "Unknown")
 
                 local_data = local_titles.get(title)
