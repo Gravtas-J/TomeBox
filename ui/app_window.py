@@ -962,7 +962,7 @@ class AAXManagerApp:
             self.grid_inner.columnconfigure(i, weight=1)
         
         for idx, row_data in enumerate(getattr(self, '_current_filtered_data', [])):
-            title, authors, series_str, duration_str, asin, status = row_data
+            title, authors, series_str, duration_str, asin, status, row_path = row_data
 
             outer_card = tk.Frame(self.grid_inner, bg=default_bg)
             outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
@@ -991,15 +991,14 @@ class AAXManagerApp:
             text_label.pack(pady=(5, 0))
             
             def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
-
                 if hasattr(self, '_last_selected_card_frame') and self._last_selected_card_frame.winfo_exists():
                     self._last_selected_card_frame.config(bg=default_bg)
                 
                 oc.config(bg=select_bg)
-                
                 self._last_selected_card_frame = oc 
-                self._selected_grid_item = {'values': [t, "", "", "", a, s]}
+                self._selected_grid_item = {'values': [t, "", "", "", a, s, ""]} 
                 self.on_item_select()
+
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
                 on_card_click(e, oc, t, a, s)
                 self.master_play()
@@ -1455,27 +1454,34 @@ class AAXManagerApp:
             self.root.after(0, lambda: self.dl_status_var.set("Idle"))
 
     def remove_local_file(self):
-        selected = self.library_tree.focus()
-        if not selected: 
+        selected_items = self.library_tree.selection()
+        if not selected_items: 
             return
         
-        item = self.library_tree.item(selected)
-        title = item['values'][0]
-        
-        local_path = None
-        for path, data in self.library_manager.local_library.items():
-            if data["title"] == title:
-                local_path = path
-                break
-        
-        if local_path and local_path in self.library_manager.local_library:
-            if messagebox.askyesno("Remove File", f"Remove '{title}' from your local library list?\n\n(This only removes it from the list, it does not delete the actual file from your hard drive.)"):
+        if not messagebox.askyesno("Remove Files", f"Remove {len(selected_items)} selected item(s) from your local library list?\n\n(This only removes them from the list, it does not delete the actual files from your hard drive.)"):
+            return
+
+        removed_count = 0
+        for item_id in selected_items:
+            item = self.library_tree.item(item_id)
+            title = item['values'][0]
+            
+            local_path = None
+            for path, data in self.library_manager.local_library.items():
+                if data["title"] == title:
+                    local_path = path
+                    break
+            
+            if local_path and local_path in self.library_manager.local_library:
                 del self.library_manager.local_library[local_path]
-                self.db.save_local_db(self.library_manager.local_library)
-                self.refresh_library_ui()
+                removed_count += 1
+                
+        if removed_count > 0:
+            self.db.save_local_db(self.library_manager.local_library)
+            self.refresh_library_ui()
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
-
+            
     def set_sleep_timer(self, mode, value=0):
 
         if self._sleep_timer_id is not None:

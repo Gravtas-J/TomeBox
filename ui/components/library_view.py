@@ -71,7 +71,7 @@ def setup_library_view(app, parent):
     scroll = ttk.Scrollbar(tree_frame)
     scroll.pack(side=tk.RIGHT, fill="y")
 
-    app.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status"), show="headings", yscrollcommand=scroll.set)
+    app.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path"), show="headings", yscrollcommand=scroll.set)
     scroll.config(command=app.library_tree.yview)
     app.library_tree.bind("<<TreeviewSelect>>", app.on_item_select)
     
@@ -112,6 +112,7 @@ def setup_library_view(app, parent):
     app.library_tree.column("Duration", width=70)
     app.library_tree.column("ASIN", width=90)
     app.library_tree.column("Status", width=110)
+    app.library_tree.column("File Path", width=250)
     app.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
     
     app.library_tree.bind("<Double-1>", app.master_play)
