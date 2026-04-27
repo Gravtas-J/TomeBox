@@ -62,7 +62,7 @@ class MetadataManager:
                         series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
                 series_str = ", ".join(series_list) if series_list else ""
                 
-                duration_min = product.get("runtime_length_min", 0)
+                duration_min = product.get("runtime_length_min") or 0
 
                 cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
                 images = product.get("product_images", {})
