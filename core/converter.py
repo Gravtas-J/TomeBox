@@ -35,6 +35,56 @@ class AudioConverter:
         self.current_process = None
         self.is_cancelled = False
 
+    def concat_to_m4b(self, input_files, output_path, title, logger=None):
+        import tempfile
+        import os
+        from core.utils.process_runner import ProcessRunner
+
+        fd, temp_txt = tempfile.mkstemp(suffix=".txt", text=True)
+        needs_reencode = False
+        
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            for filepath in input_files:
+                safe_path = filepath.replace("'", "'\\''")
+                f.write(f"file '{safe_path}'\n")
+                if filepath.lower().endswith('.mp3'):
+                    needs_reencode = True
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", temp_txt,
+            "-vn",
+            "-metadata", f"title={title}",
+            "-metadata", "genre=Audiobook"
+        ]
+        
+        # If all files are m4b/m4a, we can do a lightning-fast stream copy
+        if needs_reencode:
+            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+        else:
+            cmd.extend(["-c:a", "copy"])
+            
+        cmd.append(output_path)
+
+        try:
+            if logger: logger(f"Concatenating {len(input_files)} parts into {output_path}")
+            result = ProcessRunner.run_blocking(cmd, capture_output=True)
+            
+            if result.returncode == 0 and os.path.exists(output_path):
+                return True
+            else:
+                if logger: logger(f"Concat failed: {result.stderr}")
+                return False
+        except Exception as e:
+            if logger: logger(f"Concat exception: {e}")
+            return False
+        finally:
+            if os.path.exists(temp_txt):
+                try: os.remove(temp_txt)
+                except OSError: pass
+
     def cancel(self):
         self.is_cancelled = True
         if self.current_process:
