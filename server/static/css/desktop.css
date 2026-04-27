@@ -277,155 +277,146 @@ body.desktop #player-bar {
     min-height: 80px;
 }
 
-/* Progress bar across the very top of the player */
-body.desktop #player-bar #progress-container {
-    position: absolute;
+/* ========================================
+   Player Bar Layout (Cleaned)
+   ======================================== */
+
+body.desktop #player-bar {
+    grid-area: player; /* Integrates perfectly with your sidebar layout */
+    background-color: #1e1e1e;
+    border-top: 1px solid #333;
+    z-index: 1000;
+    position: relative;
+    display: block; /* Removes the broken legacy grid */
+    padding: 0;
+    margin: 0;
+}
+
+.seek-bar-container {
+    position: absolute; 
     top: 0;
     left: 0;
-    right: 0;
-    height: 4px;
-    background-color: #2a2a2a;
-    cursor: pointer;
-    transition: height 0.15s;
-}
-
-body.desktop #player-bar #progress-container:hover {
+    width: 100%;
     height: 6px;
+    background-color: #444;
+    cursor: pointer;
+    z-index: 10;
 }
 
-body.desktop #player-bar #progress-fill {
+.seek-progress {
     height: 100%;
+    width: 0%;
     background-color: var(--accent);
-    transition: width 0.1s linear;
+    pointer-events: none;
 }
 
-/* ----- Left section: cover + book info ----- */
+.player-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    height: 80px;
+    margin-top: 6px; /* Buffer for the seek bar */
+}
 
-.player-section-left {
+/* The Centering Magic: All 3 columns get equal flex space */
+.player-left, .player-center, .player-right {
+    flex: 1; 
+}
+
+/* --- Left Section --- */
+.player-left {
     display: flex;
     align-items: center;
-    gap: 12px;
-    min-width: 0; /* Allows ellipsis to work in nested flex children */
+    gap: 15px;
+    min-width: 0; /* Allows text truncation on long titles */
 }
 
-/* #player-cover {
-    width: 56px;
-    height: 56px;
-    border-radius: 4px;
+.player-cover-img {
+    height: 95px;
+    width: 95px;
     object-fit: cover;
-    flex-shrink: 0;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-} */
-
-body.desktop .player-info {
-    text-align: left;
-    width: auto;
-    min-width: 0;
-    flex: 1;
+    border-radius: 4px;
+    background-color: #333;
 }
 
-body.desktop #now-playing-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    margin: 0 0 3px 0;
-    white-space: nowrap;
+.player-info {
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--text);
 }
 
-body.desktop #now-playing-author {
-    font-size: 0.8rem;
-    margin: 0;
-    color: #999;
+.player-title {
+    font-weight: bold;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* ----- Centre section: transport controls + time ----- */
+.player-author {
+    font-size: 0.85em;
+    color: #aaa;
+}
 
-.player-section-center {
+/* --- Center Section --- */
+.player-center {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-}
-
-body.desktop .player-main-row {
-    display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 18px;
-    margin-top: 0;
-    width: auto;
+    text-align: center;
 }
 
-body.desktop .play-btn { 
-    color: var(--accent); 
-    font-size: 2.8rem; 
-    width: 50px; 
-    height: 50px; }
-
-body.desktop .skip-btn,
-body.desktop .chapter-btn {
-    background: none;
-    color: #aaa;
-    font-size: 1.3rem;
-    padding: 6px;
-    border-radius: 4px;
-    transition: color 0.15s, background 0.15s;
+.player-chapter {
+    font-size: 1.1em;
+    font-weight: bold;
+    margin-bottom: 2px;
 }
 
-body.desktop .skip-btn:hover,
-body.desktop .chapter-btn:hover {
-    color: var(--text);
+.player-timer {
+    font-size: 0.85em;
+    color: #bbb;
+    margin-bottom: 5px;
     background-color: #2a2a2a;
+    padding: 2px 8px;
+    border-radius: 10px;
 }
 
-/* .player-time-row {
+.player-controls {
     display: flex;
-    gap: 12px;
-    font-size: 0.75rem;
-    color: #888;
-    font-variant-numeric: tabular-nums;
-    font-family: 'Consolas', 'Monaco', monospace;
-} */
-
-/* ----- Right section: secondary controls ----- */
-
-.player-section-right {
-    display: flex;
+    gap: 15px;
     align-items: center;
-    justify-content: flex-end;
-    gap: 12px;
 }
 
-body.desktop .speed-btn {
-    background-color: #2a2a2a;
-    color: var(--text);
-    font-size: 0.8rem;
-    padding: 5px 10px;
-    border-radius: 4px;
-    transition: background 0.15s;
-    min-width: 44px;
+.control-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
 }
 
-body.desktop .speed-btn:hover {
-    background-color: #3a3a3a;
+.primary-play {
+    font-size: 2rem;
+    color: var(--accent);
 }
 
-body.desktop .tool-btn {
-    color: #999;
-    font-size: 1.2rem;
-    padding: 6px;
-    border-radius: 4px;
-    transition: color 0.15s, background 0.15s;
+/* --- Right Section --- */
+.player-right {
+    display: flex;
+    justify-content: flex-end; /* Left-justifies the buttons */
+    align-items: center;
+    gap: 12px; 
+    padding-left: 3vw; /* Scalable space between play controls and secondary buttons */
+}
+.player-right .action-btn-secondary {
+    border: none;
+    background-color: transparent;
 }
 
-body.desktop .tool-btn:hover {
-    color: var(--text);
-    background-color: #2a2a2a;
+/* Add a slightly stronger hover effect since the border is gone */
+.player-right .action-btn-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.08);
 }
 
 /* Compact responsive collapse for narrow windows */
@@ -928,3 +919,7 @@ body.desktop .book-card.cloud-only:hover {
     margin-top: 0;
     margin-bottom: 0;
 }
+
+
+
+

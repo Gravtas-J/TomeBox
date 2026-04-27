@@ -190,37 +190,56 @@
             </section>
             
         </main>
-        <div id="player-bar">
-            <div id="progress-container" onclick="seekAudio(event)">
-                <div id="progress-fill"></div>
+        <div class="modal-overlay" id="bookmarks-modal" onclick="closeBookmarksModal(event)" style="display: none;">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Bookmarks</span>
+                <button class="close-btn" onclick="closeBookmarksModal()">✕</button>
             </div>
-            
-            <div class="player-section player-section-left">
-                <img id="player-cover" src="" alt="" style="display: none;">
-                <div class="player-info">
-                    <p id="now-playing-title">Select a book</p>
-                    <p id="now-playing-author">...</p>
+            <div class="modal-body modal-padded">
+                <button class="action-btn" onclick="addBookmark()" style="width: 100%; margin-bottom: 15px;">+ Add Bookmark at Current Time</button>
+                <div id="bookmarks-list" style="max-height: 300px; overflow-y: auto;">
+                    <p style="color: #aaa; text-align: center;">No bookmarks yet.</p>
                 </div>
             </div>
-            
-            <div class="player-section player-section-center">
-                <div class="player-main-row">
-                    <button class="chapter-btn" onclick="skipChapter(-1)" title="Previous chapter">⏮</button>
-                    <button class="skip-btn" onclick="skipAudio(-15)" title="Back 15 seconds">↺</button>
-                    <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
-                    <button class="skip-btn" onclick="skipAudio(15)" title="Forward 15 seconds">↻</button>
-                    <button class="chapter-btn" onclick="skipChapter(1)" title="Next chapter">⏭</button>
-                </div>
-            </div>
-            
-            <div class="player-section player-section-right">
-                <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()" title="Playback speed">1.0x</button>
-                <button class="tool-btn" onclick="openChapterMenu()" title="Chapters">📑</button>
-                <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()" title="Sleep timer">🌙</button>
-            </div>
-            
-            <audio id="main-audio"></audio>
         </div>
+    </div>
+
+    <div id="player-bar" class="player-bar">
+        <div id="seek-bar-container" class="seek-bar-container" onclick="seekAudio(event)">
+            <div id="seek-progress" class="seek-progress"></div>
+        </div>
+
+        <div class="player-content">
+            <div class="player-left">
+                <img id="player-cover" src="" class="player-cover-img" style="display:none;" />
+                <div class="player-info">
+                    <div id="player-title" class="player-title">No Book Selected</div>
+                    <div id="player-author" class="player-author"></div>
+                </div>
+            </div>
+
+            <div class="player-center">
+                <div id="player-chapter-title" class="player-chapter" onclick="openChapterMenu()" style="cursor: pointer;" title="View Chapter List">Chapter --</div>
+                <div class="player-timer" id="player-time">0:00 / 0:00</div>
+                <div class="player-controls">
+                    <button class="control-btn" onclick="skipChapter(-1)">⏮</button>
+                    <button class="control-btn" onclick="skipAudio(-15)">⟲</button>
+                    <button class="control-btn primary-play" id="btn-play-pause" onclick="togglePlay()">▶</button>
+                    <button class="control-btn" onclick="skipAudio(15)">⟳</button>
+                    <button class="control-btn" onclick="skipChapter(1)">⏭</button>
+                </div>
+            </div>
+
+            <div class="player-right">
+                <button class="action-btn-secondary" onclick="openChapterMenu()">📑</button>
+                <button class="action-btn-secondary" onclick="openBookmarksModal()">🔖</button>
+                <button class="action-btn-secondary" id="btn-speed" onclick="changeSpeed()">1.0x</button>
+                <button class="action-btn-secondary" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
+            </div>
+        </div>
+        <audio id="audio-player" style="display: none;"></audio>
+    </div>
         
     </div>
     
@@ -292,14 +311,12 @@
             </div>
             <div class="modal-body" style="padding: 20px;">
                 <p style="margin-bottom: 15px; color: #ccc;">Where would you like to save your audiobooks?</p>
-                <p style="margin-bottom: 15px; color: #ccc;">Where would you like to save your audiobooks?</p>
                 
                 <div style="display: flex; gap: 10px; width: 100%;">
                     <input type="text" id="download-dir-input" class="text-input" placeholder="e.g., C:\Audiobooks or /Users/name/Audiobooks" style="flex-grow: 1; margin-bottom: 0;">
                     <button class="action-btn-secondary" onclick="browseForDirectory()" style="white-space: nowrap;">📂 Browse...</button>
                 </div>
                 
-                <p id="download-dir-error" style="color: #ff6b6b; display: none; margin-top: 10px;"></p>
                 <p id="download-dir-error" style="color: #ff6b6b; display: none; margin-top: 10px;"></p>
                 <div class="modal-actions">
                     <button class="action-btn-secondary" onclick="closeDownloadDirModal()">Cancel</button>

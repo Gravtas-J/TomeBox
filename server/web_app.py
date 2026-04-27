@@ -922,4 +922,45 @@ def create_server_app(tomebox):
             return {"status": "success"}
             
         raise HTTPException(status_code=404, detail="Entry not found")
+    @api.get("/api/library/bookmarks")
+    def get_bookmarks(path: str):
+        if path and path in tomebox.library_manager.local_library:
+            return {"bookmarks": tomebox.library_manager.local_library[path].get("bookmarks", [])}
+        return {"bookmarks": []}
+
+    @api.post("/api/library/bookmarks")
+    async def add_bookmark(request: Request):
+        data = await request.json()
+        path = data.get("path")
+        time = data.get("time")
+        note = data.get("note", "Bookmark")
+
+        if path in tomebox.library_manager.local_library:
+            entry = tomebox.library_manager.local_library[path]
+            if "bookmarks" not in entry:
+                entry["bookmarks"] = []
+            
+            # Append and sort chronologically
+            entry["bookmarks"].append({"time": time, "note": note})
+            entry["bookmarks"] = sorted(entry["bookmarks"], key=lambda x: x["time"])
+            
+            tomebox.db.save_local_db(tomebox.library_manager.local_library)
+            return {"status": "success"}
+            
+        raise HTTPException(status_code=404, detail="File not in library")
+
+    @api.delete("/api/library/bookmarks")
+    async def delete_bookmark(request: Request):
+        data = await request.json()
+        path = data.get("path")
+        index = data.get("index")
+
+        if path in tomebox.library_manager.local_library:
+            entry = tomebox.library_manager.local_library[path]
+            if "bookmarks" in entry and 0 <= index < len(entry["bookmarks"]):
+                entry["bookmarks"].pop(index)
+                tomebox.db.save_local_db(tomebox.library_manager.local_library)
+                return {"status": "success"}
+                
+        raise HTTPException(status_code=400, detail="Invalid bookmark data")
     return api

@@ -6,11 +6,11 @@ if ('serviceWorker' in navigator) {
                     });
                 }
 
-                const audio = document.getElementById('main-audio');
-                const playBtn = document.getElementById('play-pause-btn');
-                const progressFill = document.getElementById('progress-fill');
+                const audio = document.getElementById('audio-player'); 
+                const playBtn = document.getElementById('btn-play-pause'); 
+                const progressFill = document.getElementById('seek-progress'); 
                 const playerBar = document.getElementById('player-bar');
-                const speedBtn = document.getElementById('speed-btn');
+                const speedBtn = document.getElementById('btn-speed');
 
                 let allBooks = []; 
                 let currentPath = null;
@@ -188,7 +188,6 @@ if ('serviceWorker' in navigator) {
 
                 async function cueLastPlayedBook() {
                     try {
-                        // FIXED: Added token
                         const res = await fetch(`/api/last_played/${currentProfile}`);
                         const data = await res.json();
                         if (data.path && rawLibraryData[data.path]) {
@@ -205,10 +204,20 @@ if ('serviceWorker' in navigator) {
                             }
                             
                             currentPath = data.path;
-                            document.getElementById('now-playing-title').innerText = titleStr;
-                            document.getElementById('now-playing-author').innerText = authorStr;
+                            currentAsin = asin;
                             
-                            // FIXED: Added &token= because ?path= already exists
+                            // Update the new DOM IDs
+                            document.getElementById('player-title').innerText = titleStr;
+                            document.getElementById('player-author').innerText = authorStr;
+                            
+                            const coverImg = document.getElementById('player-cover');
+                            if (asin && asin !== "Unknown") {
+                                coverImg.src = `/api/cover/${asin}`;
+                                coverImg.style.display = 'block';
+                            } else {
+                                coverImg.style.display = 'none';
+                            }
+                            
                             audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
                             audio.playbackRate = currentSpeed; 
                             
@@ -216,18 +225,15 @@ if ('serviceWorker' in navigator) {
                                 audio.currentTime = resumePos;
                             };
                             
-                            playerBar.classList.add('active');
                             playBtn.innerText = '▶';
                             setSleepOff(); 
 
                             try {
-                                // FIXED: Added &token=
                                 const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}`);
                                 currentChapters = await chapRes.json();
                             } catch(e) { currentChapters = []; }
 
                             if ('mediaSession' in navigator) {
-                                // FIXED: Added token to MediaSession artwork
                                 const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                                 navigator.mediaSession.metadata = new MediaMetadata({ title: titleStr, artist: authorStr, album: 'TomeBox', artwork: artworkUrl });
                                 navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
@@ -322,30 +328,46 @@ if ('serviceWorker' in navigator) {
                     }
 
                     currentPath = filePath;
-                    document.getElementById('now-playing-title').innerText = title;
-                    document.getElementById('now-playing-author').innerText = author;
+                    currentAsin = asin;
                     
-                    // FIXED: Added &token= 
+                    document.getElementById('player-title').innerText = title;
+                    document.getElementById('player-author').innerText = author;
+                    
+                    const coverImg = document.getElementById('player-cover');
+                    if (asin && asin !== "Unknown") {
+                        coverImg.src = `/api/cover/${asin}`;
+                        coverImg.style.display = 'block';
+                    } else {
+                        coverImg.style.display = 'none';
+                    }
+
+                    // AWAIT CHAPTERS FIRST: Prevent race condition before audio plays
+                    try {
+                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
+                        currentChapters = await res.json();
+                    } catch(e) { 
+                        currentChapters = []; 
+                    }
+                    
+                    // Set fallback title if the file genuinely has no chapters
+                    if (!currentChapters || currentChapters.length === 0) {
+                        document.getElementById('player-chapter-title').textContent = title;
+                    }
+                    
                     audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
                     audio.playbackRate = currentSpeed; 
                     
                     audio.onloadedmetadata = () => {
                         audio.currentTime = latestPosition;
-                        audio.play().catch(err => console.error("Audio play failed:", err));
                     };
                     
-                    playerBar.classList.add('active');
-                    playBtn.innerText = '⏸';
+                    audio.play().then(() => {
+                        playBtn.innerText = '⏸';
+                    }).catch(err => console.error("Audio play failed:", err));
+                    
                     setSleepOff(); 
 
-                    try {
-                        // FIXED: Added &token=
-                        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
-                        currentChapters = await res.json();
-                    } catch(e) { currentChapters = []; }
-
                     if ('mediaSession' in navigator) {
-                        // FIXED: Added token to MediaSession artwork
                         const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
                         navigator.mediaSession.metadata = new MediaMetadata({ title: title, artist: author, album: 'TomeBox', artwork: artworkUrl });
                         navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
@@ -476,29 +498,106 @@ if ('serviceWorker' in navigator) {
                 let speedIndex = 0;
                 let currentSpeed = 1.0;
 
-                function toggleSpeed() {
+                function changeSpeed() {
                     speedIndex = (speedIndex + 1) % speeds.length;
                     currentSpeed = speeds[speedIndex];
                     audio.playbackRate = currentSpeed;
                     speedBtn.innerText = currentSpeed.toFixed(1) + 'x';
                 }
 
+                // ==========================================
+                // PLAYBACK & CHAPTER TRACKING
+                // ==========================================
+                let activeChapterIndex = 0; 
+
                 audio.addEventListener('timeupdate', () => {
-                    if (audio.duration) { progressFill.style.width = `${(audio.currentTime / audio.duration) * 100}%`; }
+                    if (!audio.duration) return;
                     
-                    if (sleepMode === 'chapter' && sleepTargetTime !== null) {
+                    const currentTime = audio.currentTime;
+                    let chStart = 0;
+                    let chEnd = audio.duration;
+                    
+                    // Fallback to the main book title if the file has no chapters
+                    let chTitle = document.getElementById('player-title').innerText || "Playing";
+
+                    // 1. Find which chapter we are currently in
+                    if (typeof currentChapters !== 'undefined' && currentChapters && currentChapters.length > 0) {
+                        let activeIdx = 0;
+                        for (let i = 0; i < currentChapters.length; i++) {
+                            if (currentTime >= currentChapters[i].start) {
+                                activeIdx = i;
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        activeChapterIndex = activeIdx;
+                        const currentCh = currentChapters[activeIdx];
+                        chStart = currentCh.start;
+                        chTitle = currentCh.title;
+                        
+                        if (activeIdx + 1 < currentChapters.length) {
+                            chEnd = currentChapters[activeIdx + 1].start;
+                        }
+                    }
+
+                    // 2. Calculate relative times
+                    const chapterDuration = chEnd - chStart;
+                    const timeIntoChapter = currentTime - chStart;
+                    
+                    let progressPercent = 0;
+                    if (chapterDuration > 0) {
+                        progressPercent = (timeIntoChapter / chapterDuration) * 100;
+                    }
+
+                    // 3. Update the UI securely
+                    const progressEl = document.getElementById('seek-progress');
+                    if (progressEl) progressEl.style.width = `${progressPercent}%`;
+                    
+                    const chapterTitleEl = document.getElementById('player-chapter-title');
+                    if (chapterTitleEl) chapterTitleEl.textContent = chTitle;
+                    
+                    const timeEl = document.getElementById('player-time');
+                    if (timeEl) timeEl.textContent = `${formatTime(timeIntoChapter)} / ${formatTime(chapterDuration)}`;
+                    
+                    // 4. Handle Sleep Timer
+                    if (typeof sleepMode !== 'undefined' && sleepMode === 'chapter' && sleepTargetTime !== null) {
                         if (audio.currentTime >= sleepTargetTime - 1) {
                             audio.pause();
-                            playBtn.innerText = '▶';
+                            document.getElementById('btn-play-pause').innerText = '▶';
                             if (sleepTargetTime < audio.duration) { audio.currentTime = sleepTargetTime; }
-                            setSleepOff();
+                            if (typeof setSleepOff === 'function') setSleepOff();
                         }
                     }
                 });
 
-                audio.addEventListener('ended', () => { playBtn.innerText = '▶'; progressFill.style.width = '0%'; });
-                function seekAudio(e) { if (!audio.duration) return; const rect = e.target.getBoundingClientRect(); audio.currentTime = (e.clientX - rect.left) / rect.width * audio.duration; }
+                audio.addEventListener('ended', () => { 
+                    document.getElementById('btn-play-pause').innerText = '▶'; 
+                    const progressEl = document.getElementById('seek-progress');
+                    if (progressEl) progressEl.style.width = '0%'; 
+                });
 
+                window.seekAudio = function(e) {
+                    if (!audio.duration) return;
+
+                    const container = document.getElementById('seek-bar-container');
+                    const clickX = e.clientX - container.getBoundingClientRect().left;
+                    const width = container.clientWidth;
+                    const clickPercent = Math.max(0, Math.min(1, clickX / width)); // Locks between 0 and 100%
+
+                    let chStart = 0;
+                    let chEnd = audio.duration;
+                    
+                    if (typeof currentChapters !== 'undefined' && currentChapters && currentChapters.length > 0) {
+                        chStart = currentChapters[activeChapterIndex].start;
+                        if (activeChapterIndex + 1 < currentChapters.length) {
+                            chEnd = currentChapters[activeChapterIndex + 1].start;
+                        }
+                    }
+
+                    const chapterDuration = chEnd - chStart;
+                    audio.currentTime = chStart + (chapterDuration * clickPercent);
+                };
                 function saveProgressToServer() {
                     if (currentPath && audio.currentTime > 0) {
                         if (rawLibraryData[currentPath]) {
@@ -523,5 +622,115 @@ if ('serviceWorker' in navigator) {
 
                 window.addEventListener('beforeunload', saveProgressToServer);
                 window.addEventListener('pagehide', saveProgressToServer);
+                // ==========================================
+                // BOOKMARKS SYSTEM
+                // ==========================================
 
+                window.openBookmarksModal = async function() {
+                    document.getElementById('bookmarks-modal').style.display = 'flex';
+                    await window.loadBookmarks();
+                };
+
+                window.closeBookmarksModal = function(e) { 
+                    if (e && e.target.id !== 'bookmarks-modal') return;
+                    document.getElementById('bookmarks-modal').style.display = 'none'; 
+                };
+
+                window.loadBookmarks = async function() {
+                    const listEl = document.getElementById('bookmarks-list');
+                    if (!currentPath) {
+                        listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No active book playing.</p>';
+                        return;
+                    }
+
+                    try {
+                        // FIX 1: Added cache: 'no-store' so the browser is forced to get the fresh list!
+                        const res = await fetch(`/api/library/bookmarks?path=${encodeURIComponent(currentPath)}`, {
+                            cache: 'no-store' 
+                        });
+                        
+                        if (!res.ok) {
+                            const err = await res.json();
+                            listEl.innerHTML = `<p style="color: #ff6b6b; text-align: center;">Error: ${err.detail}</p>`;
+                            return;
+                        }
+                        
+                        const data = await res.json();
+                        
+                        if (!data.bookmarks || data.bookmarks.length === 0) {
+                            listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No bookmarks yet.</p>';
+                            return;
+                        }
+
+                        listEl.innerHTML = '';
+                        data.bookmarks.forEach((bm, idx) => {
+                            const row = document.createElement('div');
+                            row.className = 'profile-row'; 
+                            // Quick text escaping to prevent HTML injection errors
+                            const safeNote = bm.note ? bm.note.replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'Bookmark';
+                            
+                            row.innerHTML = `
+                                <div class="profile-row-info" style="cursor: pointer;" onclick="playBookmark(${bm.time})">
+                                    <div class="profile-row-name">${safeNote}</div>
+                                    <div class="profile-row-status">⏱️ ${formatTime(bm.time)}</div>
+                                </div>
+                                <button class="action-btn-secondary action-btn-danger" onclick="deleteBookmark(${idx})">🗑️</button>
+                            `;
+                            listEl.appendChild(row);
+                        });
+                    } catch (e) {
+                        listEl.innerHTML = '<p style="color: #ff6b6b; text-align: center;">Failed to load bookmarks.</p>';
+                    }
+                };
+
+                window.addBookmark = async function() {
+                    // FIX 2: Explicitly check for undefined so bookmarking at 0:00 works
+                    if (!currentPath || audio.currentTime === undefined) {
+                        return alert("No book is currently playing.");
+                    }
+
+                    const time = audio.currentTime;
+                    const note = prompt(`Add a note for this bookmark at ${formatTime(time)}:`, "Awesome moment");
+                    
+                    if (note === null) return; 
+
+                    try {
+                        const res = await fetch('/api/library/bookmarks', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: currentPath, time: time, note: note.trim() })
+                        });
+
+                        // FIX 3: Actually show you an error popup if the backend rejects the save
+                        if (res.ok) {
+                            await window.loadBookmarks();
+                        } else {
+                            const err = await res.json();
+                            alert(`Failed to save bookmark: ${err.detail}`);
+                        }
+                    } catch (e) {
+                        alert(`Network error saving bookmark: ${e.message}`);
+                    }
+                };
+
+                window.deleteBookmark = async function(index) {
+                    if (!confirm("Delete this bookmark?")) return;
+                    try {
+                        const res = await fetch('/api/library/bookmarks', {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: currentPath, index: index })
+                        });
+
+                        if (res.ok) await window.loadBookmarks();
+                    } catch (e) {
+                        console.error("Failed to delete bookmark", e);
+                    }
+                };
+
+                window.playBookmark = function(time) {
+                    audio.currentTime = time;
+                    if (audio.paused) togglePlay();
+                    window.closeBookmarksModal();
+                };
                 initializeApp();
