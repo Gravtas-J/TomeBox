@@ -568,17 +568,19 @@ function attachContextMenu(cardElement, itemData) {
         const isDownloaded = !isCloudOnly && !isDownloadingOrQueued;
 
         // 2. Apply Display Rules
-        // Show Download if it's in the cloud and NOT currently downloading
+        
+        // Cloud-only rules
         document.getElementById('ctx-download').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
+        document.getElementById('ctx-match').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
         
-        // Show Cancel ONLY if it is actively downloading or queued
-        document.getElementById('ctx-cancel').style.display = isDownloadingOrQueued ? 'block' : 'none';
-        
-        // Show Add to Shelf ONLY if it is fully downloaded to the local machine
+        // Local/Downloaded rules
         document.getElementById('ctx-shelf').style.display = isDownloaded ? 'block' : 'none';
-        
-        // Show Convert ONLY if it's local AND encrypted (legacy fallback)
+        document.getElementById('ctx-scrape').style.display = isDownloaded ? 'block' : 'none';
+        document.getElementById('ctx-remove').style.display = isDownloaded ? 'block' : 'none';
         document.getElementById('ctx-convert').style.display = (isDownloaded && isAax) ? 'block' : 'none';
+        
+        // Active queue rules
+        document.getElementById('ctx-cancel').style.display = isDownloadingOrQueued ? 'block' : 'none';
     });
 }
 
@@ -600,6 +602,33 @@ async function ctxAction(action) {
             });
         } else if (action === 'cancel') {
             await fetch(`/api/downloads/${currentContextItem.asin}`, { method: 'DELETE' });
+        } else if (action === 'match') {
+            const res = await fetch('/api/system/browse-file');
+            const data = await res.json();
+            if (data.path) {
+                await fetch('/api/library/match', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ asin: currentContextItem.asin, path: data.path })
+                });
+                if (typeof loadLibrary === 'function') await loadLibrary();
+            }
+        } else if (action === 'scrape') {
+            // ONLY open the modal and pre-fill the search box.
+            // The actual fetch happens later when the user clicks "Apply" in the modal.
+            document.getElementById('metadata-search-input').value = currentContextItem.title;
+            document.getElementById('metadata-search-results').innerHTML = '';
+            document.getElementById('metadata-search-modal').style.display = 'flex';
+            
+        } else if (action === 'remove') {
+            if (confirm(`Remove "${currentContextItem.title}" from local library database? (The file on your drive will not be deleted)`)) {
+                await fetch('/api/library/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: currentContextItem.path })
+                });
+                if (typeof loadLibrary === 'function') await loadLibrary();
+            }
         } else if (action === 'shelf') {
             const shelfName = prompt(`Add "${currentContextItem.title}" to which shelf?`);
             
@@ -802,7 +831,89 @@ window.submitDownloadDir = async function() {
         errorEl.style.display = 'block';
     }
 };
+window.closeMetadataSearchModal = function(e) {
+    if (e && e.target.id !== 'metadata-search-modal') return;
+    document.getElementById('metadata-search-modal').style.display = 'none';
+};
 
+window.executeMetadataSearch = async function() {
+    const query = document.getElementById('metadata-search-input').value.trim();
+    const resultsContainer = document.getElementById('metadata-search-results');
+    if (!query) return;
+
+    resultsContainer.innerHTML = '<p style="color: #aaa; text-align: center;">Searching Audible catalog...</p>';
+
+    try {
+        const res = await fetch('/api/library/search', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query: query})
+        });
+        
+        if (!res.ok) throw new Error("Search failed");
+        const data = await res.json();
+
+        resultsContainer.innerHTML = '';
+        if (!data.results || data.results.length === 0) {
+            resultsContainer.innerHTML = '<p style="color: #ff6b6b;">No results found.</p>';
+            return;
+        }
+
+        // Render the results into clickable rows
+        data.results.forEach(item => {
+            const authors = item.authors ? item.authors.map(a => a.name).join(', ') : 'Unknown Author';
+            const div = document.createElement('div');
+            div.className = 'profile-row'; // Reusing your existing clean row styling
+            div.innerHTML = `
+                <div class="profile-row-info">
+                    <div class="profile-row-name">${escapeHtml(item.title)}</div>
+                    <div class="profile-row-status">${escapeHtml(authors)} | ASIN: ${item.asin}</div>
+                </div>
+                <button class="action-btn-secondary" onclick="applyMetadata('${item.asin}')">Apply</button>
+            `;
+            resultsContainer.appendChild(div);
+        });
+
+    } catch (error) {
+        resultsContainer.innerHTML = `<p style="color: #ff6b6b;">${error.message}</p>`;
+    }
+};
+
+window.applyMetadata = async function(asin) {
+    closeMetadataSearchModal();
+    
+    const statusEl = document.getElementById('library-status');
+    if (statusEl) {
+        statusEl.textContent = 'Downloading covers & embedding metadata...';
+        statusEl.className = 'library-status';
+    }
+
+    try {
+        const res = await fetch('/api/library/scrape', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentContextItem.path, asin: asin })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail);
+        }
+
+        // FFmpeg embedding takes time. Wait 8 seconds before refreshing UI
+        setTimeout(async () => {
+            if (typeof loadLibrary === 'function') await loadLibrary();
+            if (statusEl) {
+                statusEl.textContent = 'Metadata embedded!';
+                statusEl.classList.add('success');
+                setTimeout(() => statusEl.textContent = '', 3000);
+            }
+        }, 8000); 
+    } catch (err) {
+        alert(`Scrape failed: ${err.message}`);
+        if (statusEl) statusEl.textContent = '';
+    }
+};
 window.cancelActiveDownload = async function() {
     const titleEl = document.getElementById('active-download-title').textContent;
     const asin = titleEl.replace('ASIN: ', '');

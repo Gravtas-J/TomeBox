@@ -827,4 +827,99 @@ def create_server_app(tomebox):
             return {"status": "success", "message": "Import started in background"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+    @api.post("/api/library/match")
+    async def match_local_file(request: Request):
+        data = await request.json()
+        asin = data.get("asin")
+        path = data.get("path")
+        
+        if not asin or not path or not os.path.exists(path):
+            raise HTTPException(status_code=400, detail="Invalid ASIN or Path")
+            
+        matched_cloud_item = None
+        for item in getattr(tomebox.library_manager, 'cloud_items', []):
+            if item.get("asin") == asin:
+                matched_cloud_item = item
+                break
+                
+        if not matched_cloud_item:
+            raise HTTPException(status_code=404, detail="Cloud ASIN not found in cache")
+            
+        ext = os.path.splitext(path)[1].lower()
+        format_clean = ext.replace(".", "").upper()
+        active_profile = tomebox.settings.get("active_profile", "Main")
+        
+        # Build library entry inheriting cloud metadata
+        entry = {
+            "title": matched_cloud_item.get("title", os.path.basename(path)),
+            "format": format_clean,
+            "path": path,
+            "authors": "Unknown Author",
+            "owner": active_profile,
+            "asin": asin,
+            "duration_min": matched_cloud_item.get("runtime_length_min", 0)
+        }
+        
+        raw_authors = matched_cloud_item.get("authors", [])
+        if raw_authors:
+            entry["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+            
+        tomebox.library_manager.local_library[path] = entry
+        tomebox.db.save_local_db(tomebox.library_manager.local_library)
+        return {"status": "success"}
+
+    @api.post("/api/library/search")
+    async def search_audible_catalog(request: Request):
+        data = await request.json()
+        query = data.get("query", "").strip()
+        
+        if not query:
+            raise HTTPException(status_code=400, detail="Query required")
+
+        try:
+            import audible
+            client = audible.Client(auth=tomebox.api_client.auth)
+            # Fetch top 10 matches
+            resp = client.get("1.0/catalog/products", title=query, num_results=10, response_groups="product_desc,product_attrs,contributors")
+            return {"results": resp.get("products", [])}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @api.post("/api/library/scrape")
+    async def scrape_metadata(request: Request):
+        data = await request.json()
+        path = data.get("path")
+        asin = data.get("asin") # NEW: Get ASIN from the frontend selection
+        
+        if not path or path not in tomebox.library_manager.local_library:
+            raise HTTPException(status_code=404, detail="Entry not found")
+            
+        # If the user bypassed search, fall back to the DB's ASIN
+        if not asin:
+            entry = tomebox.library_manager.local_library[path]
+            asin = entry.get("asin")
+            
+        if not asin or asin.startswith("LOCAL_") or asin == "Unknown":
+            raise HTTPException(
+                status_code=400, 
+                detail="Cannot scrape without a valid Audible ASIN. Try using the search dialog."
+            )
+            
+        try:
+            # Pass the confirmed ASIN to the metadata manager
+            tomebox.metadata_manager.apply_scraped_metadata(path, asin)
+            return {"status": "success", "message": "Scrape and embed started in background"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @api.post("/api/library/remove")
+    async def remove_library_entry(request: Request):
+        data = await request.json()
+        path = data.get("path")
+        
+        if path and path in tomebox.library_manager.local_library:
+            tomebox.library_manager.remove_local_file(path)
+            return {"status": "success"}
+            
+        raise HTTPException(status_code=404, detail="Entry not found")
     return api

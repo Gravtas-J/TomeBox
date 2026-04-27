@@ -259,9 +259,30 @@
     </div>
     <div id="context-menu" class="context-menu" style="display: none;">
         <div class="context-item" id="ctx-download" onclick="ctxAction('download')">⬇️ Download</div>
-        <div class="context-item" id="ctx-convert" onclick="ctxAction('convert')">🔄 Convert to M4B</div>
+        <div class="context-item" id="ctx-match" onclick="ctxAction('match')">🔗 Match to Local File</div>
+        
         <div class="context-item" id="ctx-shelf" onclick="ctxAction('shelf')">📚 Add to Shelf</div>
+        <div class="context-item" id="ctx-scrape" onclick="ctxAction('scrape')">🏷️ Scrape Metadata</div>
+        <div class="context-item" id="ctx-convert" onclick="ctxAction('convert')">🔄 Convert to M4B</div>
+        
         <div class="context-item context-danger" id="ctx-cancel" onclick="ctxAction('cancel')">❌ Cancel</div>
+        <div class="context-item context-danger" id="ctx-remove" onclick="ctxAction('remove')">🗑️ Remove Entry</div>
+    </div>
+    <div class="modal-overlay" id="metadata-search-modal" onclick="closeMetadataSearchModal(event)">
+        <div class="modal-content modal-large" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Search Audible Catalog</span>
+                <button class="close-btn" onclick="closeMetadataSearchModal()">✕</button>
+            </div>
+            <div class="modal-body modal-padded">
+                <p class="modal-description">Search by title or author to find the correct ASIN metadata.</p>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <input type="text" id="metadata-search-input" class="text-input" style="margin-bottom: 0;" onkeypress="if(event.key === 'Enter') executeMetadataSearch()">
+                    <button class="action-btn" onclick="executeMetadataSearch()">Search</button>
+                </div>
+                <div id="metadata-search-results" style="display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto;"></div>
+            </div>
+        </div>
     </div>
     <div class="modal-overlay" id="download-dir-modal" onclick="closeDownloadDirModal(event)">
         <div class="modal-content" style="max-width: 500px;" onclick="event.stopPropagation()">
