@@ -407,12 +407,15 @@ body.desktop #player-bar {
     justify-content: flex-end; /* Left-justifies the buttons */
     align-items: center;
     gap: 12px; 
-    font-size: 20rem;
+    font-size: x-large;
     padding-left: 3vw; /* Scalable space between play controls and secondary buttons */
+    font-weight: bold;
 }
 .player-right .action-btn-secondary {
     border: none;
     background-color: transparent;
+    font-weight: bold;
+    font-size: x-large;
 }
 
 /* Add a slightly stronger hover effect since the border is gone */
@@ -710,7 +713,7 @@ body.desktop .book-card.cloud-only:hover {
     padding: 6px 14px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: x-large;
     transition: background 0.15s, border-color 0.15s;
 }
 

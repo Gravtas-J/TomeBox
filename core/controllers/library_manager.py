@@ -185,8 +185,9 @@ class LibraryManager:
             # --- THE FIX: Look up against the new title dictionary ---
             local_data = local_titles.get(title) 
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
-            
-            rows.append((title, authors, series_str, duration_str, asin, status))
+            local_path = local_data['path'] if local_data else ""
+
+            rows.append((title, authors, series_str, duration_str, asin, status, local_path))
             all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 2. Process Local-Only Items
@@ -210,13 +211,13 @@ class LibraryManager:
                 if asin == "Unknown" and meta.get("asin"):
                     asin = meta.get("asin")
 
-                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})"))
+                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})", path))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 3. Apply Filters
         filtered_rows = []
         for row in rows:
-            title, authors, series_str, duration_str, asin, status = row
+            title, authors, series_str, duration_str, asin, status, row_path = row
 
             if filter_type == "Downloaded" and "Downloaded" not in status: continue
             if filter_type == "Cloud Only" and status != "Cloud Only": continue
