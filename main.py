@@ -156,8 +156,9 @@ def show_splash(root, base_dir):
     import os
     import tkinter as tk
     from PIL import Image, ImageTk
+    from core.utils.paths import get_resource_path
 
-    splash_path = os.path.join(base_dir, "tomebox-splash.png")
+    splash_path = get_resource_path("tomebox-splash.png")
     
     if not os.path.exists(splash_path):
         return None

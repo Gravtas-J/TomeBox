@@ -34,11 +34,11 @@ jobs:
 
     - name: Build Windows Executable
       if: runner.os == 'Windows'
-      run: pyinstaller --name TomeBox --windowed --add-data "ui;ui" --add-data "server/mobile_ui.html;server" --add-data "server/static;server/static" main.py
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." main.py
 
     - name: Build Mac Application
       if: runner.os == 'macOS'
-      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" main.py
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." main.py
 
     - name: Zip Mac App
       if: runner.os == 'macOS'
