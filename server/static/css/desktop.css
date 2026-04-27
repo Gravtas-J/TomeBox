@@ -841,3 +841,70 @@ body.desktop .book-card.cloud-only:hover {
 #login-fallback a {
     color: var(--accent);
 }
+
+/* Context Menu */
+.context-menu {
+    position: absolute;
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    padding: 5px 0;
+    z-index: 1000;
+    min-width: 180px;
+}
+
+.context-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #e0e0e0;
+    transition: background 0.2s;
+}
+
+.context-item:hover { background: #3d3d3d; }
+.context-danger:hover { background: #5a2a2a; color: #ff6b6b; }
+
+
+/* On-Card Progress Bars */
+.card-progress-track {
+    height: 18px; /* Made taller to fit text */
+    background: #333;
+    width: 100%;
+    margin-top: 10px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative; /* Allows absolute positioning of the text */
+}
+
+.card-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+    opacity: 0.85; /* Slight transparency so text pops more */
+}
+
+.card-progress-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+    pointer-events: none;
+}
+
+.badge-downloaded {
+    font-size: 0.8em;
+    color: #a3e4b3;
+    background: #2e5a36;
+    padding: 4px 8px;
+    border-radius: 4px;
+}

@@ -532,7 +532,243 @@ async function completeLoginFlow() {
         errorEl.style.display = 'block';
     }
 }
+// ============================================================
+// Context Menu & Queue Management
+// ============================================================
 
+let currentContextItem = null;
+let queuePollingInterval = null;
+
+// Initialize context menu listeners
+document.addEventListener('DOMContentLoaded', () => {
+    // Hide context menu on outside click
+    document.addEventListener('click', () => {
+        document.getElementById('context-menu').style.display = 'none';
+    });
+
+    // Start Polling
+    startQueuePolling();
+});
+
+// Attach this to your library card rendering loop
+function attachContextMenu(cardElement, itemData) {
+    cardElement.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        currentContextItem = itemData;
+        
+        const menu = document.getElementById('context-menu');
+        menu.style.display = 'block';
+        menu.style.left = `${e.pageX}px`;
+        menu.style.top = `${e.pageY}px`;
+
+        // Toggle visibility based on item state
+        const isCloudOnly = itemData.download_status === 'cloud_only';
+        const isAax = itemData.format === 'AAXC' || itemData.format === 'AAX';
+        
+        document.getElementById('ctx-download').style.display = isCloudOnly ? 'block' : 'none';
+        document.getElementById('ctx-convert').style.display = (!isCloudOnly && isAax) ? 'block' : 'none';
+        document.getElementById('ctx-cancel').style.display = 'block'; // Ideally check if active
+    });
+}
+
+// Handle context menu actions
+async function ctxAction(action) {
+    if (!currentContextItem) return;
+    
+    try {
+        if (action === 'download') {
+            await fetch('/api/downloads/queue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ asins: [currentContextItem.asin] })
+            });
+        } else if (action === 'convert') {
+            await fetch('/api/conversions/queue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths: [currentContextItem.path] })
+            });
+        } else if (action === 'cancel') {
+            await fetch(`/api/downloads/${currentContextItem.asin}`, { method: 'DELETE' });
+        }
+    } catch (error) {
+        console.error(`Action ${action} failed:`, error);
+    }
+}
+
+// ------------ Queue Polling ------------
+
+function startQueuePolling() {
+    if (queuePollingInterval) clearInterval(queuePollingInterval);
+    queuePollingInterval = setInterval(pollQueues, 2000);
+}
+
+async function pollQueues() {
+    try {
+        const res = await fetch('/api/downloads/queue');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.is_processing && data.active.active_asin) {
+            
+            wasProcessingQueue = true; 
+            
+            // 1. Find the active card's UI elements
+            const libProgressBar = document.getElementById(`progress-bar-${data.active.active_asin}`);
+            const libProgressText = document.getElementById(`progress-text-${data.active.active_asin}`);
+            
+            // 2. Inject the status and progress directly into the card
+            if (libProgressBar) {
+                libProgressBar.style.width = `${data.active.progress}%`;
+            }
+            if (libProgressText) {
+                // E.g., "Downloading: The Perfect Run (45%)" or "Decrypting to M4B... (100%)"
+                let statusMsg = data.active.status;
+                if (statusMsg.includes("Downloading") && data.active.progress > 0) {
+                    statusMsg = `Downloading... ${Math.floor(data.active.progress)}%`;
+                }
+                libProgressText.textContent = statusMsg;
+            }
+            
+        } else {
+            // A download just finished!
+            if (wasProcessingQueue) {
+                wasProcessingQueue = false; 
+                if (typeof loadLibrary === 'function') {
+                    await loadLibrary();
+                }
+            }
+        }
+
+        // 3. Update pending queue items so they show a "Queued" status on their cards
+        if (data.queue && data.queue.length > 0) {
+            data.queue.forEach(task => {
+                const pendingText = document.getElementById(`progress-text-${task.asin}`);
+                // Only mark as queued if it's not the actively downloading item
+                if (pendingText && (!data.active || data.active.active_asin !== task.asin)) {
+                    pendingText.textContent = "Queued...";
+                }
+            });
+        }
+
+    } catch (error) {
+        // Fail silently on polling errors
+    }
+}
+
+
+// --- DOWNLOAD ACTIONS & DIRECTORY MANAGEMENT ---
+
+let pendingDownloadAsins = []; // Remembers what you clicked while setting the folder
+
+async function attemptQueueDownloads(asins) {
+    try {
+        const response = await fetch('/api/downloads/queue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ asins: asins })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            // INTERCEPT: The backend says we need a folder!
+            if (err.detail === 'DOWNLOAD_DIR_NOT_SET') {
+                pendingDownloadAsins = asins;
+                document.getElementById('download-dir-error').style.display = 'none';
+                document.getElementById('download-dir-modal').style.display = 'flex';
+                return;
+            }
+            throw new Error(err.detail || "Failed to queue downloads");
+        }
+        
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+window.queueSingleDownload = function(asin) {
+    attemptQueueDownloads([asin]);
+};
+
+window.downloadAllMissing = function() {
+    if (!window.currentLibraryData) return;
+
+    const cloudAsins = Object.values(window.currentLibraryData)
+        .filter(item => item.download_status === 'cloud_only')
+        .map(item => item.asin);
+
+    if (cloudAsins.length === 0) {
+        alert("All books are already downloaded!");
+        return;
+    }
+
+    if (confirm(`Queue ${cloudAsins.length} missing books for download?`)) {
+        attemptQueueDownloads(cloudAsins);
+    }
+};
+
+window.closeDownloadDirModal = function(event) {
+    if (event && event.target.id !== 'download-dir-modal') return;
+    document.getElementById('download-dir-modal').style.display = 'none';
+    pendingDownloadAsins = []; // Clear pending items if they cancel
+};
+window.browseForDirectory = async function() {
+    try {
+        // Temporarily disable the button to prevent spam clicking
+        const inputEl = document.getElementById('download-dir-input');
+        inputEl.placeholder = "Waiting for system dialog...";
+        
+        const response = await fetch('/api/system/browse-directory');
+        if (!response.ok) throw new Error('Failed to open system dialog');
+        
+        const data = await response.json();
+        
+        // If the user didn't hit cancel, fill the input with the selected path
+        if (data.path) {
+            inputEl.value = data.path;
+        }
+    } catch (error) {
+        console.error("Browse dialog error:", error);
+    } finally {
+        document.getElementById('download-dir-input').placeholder = "e.g., C:\\Audiobooks or /Users/name/Audiobooks";
+    }
+};
+window.submitDownloadDir = async function() {
+    const path = document.getElementById('download-dir-input').value.trim();
+    const errorEl = document.getElementById('download-dir-error');
+    if (!path) return;
+    
+    try {
+        const response = await fetch('/api/settings/download-dir', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ path: path })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Invalid path');
+        }
+        
+        closeDownloadDirModal();
+        
+        // RETRY: Instantly queue the items the user was trying to download!
+        if (pendingDownloadAsins.length > 0) {
+            attemptQueueDownloads(pendingDownloadAsins);
+            pendingDownloadAsins = [];
+        }
+        
+    } catch (error) {
+        errorEl.textContent = error.message;
+        errorEl.style.display = 'block';
+    }
+};
+
+window.cancelActiveDownload = async function() {
+    const titleEl = document.getElementById('active-download-title').textContent;
+    const asin = titleEl.replace('ASIN: ', '');
+    await fetch(`/api/downloads/${asin}`, { method: 'DELETE' });
+};
 window.openCreateProfileModal = openCreateProfileModal;
 window.closeCreateProfileModal = closeCreateProfileModal;
 window.submitCreateProfile = submitCreateProfile;

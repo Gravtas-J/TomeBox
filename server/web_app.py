@@ -9,6 +9,11 @@ def create_server_app(tomebox):
     api = FastAPI()
     static_dir = get_resource_path("server", "static")
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
+    if not hasattr(tomebox, '_web_task_state'):
+        tomebox._web_task_state = {
+            "downloads": {"active_asin": None, "progress": 0, "status": "Idle"},
+            "conversions": {"active_path": None, "progress": 0, "status": "Idle"}
+        }
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
         # Allow static files, auth, and pairing endpoints to bypass entirely
@@ -636,4 +641,104 @@ def create_server_app(tomebox):
             
         return {"status": "success", "profile": profile}
         
+        # --- DOWNLOAD ENDPOINTS ---
+    @api.get("/api/system/browse-directory")
+    def browse_directory():
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        # Create a temporary hidden Tkinter root so we can use the native dialog
+        temp_root = tk.Tk()
+        temp_root.withdraw()
+        
+        # Force the window to pop up in front of the browser
+        temp_root.attributes('-topmost', True) 
+        
+        # Open the system folder picker
+        folder_path = filedialog.askdirectory(
+            parent=temp_root, 
+            title="Select TomeBox Download Location"
+        )
+        
+        temp_root.destroy()
+        
+        return {"path": folder_path}
+    @api.get("/api/downloads/queue")
+    def get_download_queue():
+        # Read the state directly from our new tracker in the manager
+        queue_list = [{"asin": task["asin"], "title": task["title"]} for task in tomebox.download_manager.queue]
+        
+        return {
+            "is_processing": tomebox.download_manager.is_processing,
+            "active": getattr(tomebox.download_manager, 'web_state', {"active_asin": None, "progress": 0, "status": "Idle"}),
+            "queue": queue_list
+        }
+    @api.post("/api/downloads/queue")
+    async def queue_downloads(request: Request):
+        from fastapi.responses import JSONResponse
+        data = await request.json()
+        asins = data.get("asins", [])
+        
+        # Check if the user has set a download directory; NO DEFAULT FALLBACK
+        save_dir = tomebox.settings.get("download_dir")
+        if not save_dir:
+            # Return the specific error the frontend is waiting for
+            return JSONResponse(status_code=400, content={"detail": "DOWNLOAD_DIR_NOT_SET"})
+            
+        items_to_queue = []
+        for item in getattr(tomebox.library_manager, 'cloud_items', []):
+            if item.get("asin") in asins:
+                items_to_queue.append(item)
+                
+        if items_to_queue:
+            tomebox.download_manager.queue_batch(items_to_queue, save_dir)
+            return {"status": "success", "queued": len(items_to_queue)}
+        raise HTTPException(status_code=404, detail="Items not found in cloud library")
+
+
+    # NEW ENDPOINT: Save the directory
+    @api.post("/api/settings/download-dir")
+    async def set_download_dir(request: Request):
+        data = await request.json()
+        path = data.get("path", "").strip()
+        
+        if not path:
+            raise HTTPException(status_code=400, detail="Path cannot be empty.")
+            
+        try:
+            # Create the directory if it doesn't exist
+            os.makedirs(path, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot create or access directory: {e}")
+            
+        # Save to database
+        tomebox.settings["download_dir"] = path
+        tomebox.db.save_settings(tomebox.settings)
+        return {"status": "success", "path": path}
+
+    @api.delete("/api/downloads/{asin}")
+    def cancel_download(asin: str):
+        tomebox.download_manager.cancel_download(asin)
+        return {"status": "cancelled", "asin": asin}
+
+    # --- CONVERSION ENDPOINTS ---
+
+    @api.post("/api/conversions/queue")
+    async def queue_conversions(request: Request):
+        data = await request.json()
+        paths = data.get("paths", [])
+        
+        valid_paths = [p for p in paths if os.path.exists(p)]
+        if valid_paths:
+            tomebox.conversion_manager.convert_batch(valid_paths)
+            return {"status": "success", "queued": len(valid_paths)}
+        raise HTTPException(status_code=400, detail="No valid files provided")
+
+    @api.get("/api/conversions/queue")
+    def get_conversion_queue():
+        return {
+            "active": tomebox._web_task_state["conversions"],
+            # Since convert_batch doesn't expose a queue list natively, we return a simple boolean
+            "is_processing": getattr(tomebox.conversion_manager, 'current_process', None) is not None
+        }
     return api

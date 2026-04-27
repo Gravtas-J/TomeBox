@@ -41,6 +41,7 @@ if ('serviceWorker' in navigator) {
                         // FIXED: Backtick syntax was broken here
                         const response = await fetch(`/api/library`);
                         rawLibraryData = await response.json();
+                        window.currentLibraryData = rawLibraryData;
                         renderGrid();
                     } catch (e) { console.error("Failed to load library", e); }
                 }
@@ -55,8 +56,12 @@ if ('serviceWorker' in navigator) {
 
                     for (const [path, data] of Object.entries(rawLibraryData)) {
                         // Skip non-audio local files but always include cloud-only items
+                        // Skip non-audio local files but always include cloud-only items
                         const isCloudOnly = data.download_status === 'cloud_only';
-                        if (!isCloudOnly && data.format !== 'M4B' && data.format !== 'MP3') continue;
+
+                        // NEW: Allow raw AAX/AAXC files to be displayed so we can convert them!
+                        const validFormats = ['M4B', 'MP3', 'AAXC', 'AAX'];
+                        if (!isCloudOnly && !validFormats.includes(data.format)) continue;
 
                         let authorStr = data.authors || 'Unknown Author';
                         const titleStr = data.title || "Unknown Title";
@@ -90,15 +95,34 @@ if ('serviceWorker' in navigator) {
                         const card = document.createElement('div');
                         card.className = 'book-card';
                         
-                        // Cloud-only items can't be played yet — that's a Milestone 3 feature
-                        if (isCloudOnly) {
-                            card.classList.add('cloud-only');
-                            card.onclick = () => {
-                                // Placeholder for now — will trigger download in Milestone 3
-                                console.log(`Cloud-only book clicked: ${titleStr}`);
-                            };
-                        } else {
-                            card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
+                        // --- NEW: Dynamic Actions & Progress Bar ---
+                        const actionButton = isCloudOnly 
+                            ? `<button class="action-btn-primary btn-small" onclick="if(window.queueSingleDownload) window.queueSingleDownload('${asin}'); event.stopPropagation();">⬇️ Download</button>`
+                            : ``; 
+                            
+                        const cardProgressBar = `
+                            <div class="card-progress-track">
+                                <div id="progress-bar-${asin}" class="card-progress-fill"></div>
+                                <div id="progress-text-${asin}" class="card-progress-text"></div>
+                            </div>
+                        `;
+
+                        // Handle click events (Download vs Play)
+                        card.onclick = () => {
+                            if (isCloudOnly) {
+                                if (window.queueSingleDownload) {
+                                    window.queueSingleDownload(asin);
+                                } else {
+                                    console.log(`Cloud-only book clicked: ${titleStr} (Downloads not supported on this view)`);
+                                }
+                            } else {
+                                startPlayback(path, titleStr, authorStr, resumePos, asin);
+                            }
+                        };
+                        
+                        // Attach the right-click context menu if we are on Desktop
+                        if (typeof attachContextMenu === 'function') {
+                            attachContextMenu(card, data);
                         }
                         
                         card.innerHTML = `
@@ -107,6 +131,8 @@ if ('serviceWorker' in navigator) {
                             <p class="book-title">${titleStr}</p>
                             <p class="book-author">${authorStr}</p>
                             ${timePill}
+                            <div class="card-actions" style="margin-top: 10px; text-align: center;">${actionButton}</div>
+                            ${cardProgressBar}
                         `;
                         grid.appendChild(card);
                         

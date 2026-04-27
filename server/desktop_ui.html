@@ -44,17 +44,27 @@
         <main id="main-content">
             
             <section id="view-library" class="view active">
-                <header class="view-header">
-                    <h2 class="view-title">Library</h2>
-                    <div class="view-header-controls">
+            <header>
+                    <div class="header-brand">TomeBox Library</div>
+                    <div class="header-controls">
                         <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
-                        <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
-                            <option value="all">All Shelves</option>
-                        </select>
-                        <button id="refresh-library-btn" class="action-btn" onclick="refreshLibrary()">
-                            <span class="btn-icon">↻</span>
-                            <span class="btn-label">Refresh</span>
-                        </button>
+                        
+                        <div style="display: flex; gap: 10px; align-items: center; justify-content: center;">
+                            <button id="refresh-library-btn" class="action-btn-secondary" onclick="refreshLibrary()">
+                                Refresh Cloud
+                            </button>
+                            <button id="btn-download-all" class="action-btn-secondary" onclick="downloadAllMissing()">
+                                Download Missing
+                            </button>
+                            <span id="library-status" class="library-status"></span>
+                        </div>
+                        
+                        <div class="filter-row" style="display: flex; gap: 10px; width: 100%;">
+                            <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
+                                <option value="all">All Shelves</option>
+                            </select>
+                            <select id="profile-selector" class="ui-select" onchange="changeProfile()"></select>
+                        </div>
                     </div>
                 </header>
                 <div id="library-status" class="library-status"></div>
@@ -129,7 +139,7 @@
                                 <ol style="color: #ccc; line-height: 1.6;">
                                     <li>Sign in to your Audible account in the popup window</li>
                                     <li>After you sign in, your browser will show a "page can't be loaded" error — this is expected</li>
-                                    <li>Copy the entire URL from the address bar (it starts with <code>audible://</code>)</li>
+                                    <li>Copy the entire URL from the address bar
                                     <li>Paste it into the box below and click "Complete Sign In"</li>
                                 </ol>
                                 <p style="font-size: 0.85em; color: #888;">
@@ -138,7 +148,7 @@
                             </div>
                             
                             <textarea id="callback-url-input" class="callback-input" 
-                                placeholder="Paste the audible://... URL here"></textarea>
+                                placeholder="Paste the URL here"></textarea>
                             
                             <div class="modal-actions">
                                 <button class="action-btn-secondary" onclick="closeLoginModal()">Cancel</button>
@@ -163,7 +173,6 @@
             </section>
             
         </main>
-        
         <div id="player-bar">
             <div id="progress-container" onclick="seekAudio(event)">
                 <div id="progress-fill"></div>
@@ -235,7 +244,35 @@
             <div class="modal-body" id="chapter-list"></div>
         </div>
     </div>
-    
+    <div id="context-menu" class="context-menu" style="display: none;">
+        <div class="context-item" id="ctx-download" onclick="ctxAction('download')">⬇️ Download</div>
+        <div class="context-item" id="ctx-convert" onclick="ctxAction('convert')">🔄 Convert to M4B</div>
+        <div class="context-item context-danger" id="ctx-cancel" onclick="ctxAction('cancel')">❌ Cancel</div>
+    </div>
+    <div class="modal-overlay" id="download-dir-modal" onclick="closeDownloadDirModal(event)">
+        <div class="modal-content" style="max-width: 500px;" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Set Download Location</span>
+                <button class="close-btn" onclick="closeDownloadDirModal()">✕</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <p style="margin-bottom: 15px; color: #ccc;">Where would you like to save your audiobooks?</p>
+                <p style="margin-bottom: 15px; color: #ccc;">Where would you like to save your audiobooks?</p>
+                
+                <div style="display: flex; gap: 10px; width: 100%;">
+                    <input type="text" id="download-dir-input" class="text-input" placeholder="e.g., C:\Audiobooks or /Users/name/Audiobooks" style="flex-grow: 1; margin-bottom: 0;">
+                    <button class="action-btn-secondary" onclick="browseForDirectory()" style="white-space: nowrap;">📂 Browse...</button>
+                </div>
+                
+                <p id="download-dir-error" style="color: #ff6b6b; display: none; margin-top: 10px;"></p>
+                <p id="download-dir-error" style="color: #ff6b6b; display: none; margin-top: 10px;"></p>
+                <div class="modal-actions">
+                    <button class="action-btn-secondary" onclick="closeDownloadDirModal()">Cancel</button>
+                    <button class="action-btn-primary" onclick="submitDownloadDir()">Save Location</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <script src="/static/js/mobile_client.js"></script>
     <script src="/static/js/desktop.js"></script>
 </body>
