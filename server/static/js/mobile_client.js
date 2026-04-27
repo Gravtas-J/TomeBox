@@ -54,7 +54,9 @@ if ('serviceWorker' in navigator) {
                     let uniqueShelves = new Set();
 
                     for (const [path, data] of Object.entries(rawLibraryData)) {
-                        if (data.format !== 'M4B' && data.format !== 'MP3') continue;
+                        // Skip non-audio local files but always include cloud-only items
+                        const isCloudOnly = data.download_status === 'cloud_only';
+                        if (!isCloudOnly && data.format !== 'M4B' && data.format !== 'MP3') continue;
 
                         let authorStr = data.authors || 'Unknown Author';
                         const titleStr = data.title || "Unknown Title";
@@ -76,16 +78,31 @@ if ('serviceWorker' in navigator) {
                             timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
                         }
 
-                        // FIXED: Added token to the cover image fetch so they load properly
                         const coverHtml = asin !== "Unknown" 
                             ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
                             : `<div class="cover-placeholder">📖</div>`;
 
+                        // Status badge — Downloaded (green) or Cloud (blue)
+                        const badge = isCloudOnly
+                            ? '<div class="status-badge cloud-only">Cloud</div>'
+                            : '<div class="status-badge downloaded">Downloaded</div>';
+
                         const card = document.createElement('div');
                         card.className = 'book-card';
-                        card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
+                        
+                        // Cloud-only items can't be played yet — that's a Milestone 3 feature
+                        if (isCloudOnly) {
+                            card.classList.add('cloud-only');
+                            card.onclick = () => {
+                                // Placeholder for now — will trigger download in Milestone 3
+                                console.log(`Cloud-only book clicked: ${titleStr}`);
+                            };
+                        } else {
+                            card.onclick = () => startPlayback(path, titleStr, authorStr, resumePos, asin);
+                        }
                         
                         card.innerHTML = `
+                            ${badge}
                             ${coverHtml}
                             <p class="book-title">${titleStr}</p>
                             <p class="book-author">${authorStr}</p>
@@ -93,17 +110,28 @@ if ('serviceWorker' in navigator) {
                         `;
                         grid.appendChild(card);
                         
-                        allBooks.push({ path: path, element: card, searchString: `${titleStr} ${authorStr}`.toLowerCase(), shelves: bookShelves });
+                        allBooks.push({ 
+                            path: path, 
+                            element: card, 
+                            searchString: `${titleStr} ${authorStr}`.toLowerCase(), 
+                            shelves: bookShelves 
+                        });
                     }
-
-                    const currentShelfSelection = shelfFilter.value;
-                    shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
-                    Array.from(uniqueShelves).sort().forEach(shelf => {
-                        const selected = shelf === currentShelfSelection ? "selected" : "";
-                        shelfFilter.innerHTML += `<option value="${shelf}" ${selected}>${shelf}</option>`;
-                    });
                     
-                    filterLibrary();
+                    // Populate the shelf filter dropdown
+                    if (shelfFilter) {
+                        const currentValue = shelfFilter.value;
+                        shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
+                        for (const shelf of [...uniqueShelves].sort()) {
+                            const option = document.createElement('option');
+                            option.value = shelf;
+                            option.textContent = shelf;
+                            shelfFilter.appendChild(option);
+                        }
+                        if ([...uniqueShelves].includes(currentValue)) {
+                            shelfFilter.value = currentValue;
+                        }
+                    }
                 }
 
                 async function cueLastPlayedBook() {

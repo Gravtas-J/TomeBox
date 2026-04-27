@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TomeBox</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/desktop.css">
+</head>
+<body class="desktop">
+    <div id="app-shell">
+        
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1>TomeBox</h1>
+                <button id="sidebar-toggle" title="Collapse sidebar">‹</button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#/library" class="nav-item active" data-view="library">
+                    <span class="nav-icon">📚</span>
+                    <span class="nav-label">Library</span>
+                </a>
+                <a href="#/devices" class="nav-item" data-view="devices">
+                    <span class="nav-icon">📱</span>
+                    <span class="nav-label">Pair Devices</span>
+                </a>
+            </nav>
+            <a href="#/account" class="nav-item" data-view="account">
+                <span class="nav-icon">👤</span>
+                <span class="nav-label">Account</span>
+            </a>
+            <div class="sidebar-footer">
+                <div class="profile-display">
+                    <div class="profile-icon">👤</div>
+                    <div class="profile-info">
+                        <div class="profile-label">Profile</div>
+                        <select id="profile-selector" class="profile-select" onchange="changeProfile()"></select>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <main id="main-content">
+            
+            <section id="view-library" class="view active">
+                <header class="view-header">
+                    <h2 class="view-title">Library</h2>
+                    <div class="view-header-controls">
+                        <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
+                        <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
+                            <option value="all">All Shelves</option>
+                        </select>
+                        <button id="refresh-library-btn" class="action-btn" onclick="refreshLibrary()">
+                            <span class="btn-icon">↻</span>
+                            <span class="btn-label">Refresh</span>
+                        </button>
+                    </div>
+                </header>
+                <div id="library-status" class="library-status"></div>
+                <div id="library-grid"></div>
+            </section>
+            <section id="view-account" class="view">
+                <header class="view-header">
+                    <h2 class="view-title">Account & Profiles</h2>
+                </header>
+                
+                <div id="account-status" class="library-status"></div>
+                
+                <div class="account-section">
+                    <div class="section-header">
+                        <h3>Profiles</h3>
+                        <button class="action-btn" onclick="openCreateProfileModal()">
+                            <span class="btn-icon">+</span>
+                            <span class="btn-label">New Profile</span>
+                        </button>
+                    </div>
+                    <div id="profiles-list"></div>
+                </div>
+            </section>
+
+            <div class="modal-overlay" id="create-profile-modal" onclick="closeCreateProfileModal(event)">
+                <div class="modal-content modal-medium" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span>Create New Profile</span>
+                        <button class="close-btn" onclick="closeCreateProfileModal()">✕</button>
+                    </div>
+                    <div class="modal-body modal-padded">
+                        <p class="modal-description">
+                            Profiles let you manage multiple Audible accounts. The new profile will be empty until you sign in.
+                        </p>
+                        <input type="text" id="new-profile-name" class="text-input" placeholder="Profile name (e.g. Personal, Family)">
+                        <div class="modal-actions">
+                            <button class="action-btn-secondary" onclick="closeCreateProfileModal()">Cancel</button>
+                            <button class="action-btn" onclick="submitCreateProfile()">Create</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-overlay" id="login-modal" onclick="closeLoginModal(event)">
+                <div class="modal-content modal-large" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <span id="login-modal-title">Sign in to Audible</span>
+                        <button class="close-btn" onclick="closeLoginModal()">✕</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="login-step-1" class="login-step">
+                            <p>Choose your Audible region:</p>
+                            <select id="login-locale" class="ui-select">
+                                <option value="us">United States</option>
+                                <option value="uk">United Kingdom</option>
+                                <option value="au">Australia</option>
+                                <option value="ca">Canada</option>
+                                <option value="de">Germany</option>
+                                <option value="fr">France</option>
+                                <option value="jp">Japan</option>
+                            </select>
+                            <button class="action-btn" onclick="startLoginFlow()">Continue</button>
+                        </div>
+                        
+                        <div id="login-step-2" class="login-step" style="display: none;">
+                            <p>Sign in below. After successful sign-in, your browser will show a "page can't be loaded" error — this is expected.</p>
+                            <p><strong>Copy the URL from your browser's address bar</strong> and paste it below.</p>
+                            
+                            <iframe id="login-iframe" class="login-iframe"></iframe>
+                            <div id="login-fallback" style="display: none;">
+                                <p>Audible login opened in a new window. Follow these steps:</p>
+                                <ol style="color: #ccc; line-height: 1.6;">
+                                    <li>Sign in to your Audible account in the popup window</li>
+                                    <li>After you sign in, your browser will show a "page can't be loaded" error — this is expected</li>
+                                    <li>Copy the entire URL from the address bar (it starts with <code>audible://</code>)</li>
+                                    <li>Paste it into the box below and click "Complete Sign In"</li>
+                                </ol>
+                                <p style="font-size: 0.85em; color: #888;">
+                                    If the popup didn't open, <a id="login-external-link" href="#" target="_blank">click here to open Audible login</a>.
+                                </p>
+                            </div>
+                            
+                            <textarea id="callback-url-input" class="callback-input" 
+                                placeholder="Paste the audible://... URL here"></textarea>
+                            
+                            <div class="modal-actions">
+                                <button class="action-btn-secondary" onclick="closeLoginModal()">Cancel</button>
+                                <button class="action-btn" onclick="completeLoginFlow()">Complete Sign In</button>
+                            </div>
+                            
+                            <div id="login-error" class="login-error" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <section id="view-devices" class="view">
+                <div class="devices-content">
+                    <h2>Pair a Mobile Device</h2>
+                    <p>Scan the QR code below with your phone or tablet to add it to your TomeBox library.</p>
+                    <div id="qr-container"></div>
+                    <div id="pairing-url-container">
+                        <p>Or copy this URL:</p>
+                        <code id="pairing-url"></code>
+                    </div>
+                </div>
+            </section>
+            
+        </main>
+        
+        <div id="player-bar">
+            <div id="progress-container" onclick="seekAudio(event)">
+                <div id="progress-fill"></div>
+            </div>
+            
+            <div class="player-section player-section-left">
+                <img id="player-cover" src="" alt="" style="display: none;">
+                <div class="player-info">
+                    <p id="now-playing-title">Select a book</p>
+                    <p id="now-playing-author">...</p>
+                </div>
+            </div>
+            
+            <div class="player-section player-section-center">
+                <div class="player-main-row">
+                    <button class="chapter-btn" onclick="skipChapter(-1)" title="Previous chapter">⏮</button>
+                    <button class="skip-btn" onclick="skipAudio(-15)" title="Back 15 seconds">↺</button>
+                    <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+                    <button class="skip-btn" onclick="skipAudio(15)" title="Forward 15 seconds">↻</button>
+                    <button class="chapter-btn" onclick="skipChapter(1)" title="Next chapter">⏭</button>
+                </div>
+                <!-- <div class="player-time-row">
+                    <span id="current-time">0:00</span>
+                    <span id="total-time">0:00</span>
+                </div> -->
+            </div>
+            
+            <div class="player-section player-section-right">
+                <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()" title="Playback speed">1.0x</button>
+                <button class="tool-btn" onclick="openChapterMenu()" title="Chapters">📑</button>
+                <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()" title="Sleep timer">🌙</button>
+            </div>
+            
+            <audio id="main-audio"></audio>
+        </div>
+        
+    </div>
+    
+    <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Sleep Timer</span>
+                <button class="close-btn" onclick="closeModals()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
+                <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
+                <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
+                <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
+                <div class="list-item custom-sleep-row">
+                    <div class="sleep-input-group">
+                        <span>After</span>
+                        <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
+                        <span>Chapters</span>
+                    </div>
+                    <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
+                </div>
+                <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Chapters</span>
+                <button class="close-btn" onclick="closeModals()">✕</button>
+            </div>
+            <div class="modal-body" id="chapter-list"></div>
+        </div>
+    </div>
+    
+    <script src="/static/js/mobile_client.js"></script>
+    <script src="/static/js/desktop.js"></script>
+</body>
+</html>

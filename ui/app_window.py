@@ -1274,6 +1274,17 @@ class AAXManagerApp:
         setup_library_view(self, left_panel)
         setup_sidebar(self, right_panel)
 
+    def open_web_ui(self):
+        """Opens the localhost web UI in the user's default browser."""
+        import webbrowser
+        
+        # Auto-start the server if it's not already running
+        if not getattr(self, 'server_running', False):
+            self.toggle_web_server()
+        
+        # Small delay to give the server a moment to bind the port before browser opens
+        self.root.after(500, lambda: webbrowser.open("http://127.0.0.1:8000/desktop"))
+        
     def export_csv_worker(self):
         output_file = filedialog.asksaveasfilename(
             defaultextension=".csv",
