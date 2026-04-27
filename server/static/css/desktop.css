@@ -908,3 +908,23 @@ body.desktop .book-card.cloud-only:hover {
     padding: 4px 8px;
     border-radius: 4px;
 }
+
+/* Header Layout Updates */
+.action-menu {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, margin 0.3s ease, opacity 0.3s ease;
+    max-height: 100px;
+    opacity: 1;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.action-menu.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}

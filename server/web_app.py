@@ -166,6 +166,32 @@ def create_server_app(tomebox):
         )
         return response
 
+    @api.post("/api/library/shelf")
+    async def add_to_shelf(request: Request):
+        data = await request.json()
+        asin = data.get("asin")
+        shelf_name = data.get("shelf", "").strip()
+
+        if not asin or not shelf_name:
+            raise HTTPException(status_code=400, detail="ASIN and shelf name are required.")
+
+        # Load the current shelves database from settings
+        shelves_db = tomebox.settings.get("shelves_db", {})
+
+        # Ensure the ASIN has a list
+        if asin not in shelves_db:
+            shelves_db[asin] = []
+
+        # Add the shelf if it isn't already there
+        if shelf_name not in shelves_db[asin]:
+            shelves_db[asin].append(shelf_name)
+            
+            # Save back to settings
+            tomebox.settings["shelves_db"] = shelves_db
+            tomebox.db.save_settings(tomebox.settings)
+
+        return {"status": "success", "asin": asin, "shelves": shelves_db[asin]}
+
     @api.get("/api/library")
     def get_web_library():
         enriched_lib = {}
@@ -741,4 +767,64 @@ def create_server_app(tomebox):
             # Since convert_batch doesn't expose a queue list natively, we return a simple boolean
             "is_processing": getattr(tomebox.conversion_manager, 'current_process', None) is not None
         }
+    
+    @api.get("/api/system/browse-file")
+    def browse_file():
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        temp_root = tk.Tk()
+        temp_root.withdraw()
+        temp_root.attributes('-topmost', True) 
+        
+        file_path = filedialog.askopenfilename(
+            parent=temp_root, 
+            title="Select Audiobook File",
+            filetypes=[("Audiobooks", "*.m4b *.mp3 *.aaxc *.aax")]
+        )
+        
+        temp_root.destroy()
+        return {"path": file_path}
+
+    @api.post("/api/library/import")
+    async def import_local_path(request: Request):
+        data = await request.json()
+        path = data.get("path", "").strip()
+        
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=400, detail="Invalid path provided.")
+
+        try:
+            active_profile = tomebox.settings.get("active_profile", "Main")
+            
+            # Dummy callbacks since the Web UI isn't hooked into the desktop's event loop
+            def status_cb(msg):
+                if hasattr(tomebox, 'logger'): tomebox.logger(f"[Web Import] {msg}")
+                
+            def complete_cb(count):
+                if hasattr(tomebox, 'logger'): tomebox.logger(f"[Web Import] Finished adding {count} files.")
+
+            if os.path.isfile(path):
+                # import_files expects a list of paths
+                tomebox.library_manager.import_files(
+                    file_paths=[path],
+                    converter=tomebox.converter,
+                    active_profile=active_profile,
+                    on_status_cb=status_cb,
+                    on_complete_cb=complete_cb,
+                    logger=getattr(tomebox, 'logger', print)
+                )
+            elif os.path.isdir(path):
+                tomebox.library_manager.import_folder(
+                    folder_path=path,
+                    converter=tomebox.converter,
+                    active_profile=active_profile,
+                    on_status_cb=status_cb,
+                    on_complete_cb=complete_cb,
+                    logger=getattr(tomebox, 'logger', print)
+                )
+                
+            return {"status": "success", "message": "Import started in background"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     return api

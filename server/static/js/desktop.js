@@ -561,13 +561,24 @@ function attachContextMenu(cardElement, itemData) {
         menu.style.left = `${e.pageX}px`;
         menu.style.top = `${e.pageY}px`;
 
-        // Toggle visibility based on item state
+        // 1. Determine State
         const isCloudOnly = itemData.download_status === 'cloud_only';
         const isAax = itemData.format === 'AAXC' || itemData.format === 'AAX';
+        const isDownloadingOrQueued = window.activeTaskAsins && window.activeTaskAsins.has(itemData.asin);
+        const isDownloaded = !isCloudOnly && !isDownloadingOrQueued;
+
+        // 2. Apply Display Rules
+        // Show Download if it's in the cloud and NOT currently downloading
+        document.getElementById('ctx-download').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
         
-        document.getElementById('ctx-download').style.display = isCloudOnly ? 'block' : 'none';
-        document.getElementById('ctx-convert').style.display = (!isCloudOnly && isAax) ? 'block' : 'none';
-        document.getElementById('ctx-cancel').style.display = 'block'; // Ideally check if active
+        // Show Cancel ONLY if it is actively downloading or queued
+        document.getElementById('ctx-cancel').style.display = isDownloadingOrQueued ? 'block' : 'none';
+        
+        // Show Add to Shelf ONLY if it is fully downloaded to the local machine
+        document.getElementById('ctx-shelf').style.display = isDownloaded ? 'block' : 'none';
+        
+        // Show Convert ONLY if it's local AND encrypted (legacy fallback)
+        document.getElementById('ctx-convert').style.display = (isDownloaded && isAax) ? 'block' : 'none';
     });
 }
 
@@ -575,13 +586,12 @@ function attachContextMenu(cardElement, itemData) {
 async function ctxAction(action) {
     if (!currentContextItem) return;
     
+    // Hide the menu immediately after clicking
+    document.getElementById('context-menu').style.display = 'none';
+    
     try {
         if (action === 'download') {
-            await fetch('/api/downloads/queue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ asins: [currentContextItem.asin] })
-            });
+            if (window.queueSingleDownload) window.queueSingleDownload(currentContextItem.asin);
         } else if (action === 'convert') {
             await fetch('/api/conversions/queue', {
                 method: 'POST',
@@ -590,6 +600,29 @@ async function ctxAction(action) {
             });
         } else if (action === 'cancel') {
             await fetch(`/api/downloads/${currentContextItem.asin}`, { method: 'DELETE' });
+        } else if (action === 'shelf') {
+            const shelfName = prompt(`Add "${currentContextItem.title}" to which shelf?`);
+            
+            if (shelfName && shelfName.trim() !== '') {
+                const response = await fetch('/api/library/shelf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        asin: currentContextItem.asin, 
+                        shelf: shelfName.trim() 
+                    })
+                });
+
+                if (response.ok) {
+                    // Instantly reload the library so the new shelf appears in the filter dropdown
+                    if (typeof loadLibrary === 'function') {
+                        await loadLibrary();
+                    }
+                } else {
+                    const err = await response.json();
+                    alert(`Failed to add to shelf: ${err.detail}`);
+                }
+            }
         }
     } catch (error) {
         console.error(`Action ${action} failed:`, error);
@@ -602,13 +635,19 @@ function startQueuePolling() {
     if (queuePollingInterval) clearInterval(queuePollingInterval);
     queuePollingInterval = setInterval(pollQueues, 2000);
 }
-
+window.activeTaskAsins = new Set();
 async function pollQueues() {
     try {
         const res = await fetch('/api/downloads/queue');
         if (!res.ok) return;
         const data = await res.json();
-        
+        window.activeTaskAsins.clear();
+        if (data.is_processing && data.active && data.active.active_asin) {
+            window.activeTaskAsins.add(data.active.active_asin);
+        }
+        if (data.queue && data.queue.length > 0) {
+            data.queue.forEach(task => window.activeTaskAsins.add(task.asin));
+        }
         if (data.is_processing && data.active.active_asin) {
             
             wasProcessingQueue = true; 
@@ -778,3 +817,81 @@ window.openLoginModal = openLoginModal;
 window.closeLoginModal = closeLoginModal;
 window.startLoginFlow = startLoginFlow;
 window.completeLoginFlow = completeLoginFlow;
+
+
+window.toggleActionMenu = function() {
+    const menu = document.getElementById('action-menu');
+    if (menu) {
+        menu.classList.toggle('collapsed');
+    }
+};
+
+// --- IMPORT LOCAL FILES & FOLDERS ---
+
+window.addLocalFile = async function() {
+    try {
+        const response = await fetch('/api/system/browse-file');
+        if (!response.ok) throw new Error('Failed to open file dialog');
+        
+        const data = await response.json();
+        if (data.path) {
+            await processImport(data.path);
+        }
+    } catch (error) {
+        console.error("Browse file error:", error);
+    }
+};
+
+window.importFolder = async function() {
+    try {
+        // Reusing the endpoint we built earlier for the download directory
+        const response = await fetch('/api/system/browse-directory');
+        if (!response.ok) throw new Error('Failed to open folder dialog');
+        
+        const data = await response.json();
+        if (data.path) {
+            await processImport(data.path);
+        }
+    } catch (error) {
+        console.error("Browse folder error:", error);
+    }
+};
+
+async function processImport(path) {
+    const statusEl = document.getElementById('library-status');
+    statusEl.textContent = 'Importing in background...';
+    statusEl.className = 'library-status'; 
+
+    try {
+        const response = await fetch('/api/library/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Import failed');
+        }
+
+        statusEl.textContent = 'Processing files...';
+        
+        // Wait 3 seconds to let the Python background thread finish parsing the files
+        setTimeout(async () => {
+            if (typeof loadLibrary === 'function') {
+                await loadLibrary();
+            }
+            statusEl.textContent = 'Import successful!';
+            statusEl.classList.add('success');
+            
+            setTimeout(() => {
+                statusEl.textContent = '';
+                statusEl.classList.remove('success');
+            }, 3000);
+        }, 3000);
+
+    } catch (error) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.classList.add('error');
+    }
+}

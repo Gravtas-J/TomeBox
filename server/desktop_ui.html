@@ -45,28 +45,45 @@
             
             <section id="view-library" class="view active">
             <header>
-                    <div class="header-brand">TomeBox Library</div>
-                    <div class="header-controls">
-                        <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
-                        
-                        <div style="display: flex; gap: 10px; align-items: center; justify-content: center;">
-                            <button id="refresh-library-btn" class="action-btn-secondary" onclick="refreshLibrary()">
-                                Refresh Cloud
-                            </button>
-                            <button id="btn-download-all" class="action-btn-secondary" onclick="downloadAllMissing()">
-                                Download Missing
-                            </button>
-                            <span id="library-status" class="library-status"></span>
-                        </div>
-                        
-                        <div class="filter-row" style="display: flex; gap: 10px; width: 100%;">
-                            <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
-                                <option value="all">All Shelves</option>
-                            </select>
-                            <select id="profile-selector" class="ui-select" onchange="changeProfile()"></select>
-                        </div>
-                    </div>
-                </header>
+                <div class="header-main" style="display: flex; align-items: center; justify-content: center; width: 100%; margin-bottom: 10px;">
+                    <div class="header-brand" style="white-space: nowrap;">TomeBox Library</div>
+                </div>
+
+
+
+                <div class="filter-row" style="display: flex; gap: 10px; width: 100%; align-items: center;">
+                    <input type="text" id="search-box" placeholder="Search titles, authors, or series..." onkeyup="filterLibrary()" style="flex: 2; margin: 0; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; outline: none; font-size: 1rem;">
+                    
+                    <select id="sort-filter" class="ui-select" onchange="filterLibrary()" style="flex: 1;">
+                        <option value="title_asc">Title (A-Z)</option>
+                        <option value="title_desc">Title (Z-A)</option>
+                        <option value="author_asc">Author (A-Z)</option>
+                        <option value="series_asc">Series</option>
+                        <option value="status">Download Status</option>
+                    </select>
+                    
+                    <select id="shelf-filter" class="ui-select" onchange="filterLibrary()" style="flex: 1;">
+                        <option value="all">All Shelves</option>
+                    </select>
+
+                    <button class="action-btn-secondary" onclick="toggleActionMenu()" style="padding: 8px 15px; font-weight: bold; font-size: 1.2rem; height: 100%; box-sizing: border-box;">⋮</button>
+                </div>
+                <div id="action-menu" class="action-menu collapsed">
+                    <button id="refresh-library-btn" class="action-btn-secondary" onclick="refreshLibrary()">
+                        Refresh Cloud
+                    </button>
+                    <button id="btn-download-all" class="action-btn-secondary" onclick="downloadAllMissing()">
+                        Download Missing
+                    </button>
+                    <button id="btn-add-file" class="action-btn-secondary" onclick="addLocalFile()">
+                        Add File
+                    </button>
+                    <button id="btn-import-folder" class="action-btn-secondary" onclick="importFolder()">
+                        Import Folder
+                    </button>
+                    <span id="library-status" class="library-status"></span>
+                </div>
+            </header>
                 <div id="library-status" class="library-status"></div>
                 <div id="library-grid"></div>
             </section>
@@ -194,10 +211,6 @@
                     <button class="skip-btn" onclick="skipAudio(15)" title="Forward 15 seconds">↻</button>
                     <button class="chapter-btn" onclick="skipChapter(1)" title="Next chapter">⏭</button>
                 </div>
-                <!-- <div class="player-time-row">
-                    <span id="current-time">0:00</span>
-                    <span id="total-time">0:00</span>
-                </div> -->
             </div>
             
             <div class="player-section player-section-right">
@@ -247,6 +260,7 @@
     <div id="context-menu" class="context-menu" style="display: none;">
         <div class="context-item" id="ctx-download" onclick="ctxAction('download')">⬇️ Download</div>
         <div class="context-item" id="ctx-convert" onclick="ctxAction('convert')">🔄 Convert to M4B</div>
+        <div class="context-item" id="ctx-shelf" onclick="ctxAction('shelf')">📚 Add to Shelf</div>
         <div class="context-item context-danger" id="ctx-cancel" onclick="ctxAction('cancel')">❌ Cancel</div>
     </div>
     <div class="modal-overlay" id="download-dir-modal" onclick="closeDownloadDirModal(event)">

@@ -26,11 +26,22 @@ if ('serviceWorker' in navigator) {
                     try {
                         const profRes = await fetch(`/api/profiles`);
                         const profiles = await profRes.json();
-                        const profSelect = document.getElementById('profile-selector');
-                        profSelect.innerHTML = '';
-                        profiles.forEach(p => { profSelect.innerHTML += `<option value="${p}">${p}</option>`; });
+                        
+                        // Set the current profile FIRST
                         currentProfile = profiles[0] || "Main";
-                    } catch (e) { console.error("Profile fetch failed", e); }
+                        
+                        const profSelect = document.getElementById('profile-selector');
+                        
+                        // SAFETY CHECK: Only update the HTML if the element actually exists
+                        if (profSelect) {
+                            profSelect.innerHTML = '';
+                            profiles.forEach(p => { 
+                                profSelect.innerHTML += `<option value="${p}" ${p===currentProfile?'selected':''}>${p}</option>`; 
+                            });
+                        }
+                    } catch (e) { 
+                        console.error("Profile fetch failed", e); 
+                    }
                     
                     await loadLibrary();
                     await cueLastPlayedBook();
@@ -136,11 +147,25 @@ if ('serviceWorker' in navigator) {
                         `;
                         grid.appendChild(card);
                         
+                        let seriesStr = "";
+                        if (data.series) {
+                            if (Array.isArray(data.series)) {
+                                seriesStr = data.series.map(s => s.title || s).join(', ');
+                            } else {
+                                seriesStr = data.series;
+                            }
+                        }
+
                         allBooks.push({ 
                             path: path, 
                             element: card, 
-                            searchString: `${titleStr} ${authorStr}`.toLowerCase(), 
-                            shelves: bookShelves 
+                            searchString: `${titleStr} ${authorStr} ${seriesStr}`.toLowerCase(), 
+                            shelves: bookShelves,
+                            // NEW: Data needed for sorting
+                            title: titleStr.toLowerCase(),
+                            author: authorStr.toLowerCase(),
+                            series: seriesStr.toLowerCase(),
+                            status: isCloudOnly ? 'cloud' : 'downloaded'
                         });
                     }
                     
@@ -158,6 +183,7 @@ if ('serviceWorker' in navigator) {
                             shelfFilter.value = currentValue;
                         }
                     }
+                    filterLibrary();
                 }
 
                 async function cueLastPlayedBook() {
@@ -229,12 +255,58 @@ if ('serviceWorker' in navigator) {
                 function filterLibrary() {
                     const query = document.getElementById('search-box').value.toLowerCase();
                     const selectedShelf = document.getElementById('shelf-filter').value;
+                    const sortMethod = document.getElementById('sort-filter') ? document.getElementById('sort-filter').value : 'title_asc';
                     
+                    let visibleBooks = [];
+
+                    // 1. Filter: Hide or Show the cards based on search and shelf
                     allBooks.forEach(book => {
                         const matchesSearch = book.searchString.includes(query);
                         const matchesShelf = selectedShelf === 'all' || book.shelves.includes(selectedShelf);
-                        book.element.style.display = (matchesSearch && matchesShelf) ? 'flex' : 'none';
+                        
+                        if (matchesSearch && matchesShelf) {
+                            book.element.style.display = 'flex';
+                            visibleBooks.push(book);
+                        } else {
+                            book.element.style.display = 'none';
+                        }
                     });
+
+                    // 2. Sort: Order the visible array based on the dropdown selection
+                    visibleBooks.sort((a, b) => {
+                        switch (sortMethod) {
+                            case 'title_asc':
+                                return a.title.localeCompare(b.title);
+                            case 'title_desc':
+                                return b.title.localeCompare(a.title);
+                            case 'author_asc':
+                                // Sort by author, then fall back to title if author is the same
+                                return a.author.localeCompare(b.author) || a.title.localeCompare(b.title);
+                            case 'series_asc':
+                                // Group books without a series at the bottom
+                                if (a.series && !b.series) return -1;
+                                if (!a.series && b.series) return 1;
+                                // Sort by series name, then by title (which handles Book 1, Book 2 etc.)
+                                return a.series.localeCompare(b.series) || a.title.localeCompare(b.title);
+                            case 'status':
+                                // Put downloaded (local) books first, then cloud, then alphabetize
+                                if (a.status !== b.status) {
+                                    return a.status === 'downloaded' ? -1 : 1;
+                                }
+                                return a.title.localeCompare(b.title);
+                            default:
+                                return 0;
+                        }
+                    });
+
+                    // 3. Render: Re-append elements to the grid container
+                    // (Appending an existing DOM node moves it to the bottom, effectively reordering the grid)
+                    const grid = document.getElementById('library-grid');
+                    if (grid) {
+                        visibleBooks.forEach(book => {
+                            grid.appendChild(book.element);
+                        });
+                    }
                 }
 
                 async function startPlayback(filePath, title, author, fallbackPosition, asin) {
