@@ -151,6 +151,51 @@ def setup_tkinter_exception_handler(root, logger):
         logger.error(f"Tkinter callback exception:\n{''.join(traceback.format_exception(exc, val, tb))}")
     root.report_callback_exception = handler
 
+def show_splash(root, base_dir):
+    """Draws a borderless splash screen centered on the screen."""
+    import os
+    import tkinter as tk
+    from PIL import Image, ImageTk
+
+    splash_path = os.path.join(base_dir, "tomebox-splash.png")
+    
+    if not os.path.exists(splash_path):
+        return None
+
+    splash = tk.Toplevel(root)
+    splash.overrideredirect(True)  # Removes the window border and title bar
+    
+    # Keep the splash on top of other windows
+    splash.attributes("-topmost", True)
+
+    try:
+        img = Image.open(splash_path)
+        img_tk = ImageTk.PhotoImage(img)
+
+        # Calculate exact center coordinates
+        window_width = img.width
+        window_height = img.height
+        screen_width = splash.winfo_screenwidth()
+        screen_height = splash.winfo_screenheight()
+
+        x_coordinate = int((screen_width / 2) - (window_width / 2))
+        y_coordinate = int((screen_height / 2) - (window_height / 2))
+
+        splash.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
+
+        # Place the image
+        label = tk.Label(splash, image=img_tk, bg="black")
+        label.image = img_tk  # Keep a reference to prevent garbage collection
+        label.pack()
+
+        # Force the OS to draw the window immediately before moving on
+        splash.update()
+        return splash
+        
+    except Exception:
+        splash.destroy()
+        return None
+
 def run_gui(base_dir):
     """Runs the standard desktop application."""
     from tkinterdnd2 import TkinterDnD
@@ -164,13 +209,24 @@ def run_gui(base_dir):
             pass
     
     root = TkinterDnD.Tk()
-    app = AAXManagerApp(root, base_dir)
     
+    # Hide the main window immediately so it doesn't flash on screen
+    root.withdraw()
+    
+    # 1. Fire up the splash screen
+    splash = show_splash(root, base_dir)
+    
+    # 2. Run the heavy initializations
+    app = AAXManagerApp(root, base_dir)
     saved_palette = app.settings.get("classic_palette", "dark")
     app.apply_classic_palette(saved_palette)
     
+    # 3. Tear down the splash and reveal the main app
+    if splash:
+        splash.destroy()
+        
+    root.deiconify()
     root.mainloop()
-
 
 def main():
     args = parse_args()
