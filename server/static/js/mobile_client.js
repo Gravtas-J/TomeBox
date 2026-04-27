@@ -6,11 +6,12 @@ if ('serviceWorker' in navigator) {
                     });
                 }
 
-                const audio = document.getElementById('audio-player'); 
-                const playBtn = document.getElementById('btn-play-pause'); 
-                const progressFill = document.getElementById('seek-progress'); 
+                // Support BOTH Desktop and Mobile element IDs
+                const audio = document.getElementById('audio-player') || document.getElementById('main-audio');
+                const playBtn = document.getElementById('btn-play-pause') || document.getElementById('play-pause-btn');
+                const progressFill = document.getElementById('seek-progress') || document.getElementById('progress-fill');
                 const playerBar = document.getElementById('player-bar');
-                const speedBtn = document.getElementById('btn-speed');
+                const speedBtn = document.getElementById('btn-speed') || document.getElementById('speed-btn');
 
                 let allBooks = []; 
                 let currentPath = null;
@@ -206,16 +207,21 @@ if ('serviceWorker' in navigator) {
                             currentPath = data.path;
                             currentAsin = asin;
                             
-                            // Update the new DOM IDs
-                            document.getElementById('player-title').innerText = titleStr;
-                            document.getElementById('player-author').innerText = authorStr;
+                            // SAFE FALLBACKS: Works on both desktop and mobile UI
+                            const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
+                            if (titleEl) titleEl.innerText = titleStr;
+                            
+                            const authorEl = document.getElementById('player-author') || document.getElementById('now-playing-author');
+                            if (authorEl) authorEl.innerText = authorStr;
                             
                             const coverImg = document.getElementById('player-cover');
-                            if (asin && asin !== "Unknown") {
-                                coverImg.src = `/api/cover/${asin}`;
-                                coverImg.style.display = 'block';
-                            } else {
-                                coverImg.style.display = 'none';
+                            if (coverImg) {
+                                if (asin && asin !== "Unknown") {
+                                    coverImg.src = `/api/cover/${asin}`;
+                                    coverImg.style.display = 'block';
+                                } else {
+                                    coverImg.style.display = 'none';
+                                }
                             }
                             
                             audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
@@ -225,7 +231,8 @@ if ('serviceWorker' in navigator) {
                                 audio.currentTime = resumePos;
                             };
                             
-                            playBtn.innerText = '▶';
+                            if (playBtn) playBtn.innerText = '▶';
+                            if (playerBar) playerBar.classList.add('active');
                             setSleepOff(); 
 
                             try {
@@ -244,7 +251,6 @@ if ('serviceWorker' in navigator) {
                         }
                     } catch (e) { console.error("Failed to cue last played", e); }
                 }
-
                 async function changeProfile() {
                     currentProfile = document.getElementById('profile-selector').value;
                     await loadLibrary(); 
@@ -330,15 +336,21 @@ if ('serviceWorker' in navigator) {
                     currentPath = filePath;
                     currentAsin = asin;
                     
-                    document.getElementById('player-title').innerText = title;
-                    document.getElementById('player-author').innerText = author;
+                    // SAFE FALLBACKS: Works on both desktop and mobile UI
+                    const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
+                    if (titleEl) titleEl.innerText = title;
+                    
+                    const authorEl = document.getElementById('player-author') || document.getElementById('now-playing-author');
+                    if (authorEl) authorEl.innerText = author;
                     
                     const coverImg = document.getElementById('player-cover');
-                    if (asin && asin !== "Unknown") {
-                        coverImg.src = `/api/cover/${asin}`;
-                        coverImg.style.display = 'block';
-                    } else {
-                        coverImg.style.display = 'none';
+                    if (coverImg) {
+                        if (asin && asin !== "Unknown") {
+                            coverImg.src = `/api/cover/${asin}`;
+                            coverImg.style.display = 'block';
+                        } else {
+                            coverImg.style.display = 'none';
+                        }
                     }
 
                     // AWAIT CHAPTERS FIRST: Prevent race condition before audio plays
@@ -351,7 +363,8 @@ if ('serviceWorker' in navigator) {
                     
                     // Set fallback title if the file genuinely has no chapters
                     if (!currentChapters || currentChapters.length === 0) {
-                        document.getElementById('player-chapter-title').textContent = title;
+                        const chapTitleEl = document.getElementById('player-chapter-title');
+                        if (chapTitleEl) chapTitleEl.textContent = title;
                     }
                     
                     audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
@@ -362,7 +375,8 @@ if ('serviceWorker' in navigator) {
                     };
                     
                     audio.play().then(() => {
-                        playBtn.innerText = '⏸';
+                        if (playBtn) playBtn.innerText = '⏸';
+                        if (playerBar) playerBar.classList.add('active');
                     }).catch(err => console.error("Audio play failed:", err));
                     
                     setSleepOff(); 
@@ -518,7 +532,8 @@ if ('serviceWorker' in navigator) {
                     let chEnd = audio.duration;
                     
                     // Fallback to the main book title if the file has no chapters
-                    let chTitle = document.getElementById('player-title').innerText || "Playing";
+                    const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
+                    let chTitle = titleEl ? titleEl.innerText : "Playing";
 
                     // 1. Find which chapter we are currently in
                     if (typeof currentChapters !== 'undefined' && currentChapters && currentChapters.length > 0) {
@@ -550,8 +565,8 @@ if ('serviceWorker' in navigator) {
                         progressPercent = (timeIntoChapter / chapterDuration) * 100;
                     }
 
-                    // 3. Update the UI securely
-                    const progressEl = document.getElementById('seek-progress');
+                    // 3. Update the UI securely (with Dual ID fallbacks for the progress bar)
+                    const progressEl = document.getElementById('seek-progress') || document.getElementById('progress-fill');
                     if (progressEl) progressEl.style.width = `${progressPercent}%`;
                     
                     const chapterTitleEl = document.getElementById('player-chapter-title');
@@ -560,11 +575,11 @@ if ('serviceWorker' in navigator) {
                     const timeEl = document.getElementById('player-time');
                     if (timeEl) timeEl.textContent = `${formatTime(timeIntoChapter)} / ${formatTime(chapterDuration)}`;
                     
-                    // 4. Handle Sleep Timer
+                    // 4. Handle Sleep Timer safely
                     if (typeof sleepMode !== 'undefined' && sleepMode === 'chapter' && sleepTargetTime !== null) {
                         if (audio.currentTime >= sleepTargetTime - 1) {
                             audio.pause();
-                            document.getElementById('btn-play-pause').innerText = '▶';
+                            if (playBtn) playBtn.innerText = '▶';
                             if (sleepTargetTime < audio.duration) { audio.currentTime = sleepTargetTime; }
                             if (typeof setSleepOff === 'function') setSleepOff();
                         }

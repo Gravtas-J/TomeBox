@@ -407,6 +407,7 @@ body.desktop #player-bar {
     justify-content: flex-end; /* Left-justifies the buttons */
     align-items: center;
     gap: 12px; 
+    font-size: 20rem;
     padding-left: 3vw; /* Scalable space between play controls and secondary buttons */
 }
 .player-right .action-btn-secondary {
