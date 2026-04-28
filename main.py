@@ -234,8 +234,11 @@ def main():
     
     # Resolve base_dir correctly for both source and frozen EXE
     if getattr(sys, 'frozen', False):
-        base_dir = os.path.dirname(sys.executable)
+        # When installed, route all mutable data to Local AppData
+        base_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'TomeBox')
+        os.makedirs(base_dir, exist_ok=True)
     else:
+        # In source code, keep it portable in the project root
         base_dir = os.path.dirname(os.path.abspath(__file__))
     
     if args.headless:
