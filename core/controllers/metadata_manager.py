@@ -44,110 +44,208 @@ class MetadataManager:
                     self.logger(f"Failed to extract embedded cover for {filepath}: {e}")
                 return False
 
+    def search_google_books(self, query):
+        """Helper to fetch search results from Google Books."""
+        import requests
+        results = []
+        try:
+            url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{requests.utils.quote(query)}&maxResults=5"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                for item in resp.json().get("items", []):
+                    vol = item.get("volumeInfo", {})
+                    results.append({
+                        "title": vol.get("title", "Unknown Title"),
+                        "authors": [{"name": a} for a in vol.get("authors", ["Unknown Author"])],
+                        "asin": "GB_" + item.get("id", ""),  # Use Volume ID as a fake ASIN
+                        "source": "Google"
+                    })
+        except Exception as e:
+            if hasattr(self, 'logger'): self.logger(f"Google Search Error: {e}")
+        return results
 
     def search_catalog(self, filepath, query):
-        """Searches Audible and returns a list of matching products to the UI."""
+        """Searches both Audible and Google Books for matches."""
+        import threading
         def worker():
-            try:
-                client = audible.Client(auth=self.api.auth)
-                resp = client.get("1.0/catalog/products", title=query, num_results=5, response_groups="product_desc,product_attrs,contributors")
-                products = resp.get("products", [])
+            products = []
+            
+            # 1. Try Audible (if logged in)
+            if getattr(self, 'api', None) and self.api.auth:
+                try:
+                    import audible
+                    client = audible.Client(auth=self.api.auth)
+                    resp = client.get("1.0/catalog/products", title=query, response_groups="product_attrs", num_results=5)
+                    for p in resp.get("products", []):
+                        p["source"] = "Audible"
+                        products.append(p)
+                except Exception as e:
+                    if hasattr(self, 'logger'): self.logger(f"Audible search failed: {e}")
+            
+            # 2. Add Google Books results
+            products.extend(self.search_google_books(query))
+            
+            if hasattr(self, 'on_search_complete') and self.on_search_complete:
+                self.on_search_complete(filepath, products)
                 
-                if self.on_search_complete:
-                    self.on_search_complete(filepath, products)
-            except Exception as e:
-                self.logger(f"Scrape search error: {e}")
-                if self.on_error:
-                    self.on_error(f"Search Failed: {str(e)}")
-                    
         threading.Thread(target=worker, daemon=True).start()
 
-    def apply_scraped_metadata(self, filepath, asin):
-        """Fetches full metadata, downloads the cover, updates the DB, and embeds tags via FFmpeg."""
+    def apply_scraped_metadata(self, filepath, selected_asin):
+        """Fetches the final cover/details from the chosen source and embeds it additively."""
+        import threading
         def worker():
+            import requests
+            import os
+            from core.utils.process_runner import ProcessRunner
+            
+            local_data = self.library_manager.local_library.get(filepath, {})
+            
+            # Read existing values
+            title = local_data.get("title", os.path.basename(filepath))
+            authors = local_data.get("authors", "Unknown Author")
+            series = local_data.get("series", "")
+            old_asin = local_data.get("asin")  # Capture the old ASIN for cleanup
+            
+            cover_path = os.path.join(self.covers_dir, f"{selected_asin}.jpg")
+            
+            # Logic flags to determine if we should overwrite
+            title_is_filename = title == os.path.basename(filepath) or title.endswith(('.m4b', '.mp3', '.aax', '.aaxc'))
+            authors_is_unknown = authors in ["", "Unknown", "Unknown Author", "Local File"]
+            
             try:
-                client = audible.Client(auth=self.api.auth)
-                resp = client.get(f"1.0/catalog/products/{asin}", response_groups="product_desc,product_attrs,contributors,media,series")
-                product = resp.get("product", {})
-                
-                if not product:
-                    raise Exception("Audible API returned no data for this ASIN.")
+                # --- GOOGLE BOOKS ROUTING ---
+                if str(selected_asin).startswith("GB_"):
+                    vol_id = selected_asin.replace("GB_", "")
+                    url = f"https://www.googleapis.com/books/v1/volumes/{vol_id}"
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        vol = resp.json().get("volumeInfo", {})
+                        
+                        api_title = vol.get("title", "")
+                        if api_title and title_is_filename:
+                            title = api_title
+                            
+                        api_authors = ", ".join(vol.get("authors", ["Unknown Author"]))
+                        if api_authors != "Unknown Author" and authors_is_unknown:
+                            authors = api_authors
+                        
+                        images = vol.get("imageLinks", {})
+                        cover_url = images.get("thumbnail") or images.get("smallThumbnail")
+                        if cover_url:
+                            cover_url = cover_url.replace("http:", "https:")
+                            img_data = requests.get(cover_url, timeout=5).content
+                            with open(cover_path, "wb") as f:
+                                f.write(img_data)
+                                
+                # --- AUDIBLE ROUTING ---
+                elif getattr(self, 'api', None) and self.api.auth:
+                    import audible
+                    client = audible.Client(auth=self.api.auth)
                     
-                title = product.get("title", "Unknown Title")
-                
-                raw_authors = product.get("authors", [])
-                authors = ", ".join([a.get("name", "") for a in raw_authors])
-                
-                raw_series = product.get("series", [])
-                series_list = []
-                for s in raw_series:
-                    if isinstance(s, dict) and s.get("title"):
-                        series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
-                series_str = ", ".join(series_list) if series_list else ""
-                
-                duration_min = product.get("runtime_length_min") or 0
-
-                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
-                images = product.get("product_images", {})
-                img_url = images.get("500") or images.get("252")
-                
-                if img_url:
-                    img_resp = requests.get(img_url, timeout=10)
-                    if img_resp.status_code == 200:
+                    resp = client.get(f"1.0/catalog/products/{selected_asin}", response_groups="media,product_attrs,series")
+                    product = resp.get("product", {})
+                    
+                    api_title = product.get("title", "")
+                    if api_title and title_is_filename:
+                        title = api_title
+                        
+                    raw_authors = product.get("authors", [])
+                    api_authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                    if api_authors and authors_is_unknown:
+                        authors = api_authors
+                        
+                    raw_series = product.get("series", [])
+                    if raw_series and not series:
+                        series = ", ".join([f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")])
+                    
+                    images = product.get("product_images", {})
+                    image_url = images.get("500") or images.get("252")
+                    if image_url:
+                        img_data = requests.get(image_url).content
                         with open(cover_path, "wb") as f:
-                            f.write(img_resp.content)
+                            f.write(img_data)
 
-                # Update the Database
-                data = self.library_manager.local_library.get(filepath, {})
-                data["title"] = title
-                data["authors"] = authors
-                data["series"] = series_str
-                data["duration_min"] = duration_min
-                data["asin"] = asin
-                self.library_manager.local_library[filepath] = data
+                # --- COVER CLEANUP & RENAME ---
+                if old_asin and old_asin != selected_asin:
+                    old_cover_path = os.path.join(self.covers_dir, f"{old_asin}.jpg")
+                    if os.path.exists(old_cover_path):
+                        if os.path.exists(cover_path):
+                            # We downloaded a new official cover, so delete the old orphaned one
+                            try: os.remove(old_cover_path)
+                            except: pass
+                        else:
+                            # We didn't get a new cover, so rename the old one to match the new ASIN
+                            try: os.rename(old_cover_path, cover_path)
+                            except: pass
+
+                # 3. Save to database
+                local_data["title"] = title
+                local_data["authors"] = authors
+                local_data["asin"] = selected_asin
+                if series:
+                    local_data["series"] = series
+                    
+                self.library_manager.local_library[filepath] = local_data
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-                # Embed tags if M4B/MP3
-                ext = data.get("format", "").upper()
-                if ext in ["M4B", "MP3"]:
-                    base_name, original_ext = os.path.splitext(filepath)
-                    temp_path = f"{base_name}_temp{original_ext}"
+                # 4. Embed into file using FFmpeg
+                if os.path.exists(cover_path) and filepath.endswith(('.m4b', '.mp3')):
+                    temp_out = filepath + ".tmp.m4b"
                     
-                    cmd = ["ffmpeg", "-y", "-i", filepath]
-                    
-                    if os.path.exists(cover_path):
-                        cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c:v", "mjpeg", "-disposition:v", "attached_pic"])
-                    else:
-                        cmd.extend(["-map", "0:a"])
-                        
-                    cmd.extend([
-                        "-c:a", "copy",
+                    cmd = [
+                        "ffmpeg", "-y", "-i", filepath, "-i", cover_path,
+                        "-map", "0", "-map", "1", "-c", "copy",
+                        "-disposition:v", "attached_pic",
                         "-metadata", f"title={title}",
-                        "-metadata", f"album={title}",
-                        "-metadata", f"artist={authors}",
-                        "-metadata", f"album_artist={authors}",
-                        "-metadata", "genre=Audiobook",
-                        temp_path
-                    ])
+                        "-metadata", f"artist={authors}"
+                    ]
                     
-                    res = ProcessRunner.run_blocking(cmd, capture_output=False, stderr=subprocess.PIPE)
+                    if series:
+                        cmd.extend(["-metadata", f"show={series}", "-metadata", f"series={series}"])
+                        
+                    cmd.append(temp_out)
                     
-                    if res.returncode == 0:
-                        shutil.move(temp_path, filepath)
-                    else:
-                        if os.path.exists(temp_path): os.remove(temp_path)
-                        self.logger(f"FFmpeg Embed Error: {res.stderr}")
-                        raise Exception("FFmpeg failed to embed metadata. Check log for details.")
+                    res = ProcessRunner.run_blocking(cmd)
+                    if res.returncode == 0 and os.path.exists(temp_out):
+                        os.replace(temp_out, filepath)
 
-                if self.on_apply_complete:
+                if hasattr(self, 'on_apply_complete') and self.on_apply_complete:
                     self.on_apply_complete(filepath, title)
-                    
+
             except Exception as e:
-                self.logger(f"Scrape Error: {e}")
-                if self.on_error:
-                    self.on_error(str(e))
-                    
+                if hasattr(self, 'logger'): self.logger(f"Apply Metadata Error: {e}")
+                if hasattr(self, 'on_error') and self.on_error:
+                    self.on_error("Failed to fetch and apply metadata. Check connection.")
+
         threading.Thread(target=worker, daemon=True).start()
+    def fetch_from_google_books(self, title):
+            """Fetches basic metadata and cover URL from Google Books API."""
+            import requests
+            try:
+                query = requests.utils.quote(title)
+                url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults=1"
+                resp = requests.get(url, timeout=5)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    items = data.get("items", [])
+                    if items:
+                        volume_info = items[0].get("volumeInfo", {})
+                        authors = ", ".join(volume_info.get("authors", ["Unknown Author"]))
+                        
+                        image_links = volume_info.get("imageLinks", {})
+                        cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+                        
+                        if cover_url:
+                            # Google Books often returns http. Force https to prevent redirect failures.
+                            cover_url = cover_url.replace("http:", "https:")
+                        
+                        return authors, cover_url
+            except Exception as e:
+                if hasattr(self, 'logger'): 
+                    self.logger(f"Google Books API error: {e}")
+                
+            return None, None
 
     def fetch_display_metadata(self, filepath):
         """Fetches the cover art and author info for the side panel."""
@@ -204,7 +302,7 @@ class MetadataManager:
                 except Exception as e:
                     if hasattr(self, 'logger'): self.logger(f"Audible Cover Fetch Error: {e}")
 
-            # 3. FALLBACK: Rip embedded cover directly from the file
+            # 3. Try to rip embedded cover directly from the file
             if not cover_path and os.path.exists(filepath):
                 file_hash = hashlib.md5(filepath.encode()).hexdigest()[:10]
                 embedded_cover_path = os.path.join(self.covers_dir, f"LOCAL_{file_hash}.jpg")
@@ -213,13 +311,39 @@ class MetadataManager:
                     cover_path = embedded_cover_path
                 elif hasattr(self, 'extract_embedded_cover') and self.extract_embedded_cover(filepath, embedded_cover_path):
                     cover_path = embedded_cover_path
-                    # Save the fake ASIN back to the database so grid view finds it instantly next time
                     if not asin:
                         local_data["asin"] = f"LOCAL_{file_hash}"
                         self.library_manager.local_library[filepath] = local_data
                         self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-            # 4. Push to UI
+            # 4. PUBLIC API FALLBACK: Google Books
+            if not cover_path and title:
+                api_authors, api_cover_url = self.fetch_from_google_books(title)
+                
+                if api_authors and authors in ["Unknown Author", "Local File"]:
+                    authors = api_authors
+                    
+                if api_cover_url:
+                    try:
+                        img_data = requests.get(api_cover_url, timeout=5).content
+                        safe_id = asin if asin and not str(asin).startswith("LOCAL_") else "GB_" + hashlib.md5(title.encode()).hexdigest()[:10]
+                        dl_path = os.path.join(self.covers_dir, f"{safe_id}.jpg")
+                        
+                        with open(dl_path, "wb") as f:
+                            f.write(img_data)
+                        cover_path = dl_path
+                        
+                        # Save the new ASIN and authors to the database
+                        if not asin or str(asin).startswith("LOCAL_"):
+                            local_data["asin"] = safe_id
+                            if api_authors and local_data.get("authors") in ["Unknown", "Unknown Author"]:
+                                local_data["authors"] = authors
+                            self.library_manager.local_library[filepath] = local_data
+                            self.library_manager.db.save_local_db(self.library_manager.local_library)
+                    except Exception as e:
+                        if hasattr(self, 'logger'): self.logger(f"Google Books cover download failed: {e}")
+
+            # 5. Push to UI
             if hasattr(self, 'on_display_ready') and self.on_display_ready:
                 if cover_path:
                     self.on_display_ready(filepath, cover_path, authors, "")
@@ -227,7 +351,6 @@ class MetadataManager:
                     self.on_display_ready(filepath, None, authors, "No Cover Art Found")
 
         threading.Thread(target=worker, daemon=True).start()
-        
 
     def sync_missing_covers(self, on_complete_cb=None):
         """Background worker to download missing covers for cloud items."""

@@ -862,6 +862,7 @@ window.executeMetadataSearch = async function() {
         // Render the results into clickable rows
         data.results.forEach(item => {
             const authors = item.authors ? item.authors.map(a => a.name).join(', ') : 'Unknown Author';
+            const source = item.source || 'Audible';
             const div = document.createElement('div');
             div.className = 'profile-row'; // Reusing your existing clean row styling
             div.innerHTML = `

@@ -876,14 +876,27 @@ def create_server_app(tomebox):
         if not query:
             raise HTTPException(status_code=400, detail="Query required")
 
+        results = []
         try:
-            import audible
-            client = audible.Client(auth=tomebox.api_client.auth)
-            # Fetch top 10 matches
-            resp = client.get("1.0/catalog/products", title=query, num_results=10, response_groups="product_desc,product_attrs,contributors")
-            return {"results": resp.get("products", [])}
+            # 1. Try Audible if logged in
+            if getattr(tomebox.api_client, 'auth', None):
+                import audible
+                client = audible.Client(auth=tomebox.api_client.auth)
+                resp = client.get("1.0/catalog/products", title=query, num_results=5, response_groups="product_desc,product_attrs,contributors")
+                for p in resp.get("products", []):
+                    p["source"] = "Audible"
+                    results.append(p)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"Web UI Audible Search Error: {e}")
+
+        try:
+            # 2. Add Google Books results
+            gb_results = tomebox.metadata_manager.search_google_books(query)
+            results.extend(gb_results)
+        except Exception as e:
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"Web UI Google Books Search Error: {e}")
+
+        return {"results": results}
 
     @api.post("/api/library/scrape")
     async def scrape_metadata(request: Request):
