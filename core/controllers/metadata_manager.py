@@ -40,7 +40,7 @@ class MetadataManager:
             # Verify FFmpeg actually produced a valid, non-empty image file
             return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
         except Exception as e:
-            if self.logger:
+            if hasattr(self, 'logger'):
                 self.logger(f"Failed to extract embedded cover for {filepath}: {e}")
             return False
 
