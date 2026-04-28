@@ -28,6 +28,7 @@ def resolve_cover_path(base_cover_path, asin):
             return candidate  # Found it!
             
     return None # Truly missing
+
 class AudioConverter:
     def __init__(self, logger):
         self.logger = logger

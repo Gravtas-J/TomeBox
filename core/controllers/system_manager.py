@@ -103,13 +103,59 @@ class SystemManager:
 
     def get_local_ip(self):
         try:
+            # We don't actually send any data, just routing the packet reveals the true interface
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
+            s.connect(("8.8.8.8", 80)) 
             ip = s.getsockname()[0]
             s.close()
             return ip
         except Exception:
             return "127.0.0.1"
+    def _is_firewall_rule_installed(self, port=8000):
+        """Checks if the TomeBox firewall rule already exists."""
+        import subprocess
+        try:
+            # Check for our specific rule name
+            cmd = ['netsh', 'advfirewall', 'firewall', 'show', 'rule', 'name=TomeBox Web Server']
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # If the rule exists, netsh returns info. If not, it returns an error saying no rules match.
+            return "No rules match" not in result.stdout
+        except Exception:
+            return False
+
+    def _add_firewall_rule(self, port=8000):
+        """Triggers a UAC prompt to add the firewall rule."""
+        import ctypes
+        import sys
+        
+        rule_name = "TomeBox Web Server"
+        # The netsh command to open the port
+        cmd_args = f'advfirewall firewall add rule name="{rule_name}" dir=in action=allow protocol=TCP localport={port}'
+        
+        self.logger("Requesting Administrator privileges to add firewall rule...")
+        
+        try:
+            # ShellExecuteW with 'runas' forces the Windows UAC Admin prompt
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                "netsh", 
+                cmd_args, 
+                None, 
+                0 # 0 hides the command prompt window from flashing on screen
+            )
+            
+            # Result > 32 means success in ShellExecute
+            if result > 32:
+                self.logger("Firewall rule added successfully via UAC.")
+                return True
+            else:
+                self.logger(f"User declined UAC prompt or it failed. Code: {result}")
+                return False
+        except Exception as e:
+            self.logger(f"Failed to trigger UAC for firewall: {e}")
+            return False
+        
 
     def toggle_web_server(self, app_instance, on_started_cb, on_stopped_cb, on_error_cb):
         """Starts or stops the FastAPI mobile companion server."""
@@ -120,6 +166,10 @@ class SystemManager:
             if on_stopped_cb:
                 on_stopped_cb()
         else:
+            import sys
+            if sys.platform == 'win32':
+                if not self._is_firewall_rule_installed(port=8000):
+                    self._add_firewall_rule(port=8000)
             try:
                 import uvicorn
                 import asyncio
