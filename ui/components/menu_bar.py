@@ -66,5 +66,4 @@ def setup_menu_bar(app):
     app.file_menu.add_command(label="My Achievements", command=lambda: open_achievements_window(app))
     app.file_menu.add_separator()
     app.file_menu.add_command(label="Enable Web Server", command=app.toggle_web_server)
-    app.file_menu.add_command(label="Open Web UI (Beta)", command=app.open_web_ui)
     app.file_menu.add_separator()
