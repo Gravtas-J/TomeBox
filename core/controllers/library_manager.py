@@ -279,7 +279,7 @@ class LibraryManager:
                 
                 # Prevent re-adding files that are already in the database
                 if filepath in self.local_library: continue
-
+                
                 ext = os.path.splitext(filepath)[1].lower()
                 if ext not in valid_exts: continue
                 
@@ -288,6 +288,7 @@ class LibraryManager:
                 authors = "Unknown Author"
                 format_clean = ext.replace(".", "").upper()
                 embedded_meta = {}
+                
                 if on_status_cb:
                     on_status_cb(f"Importing: {filename}")
                 
@@ -300,6 +301,7 @@ class LibraryManager:
                         if "title" in tags: title = tags["title"]
                         if "artist" in tags: authors = tags["artist"]
                         elif "album_artist" in tags: authors = tags["album_artist"]
+                        
                         # Grab extended metadata just like the folder importer
                         embedded_meta = {
                             "album": tags.get("album", ""),
@@ -382,6 +384,7 @@ class LibraryManager:
                     
                     if extraction_succeeded:
                         entry["asin"] = fake_asin
+
                 self.local_library[filepath] = entry
                 added_count += 1
                 
@@ -654,9 +657,11 @@ class LibraryManager:
                     entry["year"] = embedded_meta["year"]
 
                 if matched_cloud_item:
+                    # Use the cloud item's title and ASIN so the library view dedupes correctly
                     entry["title"] = matched_cloud_item.get("title", title)
                     entry["asin"] = matched_cloud_item.get("asin", "")
                     
+                    # Pull richer authors from cloud if available
                     raw_authors = matched_cloud_item.get("authors", [])
                     if raw_authors:
                         entry["authors"] = ", ".join([
@@ -666,6 +671,7 @@ class LibraryManager:
                     if logger:
                         logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
 
+                        
                 else:
                     # Always attempt to extract a cover for unmatched local files
                     import hashlib

@@ -1,0 +1,61 @@
+name: Build TomeBox
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Windows Executable
+      if: runner.os == 'Windows'
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." main.py
+
+    - name: Build Mac Application
+      if: runner.os == 'macOS'
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." main.py
+
+    - name: Zip Mac App
+      if: runner.os == 'macOS'
+      run: |
+        cd dist
+        zip -r TomeBox-macOS.zip TomeBox.app
+
+    - name: Upload Windows Artifact
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        name: TomeBox-Windows
+        path: dist/TomeBox.exe
+
+    - name: Upload Mac Artifact
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
+      with:
+        name: TomeBox-macOS
+        path: dist/TomeBox-macOS.zip

@@ -1028,6 +1028,7 @@ class AAXManagerApp:
                 self._last_selected_card_frame = oc 
                 self._selected_grid_item = {'values': [t, "", "", "", a, s, ""]} 
                 self.on_item_select()
+
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
                 on_card_click(e, oc, t, a, s)
                 self.master_play()
@@ -1236,7 +1237,8 @@ class AAXManagerApp:
             title = p.get("title", "")
             raw_authors = p.get("authors", [])
             authors = ", ".join([a.get("name", "") for a in raw_authors])
-            listbox.insert(tk.END, f"{title} | {authors} ({p.get('asin')})")
+            source = p.get("source", "Audible")
+            listbox.insert(tk.END, f"[{source}] {title} | {authors} ({p.get('asin')})")
             
         def on_select():
             sel = listbox.curselection()
