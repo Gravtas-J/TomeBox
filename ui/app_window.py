@@ -316,11 +316,22 @@ class AAXManagerApp:
         """Called when FFmpeg finishes embedding tags."""
         def update():
             self.dl_status_var.set("Idle")
-            messagebox.showinfo("Success", "Metadata scraped and applied!")
+            
+            # 1. Clear the image cache so Grid View is forced to load the new cover from disk
+            self.cover_cache.clear()
+            
+            # 2. Refresh the list/grid views with the new ASINs and Titles
             self.refresh_library_ui()
-            # Reload the player if the user is currently listening to the file we just tagged
+            
+            # 3. Force the right-hand side panel to immediately load the new cover and author data
+            self.metadata_manager.fetch_display_metadata(filepath)
+            
+            # 4. Reload the player if the user is currently listening to the file we just tagged
             if self.file_path == filepath:
                 self.load_specific_file(filepath)
+                
+            messagebox.showinfo("Success", "Metadata scraped and applied!")
+            
         self.root.after(0, update)
 
     def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
@@ -1196,17 +1207,13 @@ class AAXManagerApp:
         
         open_match_to_audible_window(self, filepath)
     def start_scrape_thread(self, filepath):
-        if not self.api_client.auth:
-            messagebox.showwarning("Not Logged In", "An Audible login is required to search the catalog for ASINs.")
-            return
-        
         data = self.library_manager.local_library.get(filepath, {})
         current_title = data.get("title", os.path.basename(filepath))
         
         query = simpledialog.askstring("Search Catalog", "Enter book title or author to search:", initialvalue=current_title)
         if not query: return
         
-        self.dl_status_var.set("Searching catalog...")
+        self.dl_status_var.set("Searching catalogs (Audible & Google)...")
         self.metadata_manager.search_catalog(filepath, query)
 
     def show_scrape_results(self, filepath, products):
@@ -1226,7 +1233,8 @@ class AAXManagerApp:
             title = p.get("title", "")
             raw_authors = p.get("authors", [])
             authors = ", ".join([a.get("name", "") for a in raw_authors])
-            listbox.insert(tk.END, f"{title} | {authors} ({p.get('asin')})")
+            source = p.get("source", "Audible")
+            listbox.insert(tk.END, f"[{source}] {title} | {authors} ({p.get('asin')})")
             
         def on_select():
             sel = listbox.curselection()
