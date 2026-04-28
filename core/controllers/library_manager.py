@@ -277,6 +277,9 @@ class LibraryManager:
             for filepath in file_paths:
                 if not os.path.exists(filepath): continue
                 
+                # Prevent re-adding files that are already in the database
+                if filepath in self.local_library: continue
+
                 ext = os.path.splitext(filepath)[1].lower()
                 if ext not in valid_exts: continue
                 
@@ -284,7 +287,7 @@ class LibraryManager:
                 title = filename
                 authors = "Unknown Author"
                 format_clean = ext.replace(".", "").upper()
-                
+                embedded_meta = {}
                 if on_status_cb:
                     on_status_cb(f"Importing: {filename}")
                 
@@ -297,6 +300,24 @@ class LibraryManager:
                         if "title" in tags: title = tags["title"]
                         if "artist" in tags: authors = tags["artist"]
                         elif "album_artist" in tags: authors = tags["album_artist"]
+                        # Grab extended metadata just like the folder importer
+                        embedded_meta = {
+                            "album": tags.get("album", ""),
+                            "year": tags.get("date", "") or tags.get("year", ""),
+                            "comment": tags.get("comment", ""),
+                            "narrator": tags.get("composer", ""),
+                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60)
+                        }
+                        
+                        if "series" in tags:
+                            embedded_meta["series"] = tags["series"]
+                        elif "show" in tags:
+                            embedded_meta["series"] = tags["show"]
+                        
+                        for stream in data.get("streams", []):
+                            if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
+                                embedded_meta["has_embedded_cover"] = True
+                                break
                     except Exception as e:
                         if logger: logger(f"Failed to read tags for {filename}: {e}")
 
@@ -308,8 +329,16 @@ class LibraryManager:
                     "format": format_clean,
                     "path": filepath,
                     "authors": authors,
-                    "owner": active_profile
+                    "owner": active_profile,
+                    "duration_min": embedded_meta.get("duration_min", 0),
                 }
+
+                if embedded_meta.get("series"):
+                    entry["series"] = embedded_meta["series"]
+                if embedded_meta.get("narrator"):
+                    entry["narrator"] = embedded_meta["narrator"]
+                if embedded_meta.get("year"):
+                    entry["year"] = embedded_meta["year"]
 
                 if matched_cloud_item:
                     # Use the cloud item's title and ASIN so the library view dedupes correctly
@@ -325,7 +354,34 @@ class LibraryManager:
                     
                     if logger:
                         logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
-
+                        
+                else:
+                    # Always attempt to extract a cover for unmatched local files
+                    import hashlib
+                    from core.utils.process_runner import ProcessRunner
+                    
+                    fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
+                    cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
+                    
+                    extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
+                    
+                    if not extraction_succeeded:
+                        try:
+                            # Use -vframes 1 instead of -vcodec copy so PNGs are safely converted to JPGs
+                            extract_cmd = [
+                                "ffmpeg", "-y", "-i", filepath,
+                                "-an", "-vframes", "1", cover_output
+                            ]
+                            result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
+                            
+                            if result.returncode == 0 and os.path.exists(cover_output) and os.path.getsize(cover_output) > 0:
+                                extraction_succeeded = True
+                                if logger: logger(f"Extracted embedded cover for {title}")
+                        except Exception as e:
+                            if logger: logger(f"Cover extraction failed for {title}: {e}")
+                    
+                    if extraction_succeeded:
+                        entry["asin"] = fake_asin
                 self.local_library[filepath] = entry
                 added_count += 1
                 
@@ -572,7 +628,7 @@ class LibraryManager:
                             embedded_meta["series"] = tags["show"]
                         
                         for stream in data.get("streams", []):
-                            if stream.get("disposition", {}).get("attached_pic") == 1:
+                            if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
                                 embedded_meta["has_embedded_cover"] = True
                                 break
                                 
@@ -610,9 +666,10 @@ class LibraryManager:
                     if logger:
                         logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
 
-                elif embedded_meta.get("has_embedded_cover"):
+                else:
+                    # Always attempt to extract a cover for unmatched local files
                     import hashlib
-                    
+                    from core.utils.process_runner import ProcessRunner
                     fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
                     cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
                     
@@ -620,9 +677,10 @@ class LibraryManager:
                     
                     if not extraction_succeeded:
                         try:
+                            # Use -vframes 1 instead of -vcodec copy so PNGs are safely converted to JPGs
                             extract_cmd = [
                                 "ffmpeg", "-y", "-i", filepath,
-                                "-an", "-vcodec", "copy", cover_output
+                                "-an", "-vframes", "1", cover_output
                             ]
                             result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
                             
