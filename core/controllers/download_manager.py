@@ -31,7 +31,6 @@ class DownloadManager:
         self.active_flags = {}  # Tracks {asin: cancel_boolean}
         self.is_processing = False
         self.queue_lock = threading.Lock()
-        self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
 
     def queue_download(self, asin, title, save_dir, post_action=None):
         """Adds a single item to the queue and starts the worker if idle."""
@@ -112,10 +111,6 @@ class DownloadManager:
                             self.on_status_change(asin, "Canceled", is_global=False)
                         continue
 
-                    self.web_state["active_asin"] = asin
-                    self.web_state["progress"] = 0
-                    self.web_state["status"] = "Downloading..."
-
                     # Update UI to show starting
                     if self.on_status_change:
                         self.on_status_change(asin, f"Downloading: {title}", is_global=True)
@@ -132,15 +127,12 @@ class DownloadManager:
 
         finally:
             self.is_processing = False
-            self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
-            
             if self.on_batch_finish:
                 self.on_batch_finish()
 
     def _execute_download(self, asin, title, save_dir, post_action):
         # Bind the UI callbacks dynamically to the downloader
         def progress_cb(percent_float):
-            self.web_state["progress"] = percent_float # <-- NEW
             if self.on_progress:
                 self.on_progress(asin, percent_float, is_global=True)
 
@@ -155,63 +147,20 @@ class DownloadManager:
             check_cancel_callback=check_cancel_cb
         )
 
-        # Check for cancellation before doing any post-processing
-        if self.active_flags.get(asin, False):
-            return
-
-        final_filepath = filepath
-        final_ext = ext
-
-        if ext.lower() in [".aaxc", ".aax"]:
-            self.web_state["status"] = "Decrypting to M4B..."
-            if self.on_status_change:
-                self.on_status_change(asin, "Decrypting to M4B...", is_global=False)
-            
-            import subprocess
-            m4b_filepath = os.path.splitext(filepath)[0] + ".m4b"
-            
-            # Construct FFmpeg command to copy streams (instant, no re-encoding)
-            cmd = ["ffmpeg", "-y"]
-            if a_key and a_iv:
-                cmd.extend(["-audible_key", a_key, "-audible_iv", a_iv])
-            elif a_key: 
-                cmd.extend(["-activation_bytes", a_key])
-                
-            cmd.extend(["-i", filepath, "-c", "copy", m4b_filepath])
-            
-            try:
-                # Hide the terminal window on Windows
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                result = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
-                
-                # Verify the conversion worked and the new file actually has data
-                if result.returncode == 0 and os.path.exists(m4b_filepath) and os.path.getsize(m4b_filepath) > 0:
-                    try:
-                        # Success! Clean up the original encrypted .aaxc file
-                        os.remove(filepath)
-                    except OSError:
-                        pass
-                    final_filepath = m4b_filepath
-                    final_ext = ".m4b"
-                else:
-                    self.logger(f"Auto-conversion failed for {title}: {result.stderr}")
-            except Exception as e:
-                self.logger(f"Auto-conversion exception for {title}: {e}")
-
         if self.on_status_change:
             self.on_status_change(asin, "Complete", is_global=False)
             
         # Update Library Data directly in the controller
-        self.library_manager.local_library[final_filepath] = {
+        self.library_manager.local_library[filepath] = {
             "title": title, 
-            "format": final_ext.replace(".", "").upper(), 
-            "path": final_filepath,
+            "format": ext.replace(".", "").upper(), 
+            "path": filepath,
             "audible_key": a_key,
             "audible_iv": a_iv,
             "asin": asin  
         }
         self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-        # Tell the UI it finished so it can handle redrawing
+        # Tell the UI it finished so it can handle achievements, redrawing, or post-actions
         if self.on_complete:
-            self.on_complete(final_filepath, title, post_action)
+            self.on_complete(filepath, title, post_action)

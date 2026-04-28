@@ -23,26 +23,6 @@ class MetadataManager:
         self.on_error = callbacks.get("on_error")
 
     def extract_embedded_cover(self, filepath, output_path):
-            """Extracts embedded cover art from an audio file using FFmpeg."""
-            import os
-            from core.utils.process_runner import ProcessRunner
-
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", filepath,
-                "-an",             # Skip audio processing entirely
-                "-vcodec", "copy", # Copy the image stream exactly as it is
-                output_path
-            ]
-
-            try:
-                result = ProcessRunner.run_blocking(cmd, capture_output=True)
-                # Verify FFmpeg actually produced a valid, non-empty image file
-                return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
-            except Exception as e:
-                if self.logger:
-                    self.logger(f"Failed to extract embedded cover for {filepath}: {e}")
-                return False
         """Extracts embedded cover art from an audio file using FFmpeg."""
         import os
         from core.utils.process_runner import ProcessRunner
@@ -236,36 +216,6 @@ class MetadataManager:
                 if hasattr(self, 'logger'): self.logger(f"Apply Metadata Error: {e}")
                 if hasattr(self, 'on_error') and self.on_error:
                     self.on_error("Failed to fetch and apply metadata. Check connection.")
-
-        threading.Thread(target=worker, daemon=True).start()
-    def fetch_from_google_books(self, title):
-            """Fetches basic metadata and cover URL from Google Books API."""
-            import requests
-            try:
-                query = requests.utils.quote(title)
-                url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults=1"
-                resp = requests.get(url, timeout=5)
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    items = data.get("items", [])
-                    if items:
-                        volume_info = items[0].get("volumeInfo", {})
-                        authors = ", ".join(volume_info.get("authors", ["Unknown Author"]))
-                        
-                        image_links = volume_info.get("imageLinks", {})
-                        cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-                        
-                        if cover_url:
-                            # Google Books often returns http. Force https to prevent redirect failures.
-                            cover_url = cover_url.replace("http:", "https:")
-                        
-                        return authors, cover_url
-            except Exception as e:
-                if hasattr(self, 'logger'): 
-                    self.logger(f"Google Books API error: {e}")
-                
-            return None, None
 
         threading.Thread(target=worker, daemon=True).start()
     def fetch_from_google_books(self, title):

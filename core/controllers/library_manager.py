@@ -670,7 +670,6 @@ class LibraryManager:
                     
                     if logger:
                         logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
-
                         
                 else:
                     # Always attempt to extract a cover for unmatched local files
