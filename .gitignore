@@ -20,7 +20,6 @@ migrate_to_sqlite.py
 *.md
 /logs
 /release
-/release copy
 *.spec
 *.coverage
 tomebox_installer.iss

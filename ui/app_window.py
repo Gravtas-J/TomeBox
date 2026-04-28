@@ -37,8 +37,6 @@ from ui.components.sidebar import setup_sidebar
 
 from core.utils.paths import get_resource_path, parse_dnd_paths
 
-from core.utils.paths import get_resource_path
-
 from core.database import DatabaseManager
 from core.converter import AudioConverter
 from core.player import AudioPlayer
@@ -495,7 +493,6 @@ class AAXManagerApp:
                     on_complete_cb=self._on_import_complete,
                     logger=self.logger
                 )
-
 
     def add_local_file(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
@@ -1209,7 +1206,6 @@ class AAXManagerApp:
             return
         
         open_match_to_audible_window(self, filepath)
-        
     def start_scrape_thread(self, filepath):
         data = self.library_manager.local_library.get(filepath, {})
         current_title = data.get("title", os.path.basename(filepath))
@@ -1301,17 +1297,6 @@ class AAXManagerApp:
         setup_library_view(self, left_panel)
         setup_sidebar(self, right_panel)
 
-    def open_web_ui(self):
-        """Opens the localhost web UI in the user's default browser."""
-        import webbrowser
-        
-        # Auto-start the server if it's not already running
-        if not getattr(self, 'server_running', False):
-            self.toggle_web_server()
-        
-        # Small delay to give the server a moment to bind the port before browser opens
-        self.root.after(500, lambda: webbrowser.open("http://127.0.0.1:8000/desktop"))
-        
     def export_csv_worker(self):
         output_file = filedialog.asksaveasfilename(
             defaultextension=".csv",
