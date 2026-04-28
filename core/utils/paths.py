@@ -1,6 +1,6 @@
 import os
 import sys
-
+import re
 
 def get_resource_path(*relative_parts):
     """
@@ -28,3 +28,21 @@ def get_resource_path(*relative_parts):
         base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     return os.path.join(base, *relative_parts)
+
+def parse_dnd_paths(raw_data):
+    """
+    Extracts file paths from tkinterdnd2 event data.
+    Handles Windows curly braces for paths with spaces.
+    """
+    # Match everything inside {} OR any sequence of non-space characters
+    matches = re.findall(r'{([^}]+)}|([^\s]+)', raw_data)
+    
+    paths = []
+    for match in matches:
+        # regex returns a tuple: (match_inside_braces, match_outside_braces)
+        path = match[0] if match[0] else match[1]
+        normalized_path = os.path.normpath(path)
+        if os.path.exists(normalized_path):
+            paths.append(normalized_path)
+            
+    return paths

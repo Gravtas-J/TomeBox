@@ -521,7 +521,7 @@ class LibraryManager:
                 if logger: logger(f"No audio files found in {folder_path}")
                 if on_complete_cb: on_complete_cb(0)
                 return
-
+            final_count = len(file_paths)
             if on_status_cb: on_status_cb(f"Found {len(file_paths)} formatted books. Importing...")
 
             valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
@@ -637,12 +637,11 @@ class LibraryManager:
 
                 self.local_library[filepath] = entry
                 added_count += 1
-                self.local_library[filepath] = entry
-                added_count += 1
             
             if added_count > 0:
                 self.db.save_local_db(self.local_library)
             
+            # Fire the complete callback exactly once, at the very end
             if on_complete_cb:
                 on_complete_cb(added_count)
         

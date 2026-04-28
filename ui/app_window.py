@@ -35,6 +35,8 @@ from ui.components.player_bar import setup_player_bar
 from ui.components.library_view import setup_library_view
 from ui.components.sidebar import setup_sidebar
 
+from core.utils.paths import get_resource_path, parse_dnd_paths
+
 from core.utils.paths import get_resource_path
 
 from core.database import DatabaseManager
@@ -451,21 +453,38 @@ class AAXManagerApp:
         )
 
     def on_file_drop(self, event):
-        # 1. Parse the dropped string into a tuple of file paths
-        raw_files = self.root.tk.splitlist(event.data)
-        
-        # 2. Strip any lingering curly braces (a common Windows drag-and-drop quirk)
-        clean_files = [f.strip('{}') for f in raw_files]
-        
-        # 3. Pass the clean list to the manager
-        self.library_manager.import_files(
-            file_paths=clean_files,
-            converter=self.converter,
-            active_profile=self.active_profile,
-            on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-            on_complete_cb=self._on_import_complete,
-            logger=self.logger
-        )
+        # 1. Parse the dropped string using our robust regex parser
+        dropped_paths = parse_dnd_paths(event.data)
+
+        if not dropped_paths:
+            self.dl_status_var.set("No valid paths found.")
+            return
+
+        self.dl_status_var.set("Processing dropped items...")
+
+        # 2. Route the paths to the correct importer
+        for path in dropped_paths:
+            if os.path.isdir(path):
+                # Folders go to import_folder so they get the MP3 blobbing treatment
+                self.library_manager.import_folder(
+                    folder_path=path,
+                    converter=self.converter,
+                    active_profile=self.active_profile,
+                    on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                    on_complete_cb=self._on_import_complete,
+                    logger=self.logger
+                )
+            elif os.path.isfile(path):
+                # Standalone files go to the standard import_files
+                self.library_manager.import_files(
+                    file_paths=[path],
+                    converter=self.converter,
+                    active_profile=self.active_profile,
+                    on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                    on_complete_cb=self._on_import_complete,
+                    logger=self.logger
+                )
+
 
     def add_local_file(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
@@ -1632,7 +1651,25 @@ class AAXManagerApp:
         
         self.dl_status_var.set("Analyzing...")
         self.root.update()
-        
+        if not self.chapters:
+            self.logger.info("No chapters found in file. Generating dummy master chapter.")
+            local_data = self.library_manager.local_library.get(self.file_path, {})
+            duration_sec = local_data.get("duration_min", 0) * 60
+            
+            # If the database doesn't know the duration yet, ask FFprobe directly
+            if duration_sec <= 0:
+                try:
+                    data = self.converter.get_metadata_and_chapters(self.file_path)
+                    duration_sec = float(data.get("format", {}).get("duration", 0))
+                except Exception:
+                    duration_sec = 86400 # Fallback to 24 hours if completely unreadable to prevent crashes
+                    
+            self.chapters = [{
+                "id": 0,
+                "start_time": "0.000000",
+                "end_time": str(duration_sec),
+                "tags": {"title": "Full Audiobook"}
+            }]
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
