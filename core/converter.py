@@ -58,10 +58,33 @@ class AudioConverter:
                     safe_path = path.replace('\\', '/').replace("'", r"\'")
                     f_concat.write(f"file '{safe_path}'\n")
 
-            # Build the FFMETADATA file dynamically to preserve file boundaries as chapters
+            # 1. Steal the Author/Artist and Series from the very first file
+            first_artist = "Unknown Author"
+            first_album = title
+            first_series = ""
+            
+            try:
+                first_data = self.get_metadata_and_chapters(file_paths[0])
+                first_tags = first_data.get("format", {}).get("tags", {})
+                first_artist = first_tags.get("artist") or first_tags.get("album_artist") or "Unknown Author"
+                first_album = first_tags.get("album") or title
+                first_series = first_tags.get("series") or first_tags.get("show") or ""
+            except Exception:
+                pass
+
+            # Build the FFMETADATA file dynamically
             with os.fdopen(fd_meta, 'w', encoding='utf-8') as f_meta:
                 f_meta.write(";FFMETADATA1\n")
                 f_meta.write(f"title={title}\n")
+                f_meta.write(f"artist={first_artist}\n")
+                f_meta.write(f"album_artist={first_artist}\n")
+                f_meta.write(f"album={first_album}\n")
+                
+                # MP4/M4B containers natively use 'show' for series, but we write both for compatibility
+                if first_series:
+                    f_meta.write(f"show={first_series}\n")
+                    f_meta.write(f"series={first_series}\n")
+                    
                 f_meta.write("genre=Audiobook\n\n")
 
                 current_start_ms = 0
@@ -93,11 +116,14 @@ class AudioConverter:
                 "ffmpeg", "-y",
                 "-f", "concat",
                 "-safe", "0",
-                "-i", concat_txt_path,
-                "-i", metadata_txt_path,
-                "-map", "0:a",          # Grab the audio stream from the concat input
-                "-map_metadata", "1",   # Grab the metadata/chapters from our text file
-                "-vn"
+                "-i", concat_txt_path,       # Input 0: The audio files
+                "-i", metadata_txt_path,     # Input 1: The chapters/author data
+                "-i", file_paths[0],         # Input 2: The first file again (just to steal its cover art)
+                "-map", "0:a",               # Take audio from the concatenated stream
+                "-map", "2:v?",              # Take the cover image from the first file (the '?' means skip if it has no cover)
+                "-map_metadata", "1",        # Take tags from our generated text file
+                "-c:v", "copy",              # Copy the image exactly as it is
+                "-disposition:v", "attached_pic" # Explicitly flag the image as cover art
             ]
 
             if needs_reencode:
@@ -123,7 +149,7 @@ class AudioConverter:
             return False
             
         finally:
-            # Clean up the temp files so we don't bleed storage
+            # Clean up the temp files
             if os.path.exists(concat_txt_path):
                 try: os.remove(concat_txt_path)
                 except: pass

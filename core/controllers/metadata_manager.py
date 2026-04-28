@@ -22,6 +22,28 @@ class MetadataManager:
         self.on_display_ready = callbacks.get("on_display_ready")
         self.on_error = callbacks.get("on_error")
 
+    def extract_embedded_cover(self, filepath, output_path):
+        """Extracts embedded cover art from an audio file using FFmpeg."""
+        import os
+        from core.utils.process_runner import ProcessRunner
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", filepath,
+            "-an",             # Skip audio processing entirely
+            "-vcodec", "copy", # Copy the image stream exactly as it is
+            output_path
+        ]
+
+        try:
+            result = ProcessRunner.run_blocking(cmd, capture_output=True)
+            # Verify FFmpeg actually produced a valid, non-empty image file
+            return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        except Exception as e:
+            if self.logger:
+                self.logger(f"Failed to extract embedded cover for {filepath}: {e}")
+            return False
+
     def search_catalog(self, filepath, query):
         """Searches Audible and returns a list of matching products to the UI."""
         def worker():
@@ -128,67 +150,83 @@ class MetadataManager:
 
     def fetch_display_metadata(self, filepath):
         """Fetches the cover art and author info for the side panel."""
+        import os
+        import threading
+        import requests
+        import hashlib
+        try:
+            import audible
+        except ImportError:
+            pass
+
         def worker():
             local_data = self.library_manager.local_library.get(filepath, {})
             title = local_data.get("title", "")
             asin = local_data.get("asin")
-            authors = ""
+            authors = local_data.get("authors", "Unknown Author")
 
             # 1. Try to find existing data in the cloud cache
             for item in getattr(self.library_manager, 'cloud_items', []):
                 if item.get("title") == title or item.get("asin") == asin:
                     asin = item.get("asin")
                     raw_authors = item.get("authors", [])
-                    authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                    if raw_authors:
+                        authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
                     break
-            
-            if not asin:
-                if self.on_display_ready:
-                    self.on_display_ready(filepath, None, authors, "Metadata Unavailable")
-                return
 
-            cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+            cover_path = None
+            if asin:
+                test_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+                if os.path.exists(test_path):
+                    cover_path = test_path
 
-            # 2. Return local cover if it exists
-            if os.path.exists(cover_path):
-                if self.on_display_ready:
-                    self.on_display_ready(filepath, cover_path, authors, "")
-                return 
-                
-            # 3. Fallback to fetching it from Audible dynamically
-            if not self.api.auth:
-                return
-                
-            try:
-                client = audible.Client(auth=self.api.auth)
-                resp = client.get(f"1.0/catalog/products/{asin}", response_groups="media,product_attrs")
-                product = resp.get("product", {})
-                
-                if not authors:
-                    raw_authors = product.get("authors", [])
-                    authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                
-                images = product.get("product_images", {})
-                image_url = images.get("500") or images.get("252")
-                
-                if image_url:
-                    img_data = requests.get(image_url).content
-                    with open(cover_path, "wb") as f:
-                        f.write(img_data)
-                        
-                    if self.on_display_ready:
-                        self.on_display_ready(filepath, cover_path, authors, "")
-                else:
-                    if self.on_display_ready:
-                        self.on_display_ready(filepath, None, authors, "No Cover Art Found")
+            # 2. Try Audible API (Only if no local cover, real ASIN, and logged in)
+            if not cover_path and asin and not str(asin).startswith("LOCAL_") and getattr(self, 'api', None) and self.api.auth:
+                try:
+                    client = audible.Client(auth=self.api.auth)
+                    resp = client.get(f"1.0/catalog/products/{asin}", response_groups="media,product_attrs")
+                    product = resp.get("product", {})
                     
-            except Exception as e:
-                self.logger(f"Metadata Fetch Error: {e}")
-                if self.on_display_ready:
-                    self.on_display_ready(filepath, None, authors, "Failed to load metadata")
+                    if authors == "Unknown Author":
+                        raw_authors = product.get("authors", [])
+                        authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+                    
+                    images = product.get("product_images", {})
+                    image_url = images.get("500") or images.get("252")
+                    
+                    if image_url:
+                        img_data = requests.get(image_url).content
+                        dl_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+                        with open(dl_path, "wb") as f:
+                            f.write(img_data)
+                        cover_path = dl_path
+                except Exception as e:
+                    if hasattr(self, 'logger'): self.logger(f"Audible Cover Fetch Error: {e}")
+
+            # 3. FALLBACK: Rip embedded cover directly from the file
+            if not cover_path and os.path.exists(filepath):
+                file_hash = hashlib.md5(filepath.encode()).hexdigest()[:10]
+                embedded_cover_path = os.path.join(self.covers_dir, f"LOCAL_{file_hash}.jpg")
+                
+                if os.path.exists(embedded_cover_path):
+                    cover_path = embedded_cover_path
+                elif hasattr(self, 'extract_embedded_cover') and self.extract_embedded_cover(filepath, embedded_cover_path):
+                    cover_path = embedded_cover_path
+                    # Save the fake ASIN back to the database so grid view finds it instantly next time
+                    if not asin:
+                        local_data["asin"] = f"LOCAL_{file_hash}"
+                        self.library_manager.local_library[filepath] = local_data
+                        self.library_manager.db.save_local_db(self.library_manager.local_library)
+
+            # 4. Push to UI
+            if hasattr(self, 'on_display_ready') and self.on_display_ready:
+                if cover_path:
+                    self.on_display_ready(filepath, cover_path, authors, "")
+                else:
+                    self.on_display_ready(filepath, None, authors, "No Cover Art Found")
 
         threading.Thread(target=worker, daemon=True).start()
-
+        
     def sync_missing_covers(self, on_complete_cb=None):
         """Background worker to download missing covers for cloud items."""
         def worker():
