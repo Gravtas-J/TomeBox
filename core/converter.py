@@ -36,55 +36,100 @@ class AudioConverter:
         self.current_process = None
         self.is_cancelled = False
 
-    def concat_to_m4b(self, input_files, output_path, title, logger=None):
+    def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None):
         import tempfile
         import os
         from core.utils.process_runner import ProcessRunner
 
-        fd, temp_txt = tempfile.mkstemp(suffix=".txt", text=True)
-        needs_reencode = False
-        
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            for filepath in input_files:
-                safe_path = filepath.replace("'", "'\\''")
-                f.write(f"file '{safe_path}'\n")
-                if filepath.lower().endswith('.mp3'):
-                    needs_reencode = True
+        if not file_paths:
+            return False
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", temp_txt,
-            "-vn",
-            "-metadata", f"title={title}",
-            "-metadata", "genre=Audiobook"
-        ]
-        
-        # If all files are m4b/m4a, we can do a lightning-fast stream copy
-        if needs_reencode:
-            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
-        else:
-            cmd.extend(["-c:a", "copy"])
-            
-        cmd.append(output_path)
+        # Determine if we are transcoding MP3s or just copying M4Bs/AACs
+        needs_reencode = any(f.lower().endswith(".mp3") for f in file_paths)
+
+        # Create temporary files for both the concat list and the metadata
+        fd_concat, concat_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
+        fd_meta, metadata_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
 
         try:
-            if logger: logger(f"Concatenating {len(input_files)} parts into {output_path}")
-            result = ProcessRunner.run_blocking(cmd, capture_output=True)
-            
-            if result.returncode == 0 and os.path.exists(output_path):
-                return True
+            with os.fdopen(fd_concat, 'w', encoding='utf-8') as f_concat:
+                for path in file_paths:
+                    # FFmpeg concat requires forward slashes and escaped single quotes
+                    safe_path = path.replace('\\', '/').replace("'", r"\'")
+                    f_concat.write(f"file '{safe_path}'\n")
+
+            # Build the FFMETADATA file dynamically to preserve file boundaries as chapters
+            with os.fdopen(fd_meta, 'w', encoding='utf-8') as f_meta:
+                f_meta.write(";FFMETADATA1\n")
+                f_meta.write(f"title={title}\n")
+                f_meta.write("genre=Audiobook\n\n")
+
+                current_start_ms = 0
+
+                for path in file_paths:
+                    try:
+                        data = self.get_metadata_and_chapters(path)
+                        duration_sec = float(data.get("format", {}).get("duration", 0))
+                    except Exception:
+                        duration_sec = 0
+
+                    if duration_sec > 0:
+                        duration_ms = int(duration_sec * 1000)
+                        end_ms = current_start_ms + duration_ms
+                        
+                        # Use the original filename (without extension) as the chapter name
+                        chap_title = os.path.splitext(os.path.basename(path))[0]
+
+                        f_meta.write("[CHAPTER]\n")
+                        f_meta.write("TIMEBASE=1/1000\n")
+                        f_meta.write(f"START={current_start_ms}\n")
+                        f_meta.write(f"END={end_ms}\n")
+                        f_meta.write(f"title={chap_title}\n\n")
+
+                        current_start_ms = end_ms
+
+            # Build the FFmpeg command
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_txt_path,
+                "-i", metadata_txt_path,
+                "-map", "0:a",          # Grab the audio stream from the concat input
+                "-map_metadata", "1",   # Grab the metadata/chapters from our text file
+                "-vn"
+            ]
+
+            if needs_reencode:
+                cmd.extend([
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-ac", "2",
+                    "-ar", "44100",
+                    "-movflags", "+faststart"
+                ])
             else:
-                if logger: logger(f"Concat failed: {result.stderr}")
-                return False
+                cmd.extend(["-c:a", "copy", "-movflags", "+faststart"])
+
+            cmd.append(output_path)
+
+            result = ProcessRunner.run_blocking(cmd)
+            
+            return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
+
         except Exception as e:
-            if logger: logger(f"Concat exception: {e}")
+            if logger:
+                logger(f"Concat failed: {e}")
             return False
+            
         finally:
-            if os.path.exists(temp_txt):
-                try: os.remove(temp_txt)
-                except OSError: pass
+            # Clean up the temp files so we don't bleed storage
+            if os.path.exists(concat_txt_path):
+                try: os.remove(concat_txt_path)
+                except: pass
+            if os.path.exists(metadata_txt_path):
+                try: os.remove(metadata_txt_path)
+                except: pass
 
     def cancel(self):
         self.is_cancelled = True
