@@ -387,7 +387,16 @@ def create_server_app(tomebox):
         if not path or not os.path.exists(path): return []
         try:
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                errors='replace', 
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
             data = json.loads(result.stdout)
             chapters = []
             for ch in data.get("chapters", []):
@@ -670,23 +679,9 @@ def create_server_app(tomebox):
         # --- DOWNLOAD ENDPOINTS ---
     @api.get("/api/system/browse-directory")
     def browse_directory():
-        import tkinter as tk
-        from tkinter import filedialog
-        
-        # Create a temporary hidden Tkinter root so we can use the native dialog
-        temp_root = tk.Tk()
-        temp_root.withdraw()
-        
-        # Force the window to pop up in front of the browser
-        temp_root.attributes('-topmost', True) 
-        
-        # Open the system folder picker
-        folder_path = filedialog.askdirectory(
-            parent=temp_root, 
-            title="Select TomeBox Download Location"
-        )
-        
-        temp_root.destroy()
+        # Delegate the UI rendering to the main Tkinter thread safely
+        folder_path = tomebox.thread_safe_ask_directory()
+        return {"path": folder_path}
         
         return {"path": folder_path}
     @api.get("/api/downloads/queue")
@@ -770,20 +765,8 @@ def create_server_app(tomebox):
     
     @api.get("/api/system/browse-file")
     def browse_file():
-        import tkinter as tk
-        from tkinter import filedialog
-        
-        temp_root = tk.Tk()
-        temp_root.withdraw()
-        temp_root.attributes('-topmost', True) 
-        
-        file_path = filedialog.askopenfilename(
-            parent=temp_root, 
-            title="Select Audiobook File",
-            filetypes=[("Audiobooks", "*.m4b *.mp3 *.aaxc *.aax")]
-        )
-        
-        temp_root.destroy()
+        # Delegate the UI rendering to the main Tkinter thread safely
+        file_path = tomebox.thread_safe_ask_file()
         return {"path": file_path}
 
     @api.post("/api/library/import")

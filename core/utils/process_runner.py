@@ -22,6 +22,7 @@ class ProcessRunner:
             capture_output=capture_output, 
             text=True, 
             encoding="utf-8", 
+            errors="replace",
             creationflags=ProcessRunner.get_creation_flags(),
             check=check,
             **kwargs

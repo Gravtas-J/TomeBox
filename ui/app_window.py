@@ -562,6 +562,12 @@ class AAXManagerApp:
         self.root.after_idle(self.root.attributes, '-topmost', False)
 
     def setup_tray_icon(self):
+        import sys
+        # macOS strictly forbids background tray loops and uses the Dock instead.
+        if sys.platform == 'darwin':
+            self.logger.info("macOS detected. Skipping system tray initialization.")
+            return
+
         try:
             icon_path = get_resource_path("ui", "tomebox.ico")
             
@@ -578,10 +584,45 @@ class AAXManagerApp:
             
             self.tray_icon = pystray.Icon("TomeBox", image, "TomeBox", menu)
             
-            # Run the tray icon loop in a background thread so it doesn't block Tkinter
+            # Run the tray icon loop in a background thread so it doesn't block Tkinter (Safe on Windows/Linux)
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
         except Exception as e:
             self.logger.info(f"Failed to initialize system tray: {e}")
+
+    def thread_safe_ask_directory(self):
+        """Safely opens a directory dialog from a background thread."""
+        result = [None]
+        event = threading.Event()
+        
+        def _ask():
+            # Force the main window to the front before opening the dialog
+            self.root.attributes('-topmost', True)
+            result[0] = filedialog.askdirectory(parent=self.root, title="Select TomeBox Location")
+            self.root.attributes('-topmost', False)
+            event.set()
+            
+        self.root.after(0, _ask)
+        event.wait() # Block the calling background thread until the user clicks OK/Cancel
+        return result[0]
+
+    def thread_safe_ask_file(self):
+        """Safely opens a file dialog from a background thread."""
+        result = [None]
+        event = threading.Event()
+        
+        def _ask():
+            self.root.attributes('-topmost', True)
+            result[0] = filedialog.askopenfilename(
+                parent=self.root, 
+                title="Select Audiobook File",
+                filetypes=[("Audiobooks", "*.m4b *.mp3 *.aaxc *.aax")]
+            )
+            self.root.attributes('-topmost', False)
+            event.set()
+            
+        self.root.after(0, _ask)
+        event.wait()
+        return result[0]
 
     def hide_window_to_tray(self):
         # Withdraw hides the window from the taskbar and screen
