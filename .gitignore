@@ -22,3 +22,4 @@ migrate_to_sqlite.py
 /release
 *.spec
 *.coverage
+tomebox_installer.iss
