@@ -1337,7 +1337,17 @@ class AAXManagerApp:
     def setup_ui(self):
         setup_menu_bar(self)
         setup_player_bar(self)
-        
+        import sys
+        if sys.platform == 'darwin':
+            try:
+                # 1. Enable the native Mac "Settings/Preferences" menu item
+                from ui.components.dialogs import open_auth_window
+                self.root.createcommand('::tk::mac::ShowPreferences', lambda: open_auth_window(self))
+                
+                # 2. Hide the default Tkinter "Run Widget Demo" help menu
+                self.root.createcommand('tk::mac::ShowHelp', lambda: None)
+            except Exception as e:
+                if hasattr(self, 'logger'): self.logger.error(f"Failed to bind Mac menus: {e}")
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
