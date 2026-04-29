@@ -51,6 +51,9 @@ from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager
 
+bundled_bin_dir = get_resource_path("bin")
+if os.path.exists(bundled_bin_dir):
+    os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 class AAXManagerApp:
     def __init__(self, root, base_dir):
         self.root = root
