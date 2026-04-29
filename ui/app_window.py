@@ -51,7 +51,22 @@ from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager
 
+mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
+os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
 bundled_bin_dir = get_resource_path("bin")
+# 2. Inject bundled PyInstaller binaries and restore +x permissions
+if hasattr(sys, '_MEIPASS'):
+    bin_path = os.path.join(sys._MEIPASS, 'bin')
+    os.environ["PATH"] = f"{sys._MEIPASS}{os.pathsep}{bin_path}{os.pathsep}{os.environ.get('PATH', '')}"
+    
+    try:
+        for binary in ['ffmpeg', 'ffplay']:
+            b_path = os.path.join(bin_path, binary)
+            if os.path.exists(b_path): 
+                os.chmod(b_path, 0o755)
+    except Exception:
+        pass
+
 if os.path.exists(bundled_bin_dir):
     os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 class AAXManagerApp:
@@ -688,8 +703,10 @@ class AAXManagerApp:
                 "Would you like to open the official FFmpeg download page now?"
             )
             
-            # askyesno returns True if they click Yes, False if No
-            user_wants_link = messagebox.askyesno("Missing Dependency: FFmpeg", msg)
+            # Force the window to the top and attach the dialog to prevent Mac freezing
+            self.root.attributes('-topmost', True)
+            user_wants_link = messagebox.askyesno("Missing Dependency: FFmpeg", msg, parent=self.root)
+            self.root.attributes('-topmost', False)
             
             if user_wants_link:
                 self.logger.info("Opening FFmpeg download page in browser...")
