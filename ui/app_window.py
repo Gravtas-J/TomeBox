@@ -1082,14 +1082,16 @@ class AAXManagerApp:
             text_label.pack(pady=(5, 0))
             
             def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
-                if hasattr(self, '_last_selected_card_frame') and self._last_selected_card_frame.winfo_exists():
-                    self._last_selected_card_frame.config(bg=default_bg)
+                # Safely check if a previous card exists before trying to un-highlight it
+                last_card = getattr(self, '_last_selected_card_frame', None)
+                if last_card is not None and last_card.winfo_exists():
+                    last_card.config(bg=default_bg)
                 
                 oc.config(bg=select_bg)
                 self._last_selected_card_frame = oc 
                 self._selected_grid_item = {'values': [t, "", "", "", a, s, ""]} 
                 self.on_item_select()
-
+                
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
                 on_card_click(e, oc, t, a, s)
                 self.master_play()

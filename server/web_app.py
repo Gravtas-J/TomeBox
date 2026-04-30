@@ -238,16 +238,20 @@ def create_server_app(tomebox):
                     item_copy["asin"] = meta.get("asin")
                     
             enriched_lib[path] = item_copy
-        # Add cloud-only items that aren't yet downloaded
-        local_titles = {data.get("title") for data in tomebox.library_manager.local_library.values()}
+        def clean_title(t):
+            if not t: return ""
+            # Strip case, whitespace, and OpenAudible's common tags for better matching
+            return t.lower().replace("(unabridged)", "").strip()
+
+        local_titles = {clean_title(data.get("title")) for data in tomebox.library_manager.local_library.values()}
         local_asins = {data.get("asin") for data in tomebox.library_manager.local_library.values() if data.get("asin")}
 
         for cloud_item in getattr(tomebox.library_manager, 'cloud_items', []):
             title = cloud_item.get("title")
             asin = cloud_item.get("asin")
             
-            # Skip if already in local library (matched by title or ASIN)
-            if title in local_titles or asin in local_asins:
+            # Skip if already in local library (matched by fuzzy title or ASIN)
+            if clean_title(title) in local_titles or asin in local_asins:
                 continue
             
             raw_authors = cloud_item.get("authors", [])
