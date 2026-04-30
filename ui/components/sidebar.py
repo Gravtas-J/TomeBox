@@ -39,3 +39,19 @@ def setup_sidebar(app, parent):
     btn_frame = ttk.Frame(app.bm_frame)
     btn_frame.pack(fill="x", pady=(5, 0))
     ttk.Button(btn_frame, text="Delete Selected", command=app.delete_bookmark).pack(side=tk.RIGHT)
+
+    # --- EVENT BUBBLING SHIELD ---
+    def block_context_menu(event):
+        return "break"
+        
+    def recursively_block_clicks(widget):
+        # Bind the block to the widget itself (Button-3 for Win/Linux, Button-2 for Mac)
+        widget.bind("<Button-3>", block_context_menu)
+        widget.bind("<Button-2>", block_context_menu)
+        
+        # Drill down into every child widget
+        for child in widget.winfo_children():
+            recursively_block_clicks(child)
+            
+    # Apply the shield to the master sidebar container and everything inside it
+    recursively_block_clicks(parent)
