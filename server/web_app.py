@@ -271,7 +271,7 @@ def create_server_app(tomebox):
             }
 
         return enriched_lib
-
+    
     @api.get("/api/cover/{asin}")
     def get_cover(asin: str):
         from core.converter import resolve_cover_path
