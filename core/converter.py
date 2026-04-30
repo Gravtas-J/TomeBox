@@ -114,6 +114,7 @@ class AudioConverter:
             # Build the FFmpeg command
             cmd = [
                 "ffmpeg", "-y",
+                "-fflags", "+genpts",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_txt_path,       # Input 0: The audio files
@@ -136,7 +137,8 @@ class AudioConverter:
                 ])
             else:
                 cmd.extend(["-c:a", "copy", "-movflags", "+faststart"])
-
+                
+            cmd.extend(["-movflags", "+faststart+use_metadata_tags"])
             cmd.append(output_path)
 
             import subprocess
