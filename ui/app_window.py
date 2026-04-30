@@ -2115,7 +2115,7 @@ class AAXManagerApp:
             
             # Since your seek method takes an offset, we calculate the difference
             offset = target_time - self.current_play_time
-            self.seek(offset)
+            self.seek_audio(offset)
 
     def on_speed_change(self, event=None):
         speed_val = float(self.playback_speed.get().replace("x", ""))
