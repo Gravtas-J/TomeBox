@@ -62,17 +62,37 @@ def setup_library_view(app, parent):
     app.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=app.toggle_queue_visibility)
     app.toggle_queue_btn.pack(side=tk.RIGHT, padx=5)
 
+    app.toggle_sidebar_btn = ttk.Button(filter_frame, text="Show/Hide Info", command=app.toggle_sidebar_visibility)
+    app.toggle_sidebar_btn.pack(side=tk.RIGHT, padx=5)
+
     app.dl_all_btn = ttk.Button(filter_frame, text="Download Missing", command=app.start_download_all)
     app.dl_all_btn.pack(side=tk.RIGHT, padx=(5, 5))
 
     tree_frame = ttk.Frame(lib_frame)
     tree_frame.pack(fill="both", expand=True, pady=5)
 
-    scroll = ttk.Scrollbar(tree_frame)
-    scroll.pack(side=tk.RIGHT, fill="y")
+    # 1. Use Grid to strictly bound the Treeview
+    tree_frame.rowconfigure(0, weight=1)
+    tree_frame.columnconfigure(0, weight=1)
 
-    app.library_tree = ttk.Treeview(tree_frame, columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path"), show="headings", yscrollcommand=scroll.set)
-    scroll.config(command=app.library_tree.yview)
+    app.v_scroll = ttk.Scrollbar(tree_frame, orient="vertical")
+    app.v_scroll.grid(row=0, column=1, sticky="ns")
+    
+    app.h_scroll = ttk.Scrollbar(tree_frame, orient="horizontal")
+    app.h_scroll.grid(row=1, column=0, sticky="ew")
+
+    app.library_tree = ttk.Treeview(
+        tree_frame, 
+        columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path"), 
+        displaycolumns=("Title", "Author", "Series", "Duration", "ASIN", "File Path", "Status"),
+        show="headings", 
+        yscrollcommand=app.v_scroll.set,
+        xscrollcommand=app.h_scroll.set
+    )
+    app.library_tree.grid(row=0, column=0, sticky="nsew")
+
+    app.v_scroll.config(command=app.library_tree.yview)
+    app.h_scroll.config(command=app.library_tree.xview)
     app.library_tree.bind("<<TreeviewSelect>>", app.on_item_select)
     
     app.current_view_mode = "list"
@@ -82,7 +102,7 @@ def setup_library_view(app, parent):
     app.grid_inner = tk.Frame(app.grid_canvas, bg=default_bg)
     app.grid_window_id = app.grid_canvas.create_window((0, 0), window=app.grid_inner, anchor="nw")
     
-    app.grid_canvas.configure(yscrollcommand=scroll.set)
+    app.grid_canvas.configure(yscrollcommand=app.v_scroll.set)
     app.grid_inner.bind("<Configure>", lambda e: app.grid_canvas.configure(scrollregion=app.grid_canvas.bbox("all")))
     
     app.grid_canvas.bind("<Configure>", app.on_canvas_resize)
@@ -106,17 +126,16 @@ def setup_library_view(app, parent):
     for col in app.library_tree["columns"]:
         app.library_tree.heading(col, text=col, command=lambda _col=col: app.sort_treeview(app.library_tree, _col, False))
         
-    app.library_tree.column("Title", width=250)
-    app.library_tree.column("Author", width=120)
-    app.library_tree.column("Series", width=120)
-    app.library_tree.column("Duration", width=70)
-    app.library_tree.column("ASIN", width=90)
-    app.library_tree.column("Status", width=110)
-    app.library_tree.column("File Path", width=250)
-    app.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+    # 2. Turn off stretch for ALL columns
+    app.library_tree.column("Title", width=250, minwidth=200, stretch=tk.NO)
+    app.library_tree.column("Author", width=120, minwidth=100, stretch=tk.NO)
+    app.library_tree.column("Series", width=120, minwidth=100, stretch=tk.NO)
+    app.library_tree.column("Duration", width=70, minwidth=70, stretch=tk.NO)
+    app.library_tree.column("ASIN", width=90, minwidth=90, stretch=tk.NO)
+    app.library_tree.column("File Path", width=350, minwidth=250, stretch=tk.NO)
+    app.library_tree.column("Status", width=110, minwidth=100, stretch=tk.YES)
     
-    app.library_tree.bind("<Double-1>", app.master_play)
-
+    
     btn_frame = ttk.Frame(lib_frame)
     btn_frame.pack(fill="x", pady=2)
     ttk.Button(btn_frame, text="Refresh Cloud", command=app.fetch_cloud_library).pack(side=tk.LEFT, padx=5)

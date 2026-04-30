@@ -16,7 +16,8 @@ body.desktop {
         "sidebar main"
         "player player";
     height: 100vh;
-    width: 100vw;
+    width: 100%;
+    overflow-x: hidden;
 }
 
 #app-shell.sidebar-collapsed {
@@ -132,6 +133,38 @@ body.desktop {
 }
 
 /* ========================================
+   150% Scaling / Small Screen Fixes
+   ======================================== */
+@media (max-width: 950px) {
+    /* Automatically snap to the collapsed sidebar width */
+    #app-shell {
+        grid-template-columns: 60px 1fr !important;
+    }
+    
+    /* Hide all the text labels */
+    .sidebar-header h1,
+    .nav-label,
+    .profile-info {
+        display: none !important;
+    }
+    
+    /* Rotate the arrow to indicate it's collapsed */
+    #sidebar-toggle {
+        transform: rotate(180deg);
+    }
+    
+    /* Squish the profile and footer padding */
+    .sidebar-footer {
+        padding: 10px 5px !important;
+    }
+    
+    .profile-display {
+        padding: 4px !important;
+        justify-content: center !important;
+    }
+}
+
+/* ========================================
    Main content area
    ======================================== */
 
@@ -155,6 +188,7 @@ body.desktop {
 
 .view-header {
     display: flex;
+    flex-wrap: wrap; 
     gap: 15px;
     align-items: center;
     margin-bottom: 20px;

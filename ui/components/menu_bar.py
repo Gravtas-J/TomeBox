@@ -4,7 +4,7 @@ from ui.components.dialogs import open_auth_window, open_achievements_window
 
 import tkinter as tk
 from tkinter import ttk
-from ui.components.dialogs import open_auth_window, open_achievements_window
+from ui.components.dialogs import open_auth_window, open_achievements_window, open_pairing_window
 
 def setup_menu_bar(app):
     """Builds the top menu bar using native OS integration."""
@@ -59,7 +59,7 @@ def setup_menu_bar(app):
     app.file_menu.add_separator()
     app.file_menu.add_command(label="Enable Web Server", command=app.toggle_web_server)
     app.file_menu.add_command(label="Open Web UI (Beta)", command=app.open_web_ui)
-    
+    app.file_menu.add_command(label="Show Pairing Info", command=lambda: open_pairing_window(app), state=tk.DISABLED)
     app.file_menu.add_separator()
     app.file_menu.add_command(label="Exit", command=app.on_closing)
 

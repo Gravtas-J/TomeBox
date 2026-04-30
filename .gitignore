@@ -24,3 +24,4 @@ migrate_to_sqlite.py
 *.spec
 *.coverage
 tomebox_installer.iss
+filelist.txt

@@ -464,13 +464,21 @@ class AAXManagerApp:
 
     def toggle_web_server(self):
         def on_started():
-            self.server_running = True  # <-- ADD THIS FLAG
+            self.server_running = True
+            # Toggle the start/stop label
             self.root.after(0, lambda: self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server"))
+            # Enable the pairing info button
+            self.root.after(0, lambda: self.file_menu.entryconfigure("Show Pairing Info", state=tk.NORMAL))
+            # Auto-show the pairing window on start
             self.root.after(0, lambda: open_pairing_window(self))
             
         def on_stopped():
-            self.server_running = False # <-- ADD THIS FLAG
+            self.server_running = False
+            # Toggle the start/stop label back
             self.root.after(0, lambda: self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server"))
+            # Disable the pairing info button
+            self.root.after(0, lambda: self.file_menu.entryconfigure("Show Pairing Info", state=tk.DISABLED))
+            
             self.root.after(0, lambda: messagebox.showinfo("Server Stopped", "The companion server has been safely disabled."))
             
         def on_error(title, msg):
@@ -988,34 +996,34 @@ class AAXManagerApp:
         apply_theme(self, palette_name)
 
     def toggle_library_view(self):
-        scroll_bar = None
-        for child in self.library_tree.master.winfo_children():
-            if isinstance(child, ttk.Scrollbar) and str(child.cget("orient")) == "vertical":
-                scroll_bar = child
-                break
-
         if self.current_view_mode == "list":
             self.current_view_mode = "grid"
             self.view_btn.config(text="List View")
-            self.library_tree.pack_forget()
+            
+            # Hide list elements
+            self.library_tree.grid_remove()
+            self.h_scroll.grid_remove()
             
             if self.library_manager.cloud_items or self.library_manager.local_library:
-                self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+                self.grid_canvas.grid(row=0, column=0, sticky="nsew")
             
-            if scroll_bar:
-                scroll_bar.config(command=self.grid_canvas.yview)
-                self.grid_canvas.config(yscrollcommand=scroll_bar.set)
+            # Route vertical scrollbar to the grid
+            self.v_scroll.config(command=self.grid_canvas.yview)
+            self.grid_canvas.config(yscrollcommand=self.v_scroll.set)
         else:
             self.current_view_mode = "list"
             self.view_btn.config(text="Grid View")
-            self.grid_canvas.pack_forget()
+            
+            # Hide grid elements
+            self.grid_canvas.grid_remove()
             
             if self.library_manager.cloud_items or self.library_manager.local_library:
-                self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+                self.library_tree.grid(row=0, column=0, sticky="nsew")
+                self.h_scroll.grid(row=1, column=0, sticky="ew")
             
-            if scroll_bar:
-                scroll_bar.config(command=self.library_tree.yview)
-                self.library_tree.config(yscrollcommand=scroll_bar.set)
+            # Route vertical scrollbar back to the list
+            self.v_scroll.config(command=self.library_tree.yview)
+            self.library_tree.config(yscrollcommand=self.v_scroll.set)
             
         self.refresh_library_ui()
 
@@ -1169,7 +1177,7 @@ class AAXManagerApp:
 
         self._current_filtered_data = filtered_rows
 
-        # 3. Repopulate the shelf filter dropdown so new shelves appear
+        # 3. Repopulate the shelf filter dropdown
         if hasattr(self, 'shelf_combo'):
             self.shelf_combo['values'] = shelf_list
 
@@ -1177,14 +1185,19 @@ class AAXManagerApp:
         is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
 
         if is_completely_empty:
-            self.library_tree.pack_forget()
-            self.grid_canvas.pack_forget()
-            self.empty_state_frame.pack(fill="both", expand=True)
+            self.library_tree.grid_remove()
+            self.h_scroll.grid_remove()
+            self.grid_canvas.grid_remove()
+            self.v_scroll.grid_remove()
+            self.empty_state_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
         else:
-            self.empty_state_frame.pack_forget()
+            self.empty_state_frame.grid_remove()
+            self.v_scroll.grid(row=0, column=1, sticky="ns")
+            
             if self.current_view_mode == "list":
-                self.grid_canvas.pack_forget()
-                self.library_tree.pack(side=tk.LEFT, fill="both", expand=True)
+                self.grid_canvas.grid_remove()
+                self.library_tree.grid(row=0, column=0, sticky="nsew")
+                self.h_scroll.grid(row=1, column=0, sticky="ew")
 
                 for row in filtered_rows:
                     self.library_tree.insert("", "end", values=row)
@@ -1192,9 +1205,11 @@ class AAXManagerApp:
                 if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
                     self.sort_treeview(self.library_tree, self.current_sort_col, self.current_sort_descending)
             else:
-                self.library_tree.pack_forget()
-                self.grid_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+                self.library_tree.grid_remove()
+                self.h_scroll.grid_remove()
+                self.grid_canvas.grid(row=0, column=0, sticky="nsew")
                 self.draw_grid_view()
+
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
@@ -1360,20 +1375,30 @@ class AAXManagerApp:
         main_vbox.rowconfigure(0, weight=1)
         main_vbox.columnconfigure(0, weight=1)
 
-        top_split = ttk.PanedWindow(main_vbox, orient=tk.HORIZONTAL)
-        top_split.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        self.top_split = ttk.PanedWindow(main_vbox, orient=tk.HORIZONTAL)
+        self.top_split.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
 
-        left_panel = tk.Frame(top_split)
-        right_panel = tk.Frame(top_split)
+        left_panel = tk.Frame(self.top_split)
+        self.right_panel = tk.Frame(self.top_split)
 
-        top_split.add(left_panel, weight=3)
-        top_split.add(right_panel, weight=1)
+        self.top_split.add(left_panel, weight=3)
+        self.top_split.add(self.right_panel, weight=1)
 
         bottom_panel = tk.Frame(main_vbox)
         bottom_panel.grid(row=1, column=0, sticky="ew")
 
         setup_library_view(self, left_panel)
-        setup_sidebar(self, right_panel)
+        setup_sidebar(self, self.right_panel)
+
+    def toggle_sidebar_visibility(self):
+        """Hides or reveals the right-hand info and bookmarks panel."""
+        current_panes = self.top_split.panes()
+        
+        # Check if the panel is currently visible in the window
+        if str(self.right_panel) in current_panes:
+            self.top_split.forget(self.right_panel)
+        else:
+            self.top_split.add(self.right_panel, weight=1)
 
     def open_web_ui(self):
         """Opens the localhost web UI in the user's default browser."""
