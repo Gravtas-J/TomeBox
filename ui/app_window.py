@@ -464,10 +464,12 @@ class AAXManagerApp:
 
     def toggle_web_server(self):
         def on_started():
+            self.server_running = True  # <-- ADD THIS FLAG
             self.root.after(0, lambda: self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server"))
             self.root.after(0, lambda: open_pairing_window(self))
             
         def on_stopped():
+            self.server_running = False # <-- ADD THIS FLAG
             self.root.after(0, lambda: self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server"))
             self.root.after(0, lambda: messagebox.showinfo("Server Stopped", "The companion server has been safely disabled."))
             
@@ -480,7 +482,6 @@ class AAXManagerApp:
             on_stopped_cb=on_stopped,
             on_error_cb=on_error
         )
-
     def on_file_drop(self, event):
         # 1. Parse the dropped string using our robust regex parser
         dropped_paths = parse_dnd_paths(event.data)

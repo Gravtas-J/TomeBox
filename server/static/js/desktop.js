@@ -63,13 +63,14 @@
     }
     async function checkFirstRun() {
         try {
-            const response = await fetch('/api/profiles/list');
+            // Add { cache: 'no-store' } to force the browser to check the live database
+            const response = await fetch('/api/library', { cache: 'no-store' });
             if (!response.ok) return;
             
             const data = await response.json();
-            const anyAuthenticated = data.profiles.some(p => p.is_authenticated);
+            const libraryIsEmpty = Object.keys(data).length === 0;
             
-            if (!anyAuthenticated) {
+            if (libraryIsEmpty) {
                 // Redirect to account view with a friendly message
                 window.location.hash = '#/account';
                 
@@ -80,7 +81,7 @@
                         const banner = document.createElement('div');
                         banner.id = 'first-run-banner';
                         banner.style.cssText = 'background: rgba(187,134,252,0.1); border-left: 3px solid var(--accent); padding: 15px; margin-bottom: 15px; border-radius: 6px;';
-                        banner.innerHTML = '<strong>Welcome to TomeBox!</strong> Sign in to your Audible account below to get started.';
+                        banner.innerHTML = '<strong>Welcome to TomeBox!</strong> Your library is empty. Sign in to your Audible account or import local files to get started.';
                         list.parentElement.insertBefore(banner, list.parentElement.firstChild);
                     }
                 }, 200);
