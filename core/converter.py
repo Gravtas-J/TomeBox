@@ -39,26 +39,23 @@ class AudioConverter:
     def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None):
         import tempfile
         import os
-        from core.utils.process_runner import ProcessRunner
+        import subprocess
+        import time
 
         if not file_paths:
             return False
 
-        # Determine if we are transcoding MP3s or just copying M4Bs/AACs
         needs_reencode = any(f.lower().endswith(".mp3") for f in file_paths)
 
-        # Create temporary files for both the concat list and the metadata
         fd_concat, concat_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
         fd_meta, metadata_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
 
         try:
             with os.fdopen(fd_concat, 'w', encoding='utf-8') as f_concat:
                 for path in file_paths:
-                    # FFmpeg concat requires forward slashes and escaped single quotes
                     safe_path = path.replace('\\', '/').replace("'", r"\'")
                     f_concat.write(f"file '{safe_path}'\n")
 
-            # 1. Steal the Author/Artist and Series from the very first file
             first_artist = "Unknown Author"
             first_album = title
             first_series = ""
@@ -72,7 +69,6 @@ class AudioConverter:
             except Exception:
                 pass
 
-            # Build the FFMETADATA file dynamically
             with os.fdopen(fd_meta, 'w', encoding='utf-8') as f_meta:
                 f_meta.write(";FFMETADATA1\n")
                 f_meta.write(f"title={title}\n")
@@ -80,7 +76,6 @@ class AudioConverter:
                 f_meta.write(f"album_artist={first_artist}\n")
                 f_meta.write(f"album={first_album}\n")
                 
-                # MP4/M4B containers natively use 'show' for series, but we write both for compatibility
                 if first_series:
                     f_meta.write(f"show={first_series}\n")
                     f_meta.write(f"series={first_series}\n")
@@ -88,7 +83,6 @@ class AudioConverter:
                 f_meta.write("genre=Audiobook\n\n")
 
                 current_start_ms = 0
-
                 for path in file_paths:
                     try:
                         data = self.get_metadata_and_chapters(path)
@@ -99,8 +93,6 @@ class AudioConverter:
                     if duration_sec > 0:
                         duration_ms = int(duration_sec * 1000)
                         end_ms = current_start_ms + duration_ms
-                        
-                        # Use the original filename (without extension) as the chapter name
                         chap_title = os.path.splitext(os.path.basename(path))[0]
 
                         f_meta.write("[CHAPTER]\n")
@@ -111,20 +103,19 @@ class AudioConverter:
 
                         current_start_ms = end_ms
 
-            # Build the FFmpeg command
             cmd = [
                 "ffmpeg", "-y",
-                "-fflags", "+genpts",
+                "-fflags", "+genpts",        # FIX: Rebuild clean timestamps
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_txt_path,       # Input 0: The audio files
                 "-i", metadata_txt_path,     # Input 1: The chapters/author data
-                "-i", file_paths[0],         # Input 2: The first file again (just to steal its cover art)
-                "-map", "0:a",               # Take audio from the concatenated stream
-                "-map", "2:v?",              # Take the cover image from the first file (the '?' means skip if it has no cover)
-                "-map_metadata", "1",        # Take tags from our generated text file
-                "-c:v", "copy",              # Copy the image exactly as it is
-                "-disposition:v", "attached_pic" # Explicitly flag the image as cover art
+                "-i", file_paths[0],         # Input 2: The first file again to steal cover art
+                "-map", "0:a",
+                "-map", "2:v?",              # RESTORED: Take the cover image
+                "-map_metadata", "1",
+                "-c:v", "copy",
+                "-disposition:v", "attached_pic"
             ]
 
             if needs_reencode:
@@ -132,23 +123,19 @@ class AudioConverter:
                     "-c:a", "aac",
                     "-b:a", "128k",
                     "-ac", "2",
-                    "-ar", "44100",
-                    "-movflags", "+faststart"
+                    "-ar", "44100"
                 ])
             else:
-                cmd.extend(["-c:a", "copy", "-movflags", "+faststart"])
+                cmd.extend(["-c:a", "copy"])
                 
-            cmd.extend(["-movflags", "+faststart+use_metadata_tags"])
+            cmd.extend(["-movflags", "+faststart+use_metadata_tags"]) 
             cmd.append(output_path)
 
-            import subprocess
-            import time
-
-            # Run via Popen so we can read the stream live and prevent buffer deadlocks
+            # Watchdog loop to prevent buffer deadlock
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, # Pipe stderr into stdout so we only read one stream
+                stderr=subprocess.STDOUT,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
@@ -156,39 +143,28 @@ class AudioConverter:
             )
 
             last_output_time = time.time()
-            STALL_TIMEOUT = 300  # 5 minutes of absolute silence = stuck or waiting for hidden prompt
+            STALL_TIMEOUT = 300
 
             try:
                 while True:
                     line = process.stdout.readline()
-                    
-                    # If process finished and no more output, break loop
                     if not line and process.poll() is not None:
                         break
-                        
                     if line:
-                        last_output_time = time.time() # Reset the watchdog timer
-                        # Optional: If you want to see live progress in your console, uncomment this:
-                        # if logger and "time=" in line: logger(line.strip())
-
-                    # Watchdog Check: Has it been 5 minutes since FFmpeg said anything?
+                        last_output_time = time.time()
                     if time.time() - last_output_time > STALL_TIMEOUT:
                         process.kill()
-                        raise TimeoutError(f"FFmpeg process stalled for {STALL_TIMEOUT} seconds.")
+                        raise TimeoutError("FFmpeg process stalled.")
 
                 process.wait()
-                
                 success = process.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
                 
                 if not success:
-                    # Clean up the broken partial file
                     if os.path.exists(output_path): os.remove(output_path)
-                    if logger: logger(f"Concat failed with return code: {process.returncode}")
-                    
                 return success
 
             except Exception as e:
-                process.kill() # Ensure zombie process is shot
+                process.kill()
                 if os.path.exists(output_path):
                     try: os.remove(output_path)
                     except: pass
@@ -200,14 +176,12 @@ class AudioConverter:
             return False
             
         finally:
-            # Clean up the temp text files
             if os.path.exists(concat_txt_path):
                 try: os.remove(concat_txt_path)
                 except: pass
             if os.path.exists(metadata_txt_path):
                 try: os.remove(metadata_txt_path)
                 except: pass
-
     def cancel(self):
         self.is_cancelled = True
         if self.current_process:
