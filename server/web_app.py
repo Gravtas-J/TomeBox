@@ -794,8 +794,8 @@ def create_server_app(tomebox):
             def status_cb(msg):
                 if hasattr(tomebox, 'logger'): tomebox.logger(f"[Web Import] {msg}")
                 
-            def complete_cb(count):
-                if hasattr(tomebox, 'logger'): tomebox.logger(f"[Web Import] Finished adding {count} files.")
+            def complete_cb(count, total=0):
+                if hasattr(tomebox, 'logger'): tomebox.logger(f"[Web Import] Finished adding {count}/{total} files.")
 
             if os.path.isfile(path):
                 # import_files expects a list of paths

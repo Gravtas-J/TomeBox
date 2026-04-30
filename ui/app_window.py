@@ -451,11 +451,13 @@ class AAXManagerApp:
         # Push the update to the main Tkinter thread safely
         self.root.after(0, update_ui)
 
-    def _on_import_complete(self, added_count):
+    def _on_import_complete(self, added_count, total_found=0):
         def update():
             if added_count > 0:
                 self.refresh_library_ui()
                 self.dl_status_var.set(f"Successfully imported {added_count} files.")
+            elif total_found > 0:
+                self.dl_status_var.set("Files already in library.")
             else:
                 self.dl_status_var.set("No valid audiobooks found to import.")
                 
@@ -549,7 +551,7 @@ class AAXManagerApp:
         def on_status(msg):
             self.root.after(0, lambda: self.dl_status_var.set(msg))
         
-        def on_complete(count):
+        def on_complete(count, total_found=0):
             def update_ui():
                 self.dl_status_var.set("Idle")
                 self.refresh_library_ui()
@@ -558,6 +560,11 @@ class AAXManagerApp:
                     messagebox.showinfo(
                         "Import Complete",
                         f"Successfully imported {count} audiobook{'s' if count != 1 else ''}."
+                    )
+                elif total_found > 0:
+                    messagebox.showinfo(
+                        "Import Skipped",
+                        "The selected files are already in your library."
                     )
                 else:
                     messagebox.showinfo(

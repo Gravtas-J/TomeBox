@@ -397,13 +397,11 @@ class LibraryManager:
                 self.local_library[filepath] = entry
                 added_count += 1
                 
-            # Save and ping the UI
-            self.current_status = ""
             if added_count > 0:
                 self.db.save_local_db(self.local_library)
-                
+            self.current_status = ""
             if on_complete_cb:
-                on_complete_cb(added_count)
+                on_complete_cb(added_count, len(file_paths))
 
         # Run it in the background so a 50-file drag-and-drop doesn't freeze the app
         threading.Thread(target=worker, daemon=True).start()
@@ -598,7 +596,7 @@ class LibraryManager:
 
             if not file_paths:
                 if logger: logger(f"No audio files found in {folder_path}")
-                if on_complete_cb: on_complete_cb(0)
+                if on_complete_cb: on_complete_cb(0, 0)
                 return
             update_status(f"Found {len(file_paths)} formatted books. Importing...")
             final_count = len(file_paths)

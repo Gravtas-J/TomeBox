@@ -63,12 +63,12 @@ header {
     right: 0;
     background-color: var(--card);
     border-top: 1px solid #333;
-    /* Use vh to cap the bar's height relative to the viewport */
-    max-height: 22vh; 
+    /* Fixed max-height to prevent it from blowing up on tall screens */
+    max-height: 150px; 
     padding: 4px 1px; 
     display: flex;
     flex-direction: column;
-    justify-content: space-between; /* Spreads the 3 layers evenly */
+    justify-content: space-between; 
     z-index: 20;
     box-shadow: 0 -4px 10px rgba(0,0,0,0.5);
 }
