@@ -108,6 +108,8 @@ class LibraryManager:
         self.base_dir = base_dir
         self.covers_dir = os.path.join(base_dir, "covers")
         
+        self.current_status = ""
+
         # Core State
         self.local_library = {}
         self.cloud_items = []
@@ -270,14 +272,18 @@ class LibraryManager:
 
     def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
         """Processes an array of files, extracts metadata, and adds them to the library database."""
+        self.current_status = "Initializing import..."
         def worker():
+            # Helper to update both the desktop UI and the Web UI simultaneously
+            def update_status(msg):
+                self.current_status = msg
+                if on_status_cb: on_status_cb(msg)
+
             valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
             added_count = 0
             
             for filepath in file_paths:
                 if not os.path.exists(filepath): continue
-                
-                # Prevent re-adding files that are already in the database
                 if filepath in self.local_library: continue
                 
                 ext = os.path.splitext(filepath)[1].lower()
@@ -288,6 +294,9 @@ class LibraryManager:
                 authors = "Unknown Author"
                 format_clean = ext.replace(".", "").upper()
                 embedded_meta = {}
+                
+                # Replace the old callback check with our new helper
+                update_status(f"Importing: {filename}")
                 
                 if on_status_cb:
                     on_status_cb(f"Importing: {filename}")
@@ -389,6 +398,7 @@ class LibraryManager:
                 added_count += 1
                 
             # Save and ping the UI
+            self.current_status = ""
             if added_count > 0:
                 self.db.save_local_db(self.local_library)
                 
@@ -499,12 +509,20 @@ class LibraryManager:
             time.sleep(2)
 
     def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+        self.current_status = "Initializing import..."
         def worker():
             import re
             
+            def update_status(msg):
+                self.current_status = msg
+                if on_status_cb: on_status_cb(msg)
+            
             if not os.path.isdir(folder_path):
+                self.current_status = ""
                 if on_complete_cb: on_complete_cb(0)
                 return
+            
+            update_status("Scanning and grouping files...")
             
             if on_status_cb: on_status_cb("Scanning and grouping files...")
             
@@ -528,6 +546,8 @@ class LibraryManager:
                 if len(files) == 1:
                     file_paths.extend([os.path.join(directory, files[0])])
                     continue
+                
+                update_status(f"Analyzing parts in {os.path.basename(directory)}...")
                 
                 if on_status_cb: on_status_cb(f"Analyzing parts in {os.path.basename(directory)}...")
                 
@@ -564,7 +584,7 @@ class LibraryManager:
                             out_m4b = os.path.join(directory, f"{safe_album_name}_merged.m4b")
                             
                         if not os.path.exists(out_m4b):
-                            if on_status_cb: on_status_cb(f"Merging {len(group_files)} parts: {safe_album_name}...")
+                            update_status(f"Merging {len(group_files)} parts: {safe_album_name}...")
                             
                             group_files.sort(key=natural_sort_key)
                             success = converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger)
@@ -580,6 +600,7 @@ class LibraryManager:
                 if logger: logger(f"No audio files found in {folder_path}")
                 if on_complete_cb: on_complete_cb(0)
                 return
+            update_status(f"Found {len(file_paths)} formatted books. Importing...")
             final_count = len(file_paths)
             if on_status_cb: on_status_cb(f"Found {len(file_paths)} formatted books. Importing...")
 
@@ -605,7 +626,7 @@ class LibraryManager:
                 embedded_meta = {}
 
                 if on_status_cb:
-                    on_status_cb(f"Importing: {filename}")
+                    update_status(f"Importing: {filename}")
 
                 # Scrape tags if it's an M4B or MP3
                 if format_clean in ["M4B", "MP3"]:
@@ -706,6 +727,7 @@ class LibraryManager:
                 self.db.save_local_db(self.local_library)
             
             # Fire the complete callback exactly once, at the very end
+            self.current_status = ""
             if on_complete_cb:
                 on_complete_cb(added_count)
         

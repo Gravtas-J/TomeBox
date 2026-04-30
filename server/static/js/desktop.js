@@ -972,10 +972,11 @@ window.importFolder = async function() {
 
 async function processImport(path) {
     const statusEl = document.getElementById('library-status');
-    statusEl.textContent = 'Importing in background...';
     statusEl.className = 'library-status'; 
+    statusEl.textContent = 'Initializing import...';
 
     try {
+        // 1. Fire the import request (Python will reply instantly while it works in the background)
         const response = await fetch('/api/library/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -987,21 +988,34 @@ async function processImport(path) {
             throw new Error(err.detail || 'Import failed');
         }
 
-        statusEl.textContent = 'Processing files...';
-        
-        // Wait 3 seconds to let the Python background thread finish parsing the files
-        setTimeout(async () => {
-            if (typeof loadLibrary === 'function') {
-                await loadLibrary();
-            }
-            statusEl.textContent = 'Import successful!';
-            statusEl.classList.add('success');
-            
-            setTimeout(() => {
-                statusEl.textContent = '';
-                statusEl.classList.remove('success');
-            }, 3000);
-        }, 3000);
+        // 2. Start polling the background thread
+        const pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch('/api/system/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    
+                    if (data.task) {
+                        // Update the UI with the live text from Python
+                        statusEl.textContent = data.task;
+                    } else {
+                        // The backend cleared the status string, meaning it finished!
+                        clearInterval(pollInterval);
+                        
+                        statusEl.textContent = 'Import successful!';
+                        statusEl.classList.add('success');
+                        
+                        if (typeof loadLibrary === 'function') await loadLibrary();
+                        window.location.hash = '#/library';
+                        
+                        setTimeout(() => {
+                            statusEl.textContent = '';
+                            statusEl.classList.remove('success');
+                        }, 3000);
+                    }
+                }
+            } catch (e) {} 
+        }, 1000);
 
     } catch (error) {
         statusEl.textContent = `Error: ${error.message}`;
