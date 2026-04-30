@@ -139,17 +139,66 @@ class AudioConverter:
 
             cmd.append(output_path)
 
-            result = ProcessRunner.run_blocking(cmd)
-            
-            return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
+            import subprocess
+            import time
 
+            # Run via Popen so we can read the stream live and prevent buffer deadlocks
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, # Pipe stderr into stdout so we only read one stream
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            last_output_time = time.time()
+            STALL_TIMEOUT = 300  # 5 minutes of absolute silence = stuck or waiting for hidden prompt
+
+            try:
+                while True:
+                    line = process.stdout.readline()
+                    
+                    # If process finished and no more output, break loop
+                    if not line and process.poll() is not None:
+                        break
+                        
+                    if line:
+                        last_output_time = time.time() # Reset the watchdog timer
+                        # Optional: If you want to see live progress in your console, uncomment this:
+                        # if logger and "time=" in line: logger(line.strip())
+
+                    # Watchdog Check: Has it been 5 minutes since FFmpeg said anything?
+                    if time.time() - last_output_time > STALL_TIMEOUT:
+                        process.kill()
+                        raise TimeoutError(f"FFmpeg process stalled for {STALL_TIMEOUT} seconds.")
+
+                process.wait()
+                
+                success = process.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
+                
+                if not success:
+                    # Clean up the broken partial file
+                    if os.path.exists(output_path): os.remove(output_path)
+                    if logger: logger(f"Concat failed with return code: {process.returncode}")
+                    
+                return success
+
+            except Exception as e:
+                process.kill() # Ensure zombie process is shot
+                if os.path.exists(output_path):
+                    try: os.remove(output_path)
+                    except: pass
+                if logger: logger(f"Concat aborted: {e}")
+                return False
+                
         except Exception as e:
-            if logger:
-                logger(f"Concat failed: {e}")
+            if logger: logger(f"Concat setup failed: {e}")
             return False
             
         finally:
-            # Clean up the temp files
+            # Clean up the temp text files
             if os.path.exists(concat_txt_path):
                 try: os.remove(concat_txt_path)
                 except: pass
