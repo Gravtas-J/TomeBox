@@ -2087,12 +2087,19 @@ class AAXManagerApp:
         
         if result == "NEXT_CHAPTER":
             self.next_chapter()
-        elif result == "RESTART_PLAYBACK":
+            return # next_chapter handles playback and UI resumption natively
+            
+        # Keep local UI state completely synced in case the controller crossed a chapter boundary
+        self.current_chapter_idx = self.playback.current_chapter_idx
+        self.current_play_time = self.playback.current_play_time
+        self.chapter_duration = self.playback.chapter_duration
+        
+        # Update the Title/Info label in case the chapter changed
+        self.update_info() 
+        
+        if result == "RESTART_PLAYBACK":
             self.resume_playback()
             
-        # Keep local UI state synced
-        self.current_play_time = self.playback.current_play_time
-        
         # If paused, update the UI visually (if playing, the background tick will handle it)
         if self.is_paused:
             curr_str = self.format_time(self.current_play_time)
