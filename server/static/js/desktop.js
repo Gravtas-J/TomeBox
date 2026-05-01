@@ -970,10 +970,42 @@ window.importFolder = async function() {
     }
 };
 
+window.cancelImport = async function() {
+    // Instantly hide the button so it can't be spam-clicked
+    const cancelBtn = document.getElementById('btn-cancel-import');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+
+    try {
+        await fetch('/api/library/import', { method: 'DELETE' });
+        const statusEl = document.getElementById('library-status');
+        
+        if (statusEl) {
+            statusEl.className = 'library-status error';
+            statusEl.textContent = 'Cancelling active task...';
+            
+            // Clear the text and reset styling after 3 seconds
+            setTimeout(() => {
+                // Only wipe it if the user hasn't already started a new import
+                if (statusEl.textContent === 'Cancelling active task...') {
+                    statusEl.textContent = '';
+                    statusEl.classList.remove('error');
+                }
+            }, 3000);
+        }
+    } catch (error) {
+        console.error('Failed to cancel:', error);
+    }
+};
+
 async function processImport(path) {
     const statusEl = document.getElementById('library-status');
+    const cancelBtn = document.getElementById('btn-cancel-import');
+    
     statusEl.className = 'library-status'; 
     statusEl.textContent = 'Initializing import...';
+    
+    // Show the cancel button when the task starts
+    if (cancelBtn) cancelBtn.style.display = 'inline-block';
 
     try {
         // 1. Fire the import request (Python will reply instantly while it works in the background)
@@ -999,11 +1031,14 @@ async function processImport(path) {
                         // Update the UI with the live text from Python
                         statusEl.textContent = data.task;
                     } else {
-                        // The backend cleared the status string, meaning it finished!
+                        // The backend cleared the status string, meaning it finished (or cancelled)!
                         clearInterval(pollInterval);
                         
-                        statusEl.textContent = 'Import successful!';
+                        statusEl.textContent = 'Task completed.';
                         statusEl.classList.add('success');
+                        
+                        // Hide the cancel button
+                        if (cancelBtn) cancelBtn.style.display = 'none';
                         
                         if (typeof loadLibrary === 'function') await loadLibrary();
                         window.location.hash = '#/library';
@@ -1011,6 +1046,7 @@ async function processImport(path) {
                         setTimeout(() => {
                             statusEl.textContent = '';
                             statusEl.classList.remove('success');
+                            statusEl.classList.remove('error');
                         }, 3000);
                     }
                 }
@@ -1020,5 +1056,7 @@ async function processImport(path) {
     } catch (error) {
         statusEl.textContent = `Error: ${error.message}`;
         statusEl.classList.add('error');
+        // Hide the cancel button on error
+        if (cancelBtn) cancelBtn.style.display = 'none';
     }
 }
