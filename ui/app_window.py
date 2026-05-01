@@ -493,12 +493,25 @@ class AAXManagerApp:
             on_error_cb=on_error
         )
     def on_file_drop(self, event):
+        from tkinter import messagebox
+        import os
+        
         # 1. Parse the dropped string using our robust regex parser
         dropped_paths = parse_dnd_paths(event.data)
 
         if not dropped_paths:
             self.dl_status_var.set("No valid paths found.")
             return
+
+        # NEW: Consent Warning for dragged folders
+        has_folders = any(os.path.isdir(p) for p in dropped_paths)
+        if has_folders:
+            if not messagebox.askyesno(
+                "Auto-Merge Warning",
+                "You are importing folders. If multiple audio files belonging to the same book are found, TomeBox will automatically merge them into a new .m4b file on your hard drive.\n\nDo you wish to proceed?"
+            ):
+                self.dl_status_var.set("Import cancelled.")
+                return
 
         self.dl_status_var.set("Processing dropped items...")
 
@@ -547,7 +560,11 @@ class AAXManagerApp:
         folder = filedialog.askdirectory(title="Select Folder Containing Audiobooks")
         if not folder:
             return
-        
+        if not messagebox.askyesno(
+            "Auto-Merge Warning",
+            "TomeBox will now scan this folder.\n\nIf multiple audio files belonging to the same audiobook are found, they will be automatically merged into a new, single .m4b file on your hard drive.\n\nDo you wish to proceed?"
+        ):
+            return
         self.dl_status_var.set("Scanning folder...")
         
         def on_status(msg):

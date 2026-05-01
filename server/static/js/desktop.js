@@ -957,13 +957,19 @@ window.addLocalFile = async function() {
 
 window.importFolder = async function() {
     try {
-        // Reusing the endpoint we built earlier for the download directory
         const response = await fetch('/api/system/browse-directory');
         if (!response.ok) throw new Error('Failed to open folder dialog');
         
         const data = await response.json();
         if (data.path) {
-            await processImport(data.path);
+            // NEW: Consent Warning
+            const proceed = confirm(
+                "Auto-Merge Warning:\n\nTomeBox will scan this folder. If multiple audio files belonging to the same book are found, they will be automatically merged into a new .m4b file on your hard drive.\n\nDo you wish to continue?"
+            );
+            
+            if (proceed) {
+                await processImport(data.path);
+            }
         }
     } catch (error) {
         console.error("Browse folder error:", error);
