@@ -7,7 +7,7 @@ try:
     import audible
 except ImportError:
     pass
-
+import queue
 import re
 
 try:
@@ -110,6 +110,11 @@ class LibraryManager:
         
         self.current_status = ""
 
+        # Import Queue Setup
+        self.import_queue = queue.Queue()
+        self._is_importing = False
+        threading.Thread(target=self._import_worker_loop, daemon=True).start()
+
         # Core State
         self.local_library = {}
         self.cloud_items = []
@@ -120,6 +125,19 @@ class LibraryManager:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.load_state()
 
+    def _import_worker_loop(self):
+        """Background daemon that processes imports sequentially to prevent crashing."""
+        while True:
+            task_func = self.import_queue.get()
+            self._is_importing = True
+            try:
+                task_func()
+            except Exception as e:
+                print(f"Import Queue Error: {e}")
+            finally:
+                self._is_importing = False
+                self.import_queue.task_done()
+                
     def load_state(self):
         """Bootstraps the library from the database and disk caches."""
         self.local_library = self.db.load_local_db()
@@ -271,6 +289,12 @@ class LibraryManager:
         self.db.save_settings(settings)
 
     def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+        if self._is_importing or not self.import_queue.empty():
+            self.current_status = f"Queued {len(file_paths)} files for import..."
+            if on_status_cb: on_status_cb(self.current_status)
+        else:
+            self.current_status = "Initializing import..."
+            if on_status_cb: on_status_cb(self.current_status)
         """Processes an array of files, extracts metadata, and adds them to the library database."""
         self.current_status = "Initializing import..."
         def worker():
@@ -404,7 +428,7 @@ class LibraryManager:
                 on_complete_cb(added_count, len(file_paths))
 
         # Run it in the background so a 50-file drag-and-drop doesn't freeze the app
-        threading.Thread(target=worker, daemon=True).start()
+        self.import_queue.put(worker)
 
     def save_playback_state(self, state_dict, active_profile):
         """Writes playback progress to the local database."""
@@ -507,7 +531,12 @@ class LibraryManager:
             time.sleep(2)
 
     def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
-        self.current_status = "Initializing import..."
+        if self._is_importing or not self.import_queue.empty():
+            self.current_status = f"Queued folder for import: {os.path.basename(folder_path)}"
+            if on_status_cb: on_status_cb(self.current_status)
+        else:
+            self.current_status = "Initializing import..."
+            if on_status_cb: on_status_cb(self.current_status)
         def worker():
             import re
             
@@ -729,4 +758,4 @@ class LibraryManager:
             if on_complete_cb:
                 on_complete_cb(added_count)
         
-        threading.Thread(target=worker, daemon=True).start()
+        self.import_queue.put(worker)
