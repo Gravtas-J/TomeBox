@@ -36,11 +36,10 @@ class AudioConverter:
         self.current_process = None
         self.is_cancelled = False
 
-    def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None):
+    def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None, progress_cb=None):
         import tempfile
         import os
         import subprocess
-        import time
 
         if not file_paths:
             return False
@@ -49,6 +48,9 @@ class AudioConverter:
 
         fd_concat, concat_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
         fd_meta, metadata_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
+        
+        # NEW: The temporary output path for safe cleanup
+        temp_out_path = f"{output_path}.tmp.m4b"
 
         try:
             with os.fdopen(fd_concat, 'w', encoding='utf-8') as f_concat:
@@ -59,6 +61,7 @@ class AudioConverter:
             first_artist = "Unknown Author"
             first_album = title
             first_series = ""
+            total_duration_sec = 0  
             
             try:
                 first_data = self.get_metadata_and_chapters(file_paths[0])
@@ -91,6 +94,7 @@ class AudioConverter:
                         duration_sec = 0
 
                     if duration_sec > 0:
+                        total_duration_sec += duration_sec
                         duration_ms = int(duration_sec * 1000)
                         end_ms = current_start_ms + duration_ms
                         chap_title = os.path.splitext(os.path.basename(path))[0]
@@ -105,34 +109,29 @@ class AudioConverter:
 
             cmd = [
                 "ffmpeg", "-y",
-                "-fflags", "+genpts",        # FIX: Rebuild clean timestamps
+                "-fflags", "+genpts",
                 "-f", "concat",
                 "-safe", "0",
-                "-i", concat_txt_path,       # Input 0: The audio files
-                "-i", metadata_txt_path,     # Input 1: The chapters/author data
-                "-i", file_paths[0],         # Input 2: The first file again to steal cover art
+                "-i", concat_txt_path,
+                "-i", metadata_txt_path,
+                "-i", file_paths[0],
                 "-map", "0:a",
-                "-map", "2:v?",              # RESTORED: Take the cover image
+                "-map", "2:v?",
                 "-map_metadata", "1",
                 "-c:v", "copy",
                 "-disposition:v", "attached_pic"
             ]
 
             if needs_reencode:
-                cmd.extend([
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-ac", "2",
-                    "-ar", "44100"
-                ])
+                cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100"])
             else:
                 cmd.extend(["-c:a", "copy"])
                 
-            cmd.extend(["-movflags", "+faststart+use_metadata_tags"]) 
-            cmd.append(output_path)
+            # NEW: Pipe progress output to the safe temporary file
+            cmd.extend(["-movflags", "+faststart+use_metadata_tags", "-progress", "pipe:1", temp_out_path]) 
 
-            # Watchdog loop to prevent buffer deadlock
-            process = subprocess.Popen(
+            self.is_cancelled = False
+            self.current_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -142,37 +141,54 @@ class AudioConverter:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
 
-            last_output_time = time.time()
-            STALL_TIMEOUT = 300
+            last_percent = -1
+            for line in self.current_process.stdout:
+                if getattr(self, 'is_cancelled', False):
+                    self.current_process.terminate()
+                    break 
 
-            try:
-                while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    if line:
-                        last_output_time = time.time()
-                    if time.time() - last_output_time > STALL_TIMEOUT:
-                        process.kill()
-                        raise TimeoutError("FFmpeg process stalled.")
+                line = line.strip()
+                if line.startswith("out_time_us=") and total_duration_sec > 0:
+                    try:
+                        val = line.split("=")[1]
+                        if val != "N/A":
+                            out_time_us = int(val)
+                            if out_time_us > 0:
+                                current_time_sec = out_time_us / 1000000.0
+                                percent = int((current_time_sec / total_duration_sec) * 100)
+                                if percent > last_percent and percent <= 100:
+                                    if progress_cb: progress_cb(percent)
+                                    last_percent = percent
+                    except ValueError:
+                        pass
 
-                process.wait()
-                success = process.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
-                
-                if not success:
-                    if os.path.exists(output_path): os.remove(output_path)
-                return success
-
-            except Exception as e:
-                process.kill()
-                if os.path.exists(output_path):
-                    try: os.remove(output_path)
-                    except: pass
-                if logger: logger(f"Concat aborted: {e}")
+            self.current_process.wait()
+            
+            # --- CANCELLATION & CLEANUP LOGIC ---
+            if getattr(self, 'is_cancelled', False):
+                if os.path.exists(temp_out_path): 
+                    os.remove(temp_out_path)
                 return False
                 
+            success = self.current_process.returncode == 0 and os.path.exists(temp_out_path) and os.path.getsize(temp_out_path) > 0
+            
+            if success:
+                # Rename the successful temp file to the final intended name
+                os.replace(temp_out_path, output_path)
+                return True
+            else:
+                # Nuke the broken file if FFmpeg errored out naturally
+                if os.path.exists(temp_out_path): 
+                    os.remove(temp_out_path)
+                return False
+
         except Exception as e:
-            if logger: logger(f"Concat setup failed: {e}")
+            if getattr(self, 'current_process', None):
+                self.current_process.kill()
+            if os.path.exists(temp_out_path):
+                try: os.remove(temp_out_path)
+                except: pass
+            if logger: logger(f"Concat aborted: {e}")
             return False
             
         finally:
@@ -182,6 +198,8 @@ class AudioConverter:
             if os.path.exists(metadata_txt_path):
                 try: os.remove(metadata_txt_path)
                 except: pass
+            self.current_process = None
+
     def cancel(self):
         self.is_cancelled = True
         if self.current_process:
@@ -320,8 +338,19 @@ class AudioConverter:
             self.current_process = None
 
     def split_into_chapters(self, input_path, target_dir, chapters, drm_flags, progress_cb=None):
+        import subprocess
+        import time
+        from core.utils.process_runner import ProcessRunner
         total_chaps = len(chapters)
+        self.is_cancelled = False 
+        
+        created_files = [] 
+        
         for idx, chapter in enumerate(chapters):
+            if getattr(self, 'is_cancelled', False):
+                self._cleanup_split_files(created_files, target_dir)
+                raise Exception("Chapter splitting cancelled by user.")
+                
             if progress_cb:
                 progress_cb(((idx + 1) / total_chaps) * 100)
                 
@@ -330,6 +359,9 @@ class AudioConverter:
             
             out_name = f"{idx + 1:03d} - {safe_chap_title}.m4b"
             out_path = os.path.join(target_dir, out_name)
+            
+            # FIX: Use a valid extension so FFmpeg muxes correctly
+            temp_out_path = f"{out_path}.tmp.m4b"
 
             start = chapter.get("start_time", 0)
             end = chapter.get("end_time", 0)
@@ -337,7 +369,41 @@ class AudioConverter:
             cmd = ["ffmpeg", "-y"]
             if drm_flags:
                 cmd.extend(drm_flags)
-            cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", out_path])
+            cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", temp_out_path])
             
-            ProcessRunner.run_blocking(cmd, check=True)
+            try:
+                self.current_process = ProcessRunner.run_async(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Active polling loop to ensure instant cancellation
+                while self.current_process.poll() is None:
+                    if getattr(self, 'is_cancelled', False):
+                        self.current_process.terminate()
+                        break
+                    time.sleep(0.5)
+            except Exception:
+                pass
+            finally:
+                self.current_process = None
+                
+            if getattr(self, 'is_cancelled', False):
+                if os.path.exists(temp_out_path):
+                    try: os.remove(temp_out_path)
+                    except OSError: pass
+                self._cleanup_split_files(created_files, target_dir)
+                raise Exception("Chapter splitting cancelled by user.")
+                
+            if os.path.exists(temp_out_path):
+                os.replace(temp_out_path, out_path)
+                created_files.append(out_path)
+                
         return True
+
+    def _cleanup_split_files(self, created_files, target_dir):
+        """Helper to nuke all generated chapter files if the user aborts."""
+        import os
+        for f in created_files:
+            if os.path.exists(f):
+                try: os.remove(f)
+                except OSError: pass
+        try: os.rmdir(target_dir)
+        except OSError: pass

@@ -820,6 +820,13 @@ def create_server_app(tomebox):
             return {"status": "success", "message": "Import started in background"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+        
+    @api.delete("/api/library/import")
+    def cancel_import_web():
+        tomebox.converter.cancel()
+        tomebox.library_manager.cancel_import()
+        return {"status": "cancelled"}
+    
     @api.post("/api/library/match")
     async def match_local_file(request: Request):
         data = await request.json()

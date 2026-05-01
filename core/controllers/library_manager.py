@@ -107,7 +107,7 @@ class LibraryManager:
         self.api = api_client
         self.base_dir = base_dir
         self.covers_dir = os.path.join(base_dir, "covers")
-        
+        self.cancel_requested = False
         self.current_status = ""
 
         # Import Queue Setup
@@ -124,6 +124,9 @@ class LibraryManager:
         self.active_profile = self.db.load_settings().get("active_profile", "Main")
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.load_state()
+
+    def cancel_import(self):
+        self.cancel_requested = True
 
     def _import_worker_loop(self):
         """Background daemon that processes imports sequentially to prevent crashing."""
@@ -296,9 +299,8 @@ class LibraryManager:
             self.current_status = "Initializing import..."
             if on_status_cb: on_status_cb(self.current_status)
         """Processes an array of files, extracts metadata, and adds them to the library database."""
-        self.current_status = "Initializing import..."
         def worker():
-            # Helper to update both the desktop UI and the Web UI simultaneously
+            self.cancel_requested = False
             def update_status(msg):
                 self.current_status = msg
                 if on_status_cb: on_status_cb(msg)
@@ -530,7 +532,7 @@ class LibraryManager:
                 
             time.sleep(2)
 
-    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None):
         if self._is_importing or not self.import_queue.empty():
             self.current_status = f"Queued folder for import: {os.path.basename(folder_path)}"
             if on_status_cb: on_status_cb(self.current_status)
@@ -600,6 +602,8 @@ class LibraryManager:
                     
                 # Process each identified album group
                 for album_name, group_files in album_groups.items():
+                    if self.cancel_requested: break
+
                     if album_name == "AAX_NO_MERGE" or len(group_files) == 1:
                         file_paths.extend(group_files)
                     else:
@@ -616,13 +620,20 @@ class LibraryManager:
                             group_files.sort(key=natural_sort_key)
                             success = converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger)
                             
+                            success = converter.concat_to_m4b(
+                                group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb
+                            )
+
                             if success:
                                 file_paths.append(out_m4b)
                             else:
                                 file_paths.extend(group_files)
                         else:
                             file_paths.append(out_m4b)
-
+            if self.cancel_requested:
+                update_status("Import cancelled.")
+                if on_complete_cb: on_complete_cb(0, 0)
+                return
             if not file_paths:
                 if logger: logger(f"No audio files found in {folder_path}")
                 if on_complete_cb: on_complete_cb(0, 0)

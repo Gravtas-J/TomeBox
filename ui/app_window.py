@@ -512,7 +512,8 @@ class AAXManagerApp:
                     active_profile=self.active_profile,
                     on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                     on_complete_cb=self._on_import_complete,
-                    logger=self.logger
+                    logger=self.logger,
+                    on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
                 )
             elif os.path.isfile(path):
                 # Standalone files go to the standard import_files
@@ -522,7 +523,8 @@ class AAXManagerApp:
                     active_profile=self.active_profile,
                     on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                     on_complete_cb=self._on_import_complete,
-                    logger=self.logger
+                    logger=self.logger,
+                    on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
                 )
 
 
@@ -2081,6 +2083,21 @@ class AAXManagerApp:
         self.is_paused = False
         self.current_play_time = self.playback.current_play_time
         self.save_playback_state()
+
+    def cancel_active_task(self):
+        """Cancels active imports or conversions."""
+        self.converter.cancel()
+        self.library_manager.cancel_import()
+        
+        # Initial state
+        self.dl_status_var.set("Cancelling active task...")
+        self.dl_progress_var.set(0)
+        
+        # Schedule "All tasks cancelled" after 2 seconds (2000 ms)
+        self.root.after(2000, lambda: self.dl_status_var.set("All tasks cancelled."))
+        
+        # Schedule "Idle" 3 seconds after that (Total 5000 ms from now)
+        self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def seek_audio(self, offset):
         result = self.playback.seek(offset)
