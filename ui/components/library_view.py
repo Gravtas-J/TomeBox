@@ -220,6 +220,10 @@ def setup_library_view(app, parent):
     # The new Cancel Task button
     ttk.Button(status_frame, text="Cancel Task", command=app.cancel_active_task).pack(side=tk.RIGHT)
     
+    app.error_btn_var = tk.StringVar(value="Errors (0)")
+    app.error_btn = ttk.Button(status_frame, textvariable=app.error_btn_var, command=app.open_error_log, state=tk.DISABLED)
+    app.error_btn.pack(side=tk.RIGHT, padx=5)
+    
     ttk.Progressbar(dl_prog_frame, variable=app.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
 
     app.refresh_library_ui()

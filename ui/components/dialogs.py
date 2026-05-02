@@ -5,6 +5,78 @@ import qrcode
 from PIL import Image, ImageTk
 import os
 
+def open_error_log_window(app):
+    """Opens the Error Log popup window."""
+    if not app.failed_tasks: return
+    
+    win = tk.Toplevel(app.root)
+    win.title("Error Log & Recovery")
+    win.geometry("800x400")
+    win.transient(app.root)
+    
+    # Apply theme background
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#1e1e1e"
+    win.configure(bg=bg_color)
+    
+    tree_frame = ttk.Frame(win)
+    tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    tree = ttk.Treeview(tree_frame, columns=("File", "Action", "Error"), show="headings")
+    tree.heading("File", text="File")
+    tree.heading("Action", text="Action")
+    tree.heading("Error", text="Error Reason")
+    tree.column("File", width=250, stretch=tk.NO)
+    tree.column("Action", width=100, stretch=tk.NO)
+    tree.column("Error", width=400, stretch=tk.YES)
+    
+    v_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=v_scroll.set)
+    
+    tree.pack(side=tk.LEFT, fill="both", expand=True)
+    v_scroll.pack(side=tk.RIGHT, fill="y")
+    
+    # Populate the list using the app's failed_tasks array
+    for idx, task in enumerate(app.failed_tasks):
+        filename = os.path.basename(task["path"])
+        tree.insert("", "end", iid=str(idx), values=(filename, task["action"], task["error"]))
+        
+    btn_frame = ttk.Frame(win)
+    btn_frame.pack(fill="x", padx=10, pady=(0, 10))
+    
+    def retry_selected():
+        selected = tree.selection()
+        if not selected: return
+        
+        paths_to_retry = []
+        
+        # Remove from list in reverse order so indices don't shift
+        for iid in sorted(selected, key=int, reverse=True):
+            idx = int(iid)
+            task = app.failed_tasks.pop(idx)
+            paths_to_retry.append(task["path"])
+            tree.delete(iid)
+        
+        # Update button count on the main window
+        app.error_btn_var.set(f"Errors ({len(app.failed_tasks)})")
+        if not app.failed_tasks:
+            app.error_btn.config(state=tk.DISABLED)
+            win.destroy()
+            
+        # Seamlessly push them back into the conversion queue!
+        if paths_to_retry:
+            app.conversion_manager.convert_batch(paths_to_retry)
+            
+    ttk.Button(btn_frame, text="Retry Selected", command=retry_selected).pack(side=tk.LEFT, padx=5)
+    
+    def clear_all():
+        app.failed_tasks.clear()
+        app.error_btn_var.set("Errors (0)")
+        app.error_btn.config(state=tk.DISABLED)
+        win.destroy()
+        
+    ttk.Button(btn_frame, text="Clear All", command=clear_all).pack(side=tk.RIGHT, padx=5)
+
 def open_auth_window(app):
     if getattr(app, 'auth_window', None) and app.auth_window.winfo_exists():
         app.auth_window.lift()

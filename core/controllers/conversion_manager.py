@@ -85,7 +85,7 @@ class ConversionManager:
             except Exception as e:
                 self.logger(f"Conversion Error: {e}")
                 if self.on_error:
-                    self.on_error(f"Conversion Failed: {str(e)}")
+                    self.on_error(input_path, "Convert", str(e))
             finally:
                 if self.on_status:
                     self.on_status(f"Ready: {os.path.basename(input_path)}")
@@ -118,7 +118,7 @@ class ConversionManager:
             except Exception as e:
                 self.logger(f"Split Error: {e}")
                 if self.on_error:
-                    self.on_error(f"Split Failed: {str(e)}")
+                    self.on_error(input_path, "Split", str(e))
             finally:
                 if self.on_status:
                     self.on_status(f"Ready: {os.path.basename(input_path)}")

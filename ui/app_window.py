@@ -28,7 +28,7 @@ import sys
 import socket
 from api.audible_client import AudibleClient
 
-from ui.components.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window
+from ui.components.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window, open_error_log_window
 from ui.components.theme import apply_theme
 from ui.components.menu_bar import setup_menu_bar
 from ui.components.player_bar import setup_player_bar
@@ -166,7 +166,7 @@ class AAXManagerApp:
                 "on_status": lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                 "on_progress": lambda pct: self.root.after(0, self.dl_progress_var.set, pct),
                 "on_complete": lambda msg: self.root.after(0, lambda: messagebox.showinfo("Conversion Success", msg)),
-                "on_error": lambda msg: self.root.after(0, lambda: messagebox.showerror("Error", msg)),
+                "on_error": self._on_task_error, 
                 "on_refresh_required": lambda: self.root.after(0, self.refresh_library_ui)
             }
         )
@@ -296,6 +296,27 @@ class AAXManagerApp:
             
         self.root.after(0, update)
         
+    def _on_task_error(self, filepath, action_type, error_msg):
+        """Catches errors from background threads and pushes them to the log."""
+        def update():
+            self.failed_tasks.append({
+                "path": filepath, 
+                "action": action_type, 
+                "error": error_msg
+            })
+            
+            # Wake up the Error button
+            self.error_btn_var.set(f"Errors ({len(self.failed_tasks)})")
+            self.error_btn.config(state=tk.NORMAL)
+            
+            # Bounce the status text momentarily so they notice
+            self.dl_status_var.set(f"Task failed: {os.path.basename(filepath)}")
+            self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
+        self.root.after(0, update)
+
+    def open_error_log(self):
+        """Bridge method to open the Error Log popup from dialogs.py"""
+        open_error_log_window(self)
 
     def ensure_download_folder(self):
         """
