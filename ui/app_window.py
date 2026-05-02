@@ -310,7 +310,8 @@ class AAXManagerApp:
                         file_paths=[path], converter=self.converter, active_profile=self.active_profile,
                         on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                         on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                        logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                        logger=self.logger
+                        # Removed on_progress_cb here too!
                     )
         else:
             self.system_manager.clear_all_pending_imports(self.db.data_dir)
@@ -616,7 +617,8 @@ class AAXManagerApp:
                     file_paths=[path], converter=self.converter, active_profile=self.active_profile,
                     on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
                     on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    logger=self.logger
+                    # Removed on_progress_cb here since import_files doesn't support it!
                 )
 
 
