@@ -166,6 +166,9 @@ def setup_library_view(app, parent):
     app.root.bind_all("<Button-5>", app._on_grid_scroll)    
     app.root.bind_all("<Button-3>", app.show_context_menu)
 
+    app.root.bind_all("<Button-2>", app.show_context_menu)         
+    app.root.bind_all("<Control-Button-1>", app.show_context_menu)
+
     app.empty_state_frame = tk.Frame(tree_frame)
     app.empty_state_img_label = ttk.Label(app.empty_state_frame)
     app.empty_state_img_label.pack(pady=(80, 20))

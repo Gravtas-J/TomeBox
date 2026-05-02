@@ -958,6 +958,16 @@ body.desktop .book-card.cloud-only:hover {
     margin-bottom: 0;
 }
 
+#view-library {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+}
 
+#search-box {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    user-select: text;
+}
 
 

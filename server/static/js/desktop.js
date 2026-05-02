@@ -555,6 +555,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function attachContextMenu(cardElement, itemData) {
     cardElement.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         currentContextItem = itemData;
         
         const menu = document.getElementById('context-menu');
