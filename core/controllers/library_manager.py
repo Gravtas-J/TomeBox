@@ -113,6 +113,8 @@ class LibraryManager:
         # Import Queue Setup
         self.import_queue = queue.Queue()
         self._is_importing = False
+        self.on_queue_empty_cb = None
+
         threading.Thread(target=self._import_worker_loop, daemon=True).start()
 
         # Core State
@@ -140,6 +142,11 @@ class LibraryManager:
             finally:
                 self._is_importing = False
                 self.import_queue.task_done()
+
+                if self.import_queue.empty():
+                    self.current_status = ""
+                    if self.on_queue_empty_cb:
+                        self.on_queue_empty_cb()
                 
     def load_state(self):
         """Bootstraps the library from the database and disk caches."""

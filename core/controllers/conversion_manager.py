@@ -110,22 +110,10 @@ class ConversionManager:
                     drm_flags=drm_flags, progress_cb=self.on_progress
                 )
                 
-                # Delete the original file after split
-                if os.path.exists(input_path):
-                    try:
-                        os.remove(input_path)
-                    except OSError:
-                        pass
-                        
-                if input_path in self.library_manager.local_library:
-                    del self.library_manager.local_library[input_path]
-                    
-                self.library_manager.db.save_local_db(self.library_manager.local_library)
+                # Removed the os.remove(input_path) logic to keep the master file intact
 
                 if self.on_complete:
-                    self.on_complete(f"Audiobook split into {len(chapters)} files.\n\nSaved to:\n{target_dir}\n\nOriginal file deleted.")
-                if self.on_refresh_required:
-                    self.on_refresh_required()
+                    self.on_complete(f"Audiobook split into {len(chapters)} files.\n\nSaved to:\n{target_dir}\n\nOriginal file preserved.")
                 
             except Exception as e:
                 self.logger(f"Split Error: {e}")

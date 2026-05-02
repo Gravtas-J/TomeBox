@@ -64,43 +64,69 @@ class SystemManager:
         except Exception as e:
             self.logger(f"Failed to toggle sleep state: {e}")
 
-    def cleanup_orphaned_files(self, save_dir):
-        """Deletes partial downloads or 0-byte corrupted files on startup."""
-        if not save_dir or not os.path.exists(save_dir):
+    def cleanup_orphaned_files(self, download_dir, library_paths=None):
+        """Deletes partial downloads, cancelled conversions, or 0-byte corrupted files on startup."""
+        import os
+        directories_to_scan = set()
+
+        # 1. Target the main download directory
+        if download_dir and os.path.exists(download_dir):
+            directories_to_scan.add(download_dir)
+
+        # 2. Target parent folders of existing library items
+        if library_paths:
+            for path in library_paths:
+                parent = os.path.dirname(path)
+                if os.path.exists(parent):
+                    directories_to_scan.add(parent)
+
+        if not directories_to_scan:
             return
 
-        self.logger("Running startup scan for orphaned/partial files...")
+        if getattr(self, 'logger', None):
+            self.logger("Running startup scan for orphaned/partial files...")
+            
         cleaned_count = 0
 
         try:
-            for filename in os.listdir(save_dir):
-                filepath = os.path.join(save_dir, filename)
-                if not os.path.isfile(filepath):
-                    continue
+            for directory in directories_to_scan:
+                try:
+                    for filename in os.listdir(directory):
+                        filepath = os.path.join(directory, filename)
+                        if not os.path.isfile(filepath):
+                            continue
 
-                if filename.endswith(".part") or "_temp." in filename:
-                    try:
-                        os.remove(filepath)
-                        self.logger(f"Deleted partial file: {filename}")
-                        cleaned_count += 1
-                    except OSError:
-                        pass
-                    continue
+                        # Clean up cancelled FFmpeg conversions (.tmp.m4b) and interrupted downloads (.part)
+                        if filename.endswith(".part") or "_temp." in filename or filename.endswith(".tmp.m4b"):
+                            try:
+                                os.remove(filepath)
+                                if getattr(self, 'logger', None):
+                                    self.logger(f"Deleted partial/temp file: {filename}")
+                                cleaned_count += 1
+                            except OSError:
+                                pass
+                            continue
 
-                if filename.lower().endswith(('.aax', '.aaxc', '.m4b', '.mp3')):
-                    try:
-                        if os.path.getsize(filepath) == 0:
-                            os.remove(filepath)
-                            self.logger(f"Deleted empty 0-byte file: {filename}")
-                            cleaned_count += 1
-                    except OSError:
-                        pass
+                        # Clean up 0-byte corrupted audio files
+                        if filename.lower().endswith(('.aax', '.aaxc', '.m4b', '.mp3')):
+                            try:
+                                if os.path.getsize(filepath) == 0:
+                                    os.remove(filepath)
+                                    if getattr(self, 'logger', None):
+                                        self.logger(f"Deleted empty 0-byte file: {filename}")
+                                    cleaned_count += 1
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
 
-            if cleaned_count > 0:
+            if cleaned_count > 0 and getattr(self, 'logger', None):
                 self.logger(f"Cleanup complete. Removed {cleaned_count} orphaned files.")
+                
         except Exception as e:
-            self.logger(f"Failed to run orphaned file cleanup: {e}")
-
+            if getattr(self, 'logger', None):
+                self.logger(f"Failed to run orphaned file cleanup: {e}")
+                
     def get_local_ip(self):
         try:
             # We don't actually send any data, just routing the packet reveals the true interface

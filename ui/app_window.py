@@ -85,10 +85,12 @@ class AAXManagerApp:
         self.api_client = AudibleClient()
         self.library_manager = LibraryManager(self.db, self.api_client, self.base_dir)
 
+        self.library_manager.on_queue_empty_cb = self._on_import_queue_empty
+
         # 2. Setup Assets (Icons are in the ui folder)
         icon_ico = get_resource_path("ui", "tomebox.ico")
         icon_png = get_resource_path("ui", "tomebox.png")
-
+    
         
         def apply_taskbar_icon():
             try:
@@ -245,7 +247,14 @@ class AAXManagerApp:
         self.setup_tray_icon()
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
-        threading.Thread(target=lambda: self.system_manager.cleanup_orphaned_files(self.settings.get("download_dir", "")), daemon=True).start()
+        dl_dir = self.settings.get("download_folder") or self.settings.get("download_dir")
+        lib_paths = list(self.library_manager.local_library.keys())
+        
+        threading.Thread(
+            target=self.system_manager.cleanup_orphaned_files, 
+            args=(dl_dir, lib_paths),
+            daemon=True
+        ).start()
         threading.Thread(
             target=self.library_manager.monitor_local_files, 
             args=(self.logger, lambda: self.root.after(0, self.refresh_library_ui)), 
@@ -270,6 +279,23 @@ class AAXManagerApp:
             "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
+
+    def _on_import_queue_empty(self):
+        """Triggered only when the entire import queue is finished."""
+        def update():
+            self.dl_status_var.set("All queued imports completed.")
+            self.root.bell()  # Plays the native Windows/Mac system chime!
+            
+            # Helper to reset both text and the progress bar
+            def reset_ui():
+                self.dl_status_var.set("Idle")
+                self.dl_progress_var.set(0)
+                
+            # Reset to Idle and empty the bar after 3 seconds
+            self.root.after(3000, reset_ui)
+            
+        self.root.after(0, update)
+        
 
     def ensure_download_folder(self):
         """
@@ -461,7 +487,6 @@ class AAXManagerApp:
             else:
                 self.dl_status_var.set("No valid audiobooks found to import.")
                 
-            self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
         self.root.after(0, update)
 
     def toggle_web_server(self):
