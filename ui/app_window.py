@@ -279,7 +279,46 @@ class AAXManagerApp:
             "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
+        self.root.after(1500, self._prompt_resume_imports)
 
+    def _prompt_resume_imports(self):
+        pending = self.system_manager.load_pending_imports(self.db.data_dir)
+        import os
+        valid_pending = [p for p in pending if os.path.exists(p["path"])]
+        
+        if not valid_pending:
+            if pending: 
+                self.system_manager.clear_all_pending_imports(self.db.data_dir)
+            return
+
+        if messagebox.askyesno("Interrupted Imports Found", 
+                               f"TomeBox recovered {len(valid_pending)} interrupted import tasks from a previous session.\n\n"
+                               "Would you like to resume importing them now?"):
+            self.dl_status_var.set("Resuming interrupted imports...")
+            for task in valid_pending:
+                path = task["path"]
+                is_folder = task["is_folder"]
+                if is_folder:
+                    self.library_manager.import_folder(
+                        folder_path=path, converter=self.converter, active_profile=self.active_profile,
+                        on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                        on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                        logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    )
+                else:
+                    self.library_manager.import_files(
+                        file_paths=[path], converter=self.converter, active_profile=self.active_profile,
+                        on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                        on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                        logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    )
+        else:
+            self.system_manager.clear_all_pending_imports(self.db.data_dir)
+
+    def _on_import_finished(self, path, added_count, total_found=0):
+        self.system_manager.remove_pending_import(self.db.data_dir, path)
+        self._on_import_complete(added_count, total_found)
+        
     def _on_import_queue_empty(self):
         """Triggered only when the entire import queue is finished."""
         def update():
@@ -560,30 +599,24 @@ class AAXManagerApp:
                 return
 
         self.dl_status_var.set("Processing dropped items...")
-
         # 2. Route the paths to the correct importer
         for path in dropped_paths:
-            if os.path.isdir(path):
-                # Folders go to import_folder so they get the MP3 blobbing treatment
+            is_folder = os.path.isdir(path)
+            self.system_manager.add_pending_import(self.db.data_dir, path, is_folder)
+            
+            if is_folder:
                 self.library_manager.import_folder(
-                    folder_path=path,
-                    converter=self.converter,
-                    active_profile=self.active_profile,
+                    folder_path=path, converter=self.converter, active_profile=self.active_profile,
                     on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-                    on_complete_cb=self._on_import_complete,
-                    logger=self.logger,
-                    on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
                 )
             elif os.path.isfile(path):
-                # Standalone files go to the standard import_files
                 self.library_manager.import_files(
-                    file_paths=[path],
-                    converter=self.converter,
-                    active_profile=self.active_profile,
+                    file_paths=[path], converter=self.converter, active_profile=self.active_profile,
                     on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-                    on_complete_cb=self._on_import_complete,
-                    logger=self.logger,
-                    on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
                 )
 
 
@@ -591,16 +624,16 @@ class AAXManagerApp:
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
         if not filepath: return
         
-        # Pass it as a single-item list to utilize the same batch manager
+        self.system_manager.add_pending_import(self.db.data_dir, filepath, False)
+        
         self.library_manager.import_files(
-            file_paths=[filepath],
-            converter=self.converter,
-            active_profile=self.active_profile,
+            file_paths=[filepath], converter=self.converter, active_profile=self.active_profile,
             on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-            on_complete_cb=self._on_import_complete,
+            on_complete_cb=lambda c, t=0, p=filepath: self._on_import_finished(p, c, t),
             logger=self.logger
         )
 
+        
     def import_folder(self):
         """Prompts the user to select a folder and recursively imports all audio files."""
         folder = filedialog.askdirectory(title="Select Folder Containing Audiobooks")
@@ -612,41 +645,27 @@ class AAXManagerApp:
         ):
             return
         self.dl_status_var.set("Scanning folder...")
+        self.system_manager.add_pending_import(self.db.data_dir, folder, True)
         
         def on_status(msg):
             self.root.after(0, lambda: self.dl_status_var.set(msg))
         
         def on_complete(count, total_found=0):
+            self.system_manager.remove_pending_import(self.db.data_dir, folder)
             def update_ui():
                 self.dl_status_var.set("Idle")
                 self.refresh_library_ui()
-                
                 if count > 0:
-                    messagebox.showinfo(
-                        "Import Complete",
-                        f"Successfully imported {count} audiobook{'s' if count != 1 else ''}."
-                    )
+                    messagebox.showinfo("Import Complete", f"Successfully imported {count} audiobook{'s' if count != 1 else ''}.")
                 elif total_found > 0:
-                    messagebox.showinfo(
-                        "Import Skipped",
-                        "The selected files are already in your library."
-                    )
+                    messagebox.showinfo("Import Skipped", "The selected files are already in your library.")
                 else:
-                    messagebox.showinfo(
-                        "No Files Found",
-                        "No audio files (.aax, .aaxc, .m4b, .mp3) were found in the selected folder.\n\n"
-                        "If you expected to see files, make sure the folder contains them directly or in subfolders."
-                    )
-            
+                    messagebox.showinfo("No Files Found", "No audio files were found.")
             self.root.after(0, update_ui)
         
         self.library_manager.import_folder(
-            folder_path=folder,
-            converter=self.converter,
-            active_profile=self.active_profile,
-            on_status_cb=on_status,
-            on_complete_cb=on_complete,
-            logger=self.logger
+            folder_path=folder, converter=self.converter, active_profile=self.active_profile,
+            on_status_cb=on_status, on_complete_cb=on_complete, logger=self.logger
         )
 
     def bring_to_front(self):
@@ -2168,14 +2187,12 @@ class AAXManagerApp:
         self.converter.cancel()
         self.library_manager.cancel_import()
         
-        # Initial state
+        # Clear the persistent queue since the user intentionally aborted
+        self.system_manager.clear_all_pending_imports(self.db.data_dir)
+        
         self.dl_status_var.set("Cancelling active task...")
         self.dl_progress_var.set(0)
-        
-        # Schedule "All tasks cancelled" after 2 seconds (2000 ms)
         self.root.after(2000, lambda: self.dl_status_var.set("All tasks cancelled."))
-        
-        # Schedule "Idle" 3 seconds after that (Total 5000 ms from now)
         self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
 
     def seek_audio(self, offset):

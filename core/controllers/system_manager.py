@@ -238,3 +238,55 @@ class SystemManager:
         except Exception as e:
             self.logger(f"Disk space check failed: {e}")
             return True # Fail open so we don't accidentally block valid operations
+        
+    def get_pending_imports_file(self, data_dir):
+        import os
+        return os.path.join(data_dir, "pending_imports.json")
+
+    def add_pending_import(self, data_dir, path, is_folder):
+        import json, os
+        file_path = self.get_pending_imports_file(data_dir)
+        imports = []
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r') as f:
+                    imports = json.load(f)
+            except Exception: pass
+            
+        entry = {"path": path, "is_folder": is_folder}
+        if entry not in imports:
+            imports.append(entry)
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(imports, f)
+            except Exception: pass
+
+    def remove_pending_import(self, data_dir, path):
+        import json, os
+        file_path = self.get_pending_imports_file(data_dir)
+        if not os.path.exists(file_path): return
+        try:
+            with open(file_path, 'r') as f:
+                imports = json.load(f)
+            imports = [i for i in imports if i["path"] != path]
+            with open(file_path, 'w') as f:
+                json.dump(imports, f)
+        except Exception: pass
+
+    def load_pending_imports(self, data_dir):
+        import json, os
+        file_path = self.get_pending_imports_file(data_dir)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+            except Exception: pass
+        return []
+
+    def clear_all_pending_imports(self, data_dir):
+        import os
+        file_path = self.get_pending_imports_file(data_dir)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError: pass
