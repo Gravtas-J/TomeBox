@@ -958,16 +958,25 @@ body.desktop .book-card.cloud-only:hover {
     margin-bottom: 0;
 }
 
-#view-library {
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    user-select: none;
+#view-library * {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    user-select: none !important;
+    -webkit-touch-callout: none !important;
 }
 
-#search-box {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    user-select: text;
+#view-library .book-title,
+#view-library .book-author,
+#view-library .status-badge,
+#view-library img {
+    pointer-events: none !important;
+}
+
+#search-box, #search-box * {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    user-select: text !important;
+    pointer-events: auto !important;
 }
 
 

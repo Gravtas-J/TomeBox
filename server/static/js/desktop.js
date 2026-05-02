@@ -558,6 +558,12 @@ function attachContextMenu(cardElement, itemData) {
         e.stopPropagation();
         currentContextItem = itemData;
         
+        cardElement.addEventListener('mousedown', (e) => {
+        if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
+            window.getSelection().removeAllRanges();
+        }
+        });
+
         const menu = document.getElementById('context-menu');
         menu.style.display = 'block';
         menu.style.left = `${e.pageX}px`;
@@ -586,7 +592,36 @@ function attachContextMenu(cardElement, itemData) {
     });
 }
 
+document.addEventListener('mousedown', function(e) {
+    if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
+        window.getSelection().removeAllRanges();
+        
+        if (e.ctrlKey && e.button === 0 && e.target.closest('#view-library')) {
+            e.preventDefault();
+            
+            const card = e.target.closest('.book-card');
+            if (card) {
+                const ctxEvent = new MouseEvent('contextmenu', {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    button: 2
+                });
+                card.dispatchEvent(ctxEvent);
+            }
+        }
+    }
+}, { capture: true });
+
+document.addEventListener('contextmenu', function(e) {
+    if (e.target.closest('#view-library') || e.target.closest('#sidebar')) {
+        e.preventDefault();
+    }
+}, { capture: true });
 // Handle context menu actions
+
+
 async function ctxAction(action) {
     if (!currentContextItem) return;
     
