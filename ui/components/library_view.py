@@ -1,6 +1,53 @@
 import tkinter as tk
 from tkinter import ttk
 
+class ToolTip:
+    """Creates a hover tooltip for any Tkinter widget."""
+    def __init__(self, widget):
+        self.widget = widget
+        self.tip_window = None
+        self.id = None
+        self.text = ""
+        self.widget.bind("<Enter>", self.enter)
+        self.widget.bind("<Leave>", self.leave)
+
+    def enter(self, event=None):
+        self.schedule()
+
+    def leave(self, event=None):
+        self.unschedule()
+        self.hidetip()
+
+    def schedule(self):
+        self.unschedule()
+        self.id = self.widget.after(500, self.showtip)
+
+    def unschedule(self):
+        id_ = self.id
+        self.id = None
+        if id_:
+            self.widget.after_cancel(id_)
+
+    def showtip(self, event=None):
+        if not self.text:
+            return
+        x, y, cx, cy = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 20
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                      background="#2a2a2a", foreground="white", relief=tk.SOLID, borderwidth=1,
+                      font=("Helvetica", "9", "normal"), padx=5, pady=3)
+        label.pack(ipadx=1)
+
+    def hidetip(self):
+        tw = self.tip_window
+        self.tip_window = None
+        if tw:
+            tw.destroy()
+
 
 def setup_library_view(app, parent):
     """Builds the main library grid, list, and queue views."""
@@ -32,6 +79,14 @@ def setup_library_view(app, parent):
     queue_scroll.pack(side="right", fill="y")
 
     app.queue_ui_elements = {}
+
+    count_frame = ttk.Frame(lib_frame)
+    count_frame.pack(fill="x", pady=(0, 5))
+    
+    app.lib_count_var = tk.StringVar(value="Books found: 0")
+    count_label = ttk.Label(count_frame, textvariable=app.lib_count_var, cursor="question_arrow", font=("Segoe UI", 9, "bold"))
+    count_label.pack(side=tk.LEFT)
+    app.lib_count_tooltip = ToolTip(count_label)
 
     filter_frame = ttk.Frame(lib_frame)
     filter_frame.pack(fill="x", pady=(0, 5))

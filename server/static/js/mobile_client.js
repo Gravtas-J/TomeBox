@@ -56,6 +56,7 @@ if ('serviceWorker' in navigator) {
                         window.currentLibraryData = rawLibraryData;
                         renderGrid();
                     } catch (e) { console.error("Failed to load library", e); }
+                    if (window.updateLibraryCountDisplay) window.updateLibraryCountDisplay();
                 }
 
                 function renderGrid() {

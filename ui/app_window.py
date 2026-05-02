@@ -1235,6 +1235,22 @@ class AAXManagerApp:
                 self.h_scroll.grid_remove()
                 self.grid_canvas.grid(row=0, column=0, sticky="nsew")
                 self.draw_grid_view()
+        total_books = len(self.library_manager.local_library)
+        formats = {}
+        
+        for path, data in self.library_manager.local_library.items():
+            fmt = data.get("format", "UNKNOWN").upper()
+            formats[fmt] = formats.get(fmt, 0) + 1
+            
+        self.lib_count_var.set(f"Books found: {total_books}")
+        
+        if formats:
+            tooltip_text = "\n".join([f"{f}: {c}" for f, c in sorted(formats.items())])
+        else:
+            tooltip_text = "Library is empty."
+            
+        if hasattr(self, 'lib_count_tooltip'):
+            self.lib_count_tooltip.text = tooltip_text
 
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":

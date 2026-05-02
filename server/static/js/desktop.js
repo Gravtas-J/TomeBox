@@ -1066,3 +1066,32 @@ async function processImport(path) {
         if (cancelBtn) cancelBtn.style.display = 'none';
     }
 }
+
+window.updateLibraryCountDisplay = function() {
+    const displayEl = document.getElementById('library-count-display');
+    if (!displayEl || !window.currentLibraryData) return;
+
+    const libraryItems = Object.values(window.currentLibraryData);
+    const totalBooks = libraryItems.length;
+    
+    // Tally formats
+    const formats = {};
+    libraryItems.forEach(item => {
+        // Cloud-only items might not have a format yet
+        const fmt = item.format ? item.format.toUpperCase() : (item.download_status === 'cloud_only' ? 'CLOUD' : 'UNKNOWN');
+        formats[fmt] = (formats[fmt] || 0) + 1;
+    });
+
+    // Update the visible text
+    displayEl.textContent = `Books found: ${totalBooks}`;
+
+    // Build and set the hover tooltip
+    if (totalBooks > 0) {
+        const tooltipLines = Object.entries(formats)
+            .sort((a, b) => b[1] - a[1]) // Sort by count descending
+            .map(([fmt, count]) => `${fmt}: ${count}`);
+        displayEl.title = "Format Breakdown:\n" + tooltipLines.join('\n');
+    } else {
+        displayEl.title = "Library is empty.";
+    }
+};
