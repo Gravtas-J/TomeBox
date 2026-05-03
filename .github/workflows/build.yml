@@ -50,8 +50,7 @@ jobs:
           
     - name: Build Mac Application
       if: runner.os == 'macOS'
-      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." --add-binary "bin/ffmpeg:bin" --add-binary "bin/ffplay:bin" main.py
-
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/desktop_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." --add-binary "bin/ffmpeg:bin" --add-binary "bin/ffplay:bin" main.py
     - name: Zip Mac App
       if: runner.os == 'macOS'
       run: |
