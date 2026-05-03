@@ -1,97 +1,155 @@
 <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            <title>TomeBox</title>
-            <link rel="manifest" href="/static/manifest.json">
-            <meta name="theme-color" content="#121212">
-            <link rel="apple-touch-icon" href="/static/icon.png">
-            <meta name="apple-mobile-web-app-capable" content="yes">
-            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-            <meta name="apple-mobile-web-app-title" content="TomeBox">
-            <link rel="stylesheet" href="/static/css/styles.css">
-        </head>
-        <body>
-            <header>
-                <div>TomeBox Library</div>
-                <div class="header-controls">
-                    <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
-                    <div class="filter-row">
-                        <select id="shelf-filter" class="ui-select" onchange="filterLibrary()">
-                            <option value="all">All Shelves</option>
-                        </select>
-                        <select id="profile-selector" class="ui-select" onchange="changeProfile()"></select>
-                    </div>
-                </div>
-            </header>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Prevents auto-zooming on inputs and handles notched phones -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>TomeBox</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#121212">
+    <link rel="apple-touch-icon" href="/static/icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <!-- Prevents the blue flash when tapping on mobile -->
+    <style> * { -webkit-tap-highlight-color: transparent; } </style>
+</head>
+<body>
+    <!-- Sidebar Overlay (Catches taps outside the menu) -->
+    <div id="sidebar-overlay" onclick="toggleSidebar()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:90; backdrop-filter: blur(2px);"></div>
+
+    <!-- Sidebar Navigation -->
+    <nav id="mobile-sidebar" class="sidebar">
+        <div class="sidebar-header" style="padding: 20px; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
+            <span>TomeBox</span>
+            <span onclick="toggleSidebar()" style="cursor: pointer; padding: 5px; font-size: 1.5rem;">✕</span>
+        </div>
+        <div class="sidebar-links" style="display: flex; flex-direction: column; padding: 10px 0;">
+            <a href="#/library" onclick="toggleSidebar()" class="nav-item active" data-view="library" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">📚 Library</a>
+            <a href="#/games" onclick="toggleSidebar()" class="nav-item" data-view="games" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">🎮 Games</a>
+        </div>
+    </nav>
+
+    <!-- Top Header -->
+    <header style="display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; padding: 12px 20px; background-color: var(--card); border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 50;">
+        <!-- Left: Menu Button -->
+        <button onclick="toggleSidebar()" style="background: none; border: none; color: white; font-size: 1.6rem; cursor: pointer; padding: 0; justify-self: start; line-height: 1;">
+            ☰
+        </button>
+        
+        <!-- Center: Title -->
+        <div style="font-weight: bold; font-size: 1.3rem; text-align: center; justify-self: center;">
+            TomeBox
+        </div>
+        
+        <!-- Right: Search & Player Toggles -->
+        <div style="justify-self: end; display: flex; gap: 15px;">
+            <button onclick="toggleSearch()" style="background: none; border: none; color: white; font-size: 1.3rem; cursor: pointer; padding: 0; line-height: 1;">
+                🔍
+            </button>
+            <button onclick="togglePlayerBar()" style="background: none; border: none; color: white; font-size: 1.4rem; cursor: pointer; padding: 0; line-height: 1;">
+                🎵
+            </button>
+        </div>
+    </header>
+    
+    <!-- Main Content Area -->
+    <main id="view-container">
+        <!-- View: Library -->
+        <section id="view-library" class="view active">
             
-            <main id="library-grid"></main>
-
-            <div id="player-bar">
-                <div id="progress-container" onclick="seekAudio(event)">
-                    <div id="progress-fill"></div>
-                </div>
-                
-                <div class="player-top-row">
-                    <div class="player-info">
-                        <p id="now-playing-title">Select a book</p>
-                        <p id="now-playing-author">...</p>
-                    </div>
-                </div>
-
-                <div class="player-secondary-row">
-                    <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
-                    <div class="side-tools">
-                        <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
-                        <button class="tool-btn" onclick="openChapterMenu()">📑</button>
-                    </div>
-                </div>
-
-                <div class="player-main-row">
-                    <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
-                    <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
-                    <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
-                    <button class="skip-btn" onclick="skipAudio(15)">↻</button>
-                    <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
-                </div>
-                
-                <audio id="main-audio"></audio>
-            </div>
-
-            <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
-                <div class="modal-content" onclick="event.stopPropagation()">
-                    <div class="modal-header">
-                        <span>Sleep Timer</span>
-                        <button class="close-btn" onclick="closeModals()">✕</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
-                        <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
-                        <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
-                        <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
-                        <div class="list-item custom-sleep-row">
-                            <div class="sleep-input-group">
-                                <span>After</span>
-                                <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
-                                <span>Chapters</span>
-                            </div>
-                            <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
-                        </div>
-                        <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
-                    </div>
+            <!-- Hideable Search Drawer -->
+            <div id="search-container" class="search-drawer">
+                <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
+                <div class="filter-row" style="margin-top: 10px; display: flex; gap: 10px;">
+                    <select id="shelf-filter" class="ui-select" onchange="filterLibrary()" style="flex: 1;">
+                        <option value="all">All Shelves</option>
+                    </select>
+                    <select id="profile-selector" class="ui-select" onchange="changeProfile()" style="flex: 1;"></select>
                 </div>
             </div>
 
-            <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
-                <div class="modal-content" onclick="event.stopPropagation()">
-                    <div class="modal-header">
+            <!-- Grid -->
+            <div id="library-grid"></div>
+        </section>
+
+        <!-- View: Games -->
+        <section id="view-games" class="view" style="display: none; padding: 20px; text-align: center;">
+            <h2 style="color: var(--accent);">Achievements</h2>
+            <p style="color: #aaa; margin-top: 20px;">Listen to books to unlock milestones.</p>
+            <div id="games-container" style="margin-top: 20px;">
+                <!-- Future StatsManager integration goes here -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Persistent Player Bar -->
+    <div id="player-bar">
+        <div id="progress-container" onclick="seekAudio(event)">
+            <div id="progress-fill"></div>
+        </div>
+        
+        <div class="player-top-row">
+            <div class="player-info">
+                <p id="now-playing-title">Select a book</p>
+                <p id="now-playing-author">...</p>
+            </div>
+        </div>
+
+        <div class="player-secondary-row">
+            <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
+            <div class="side-tools">
+                <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
+                <button class="tool-btn" onclick="openChapterMenu()">📑</button>
+            </div>
+        </div>
+
+        <div class="player-main-row">
+            <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
+            <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
+            <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
+            <button class="skip-btn" onclick="skipAudio(15)">↻</button>
+            <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
+        </div>
+        
+        <audio id="main-audio"></audio>
+    </div>
+
+    <!-- Modals (Sleep/Chapter) -->
+    <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Sleep Timer</span>
+                <button class="close-btn" onclick="closeModals()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
+                <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
+                <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
+                <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
+                <div class="list-item custom-sleep-row">
+                    <div class="sleep-input-group">
+                        <span>After</span>
+                        <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
                         <span>Chapters</span>
-                        <button class="close-btn" onclick="closeModals()">✕</button>
                     </div>
-                    <div class="modal-body" id="chapter-list"></div>
+                    <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
                 </div>
+                <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
             </div>
-            <script src="/static/js/mobile_client.js"></script>
-        </body>
-        </html>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span>Chapters</span>
+                <button class="close-btn" onclick="closeModals()">✕</button>
+            </div>
+            <div class="modal-body" id="chapter-list"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/mobile_client.js"></script>
+</body>
+</html>
