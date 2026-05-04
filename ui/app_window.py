@@ -163,8 +163,8 @@ class AAXManagerApp:
                 path, self.library_manager.local_library.get(path, {}), self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir, self.logger
             ),
             callbacks={
-                "on_status": lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-                "on_progress": lambda pct: self.root.after(0, self.dl_progress_var.set, pct),
+                "on_status": lambda msg: self.root.after(0, self.update_global_status, msg),
+                "on_progress": lambda pct: self.root.after(0, self.update_global_progress, pct),
                 "on_complete": lambda msg: self.root.after(0, lambda: messagebox.showinfo("Conversion Success", msg)),
                 "on_error": self._on_task_error, 
                 "on_refresh_required": lambda: self.root.after(0, self.refresh_library_ui)
@@ -335,17 +335,9 @@ class AAXManagerApp:
     def _on_import_queue_empty(self):
         """Triggered only when the entire import queue is finished."""
         def update():
-            self.dl_status_var.set("All queued imports completed.")
-            self.root.bell()  # Plays the native Windows/Mac system chime!
-            
-            # Helper to reset both text and the progress bar
-            def reset_ui():
-                self.dl_status_var.set("Idle")
-                self.dl_progress_var.set(0)
-                
-            # Reset to Idle and empty the bar after 3 seconds
-            self.root.after(3000, reset_ui)
-            
+            self.update_global_status("All queued imports completed.")
+            self.root.bell()
+            self.root.after(3000, self.reset_ui_if_idle)
         self.root.after(0, update)
         
     def _on_task_error(self, filepath, action_type, error_msg):
@@ -363,7 +355,7 @@ class AAXManagerApp:
             
             # Bounce the status text momentarily so they notice
             self.dl_status_var.set(f"Task failed: {os.path.basename(filepath)}")
-            self.root.after(4000, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(4000, lambda: self.reset_ui_if_idle())
         self.root.after(0, update)
 
     def open_error_log(self):
@@ -424,7 +416,7 @@ class AAXManagerApp:
     def _on_scrape_search_results(self, filepath, products):
         """Called when the Audible search returns results."""
         def update():
-            self.dl_status_var.set("Idle")
+            self.reset_ui_if_idle()
             if not products:
                 messagebox.showinfo("No Results", "No matches found for that title.")
                 return
@@ -434,7 +426,7 @@ class AAXManagerApp:
     def _on_scrape_apply_complete(self, filepath, title):
         """Called when FFmpeg finishes embedding tags."""
         def update():
-            self.dl_status_var.set("Idle")
+            self.reset_ui_if_idle()
             
             # 1. Clear the image cache so Grid View is forced to load the new cover from disk
             self.cover_cache.clear()
@@ -455,7 +447,7 @@ class AAXManagerApp:
 
     def _on_scrape_error(self, err_msg):
         def update():
-            self.dl_status_var.set("Idle")
+            self.reset_ui_if_idle()
             messagebox.showerror("Scrape Failed", err_msg)
         self.root.after(0, update)
 
@@ -463,7 +455,7 @@ class AAXManagerApp:
         """Routes status text updates to either the global header or the specific queue row."""
         def update():
             if is_global:
-                self.dl_status_var.set(status_text)
+                self.update_global_status(status_text)
             elif asin in self.queue_ui_elements:
                 self.queue_ui_elements[asin]["status_var"].set(status_text)
         self.root.after(0, update)
@@ -472,7 +464,7 @@ class AAXManagerApp:
         """Routes progress bar updates."""
         def update():
             if is_global:
-                self.dl_progress_var.set(percent)
+                self.update_global_progress(percent)
             if asin in self.queue_ui_elements:
                 self.queue_ui_elements[asin]["prog_var"].set(percent)
                 self.queue_ui_elements[asin]["status_var"].set(f"{int(percent)}%")
@@ -495,11 +487,10 @@ class AAXManagerApp:
     def _on_dl_batch_finish(self):
         """Called when the entire queue goes idle."""
         def update():
-            self.dl_status_var.set("All downloads completed.")
-            self.dl_progress_var.set(0)
+            self.update_global_status("All downloads completed.")
             if hasattr(self, 'dl_all_btn'):
                 self.dl_all_btn.config(state=tk.NORMAL)
-            self.root.after(3000, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(3000, self.reset_ui_if_idle)
             self.root.after(3000, lambda: self.toggle_queue_drawer(False))
         self.root.after(0, update)
 
@@ -599,9 +590,9 @@ class AAXManagerApp:
             if is_folder:
                 self.library_manager.import_folder(
                     folder_path=path, converter=self.converter, active_profile=self.active_profile,
-                    on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                    on_status_cb=lambda msg: self.root.after(0, self.update_global_status, msg),
                     on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, self.update_global_progress, pct)
                 )
             elif os.path.isfile(path):
                 self.library_manager.import_files(
@@ -641,12 +632,12 @@ class AAXManagerApp:
         self.system_manager.add_pending_import(self.db.data_dir, folder, True)
         
         def on_status(msg):
-            self.root.after(0, lambda: self.dl_status_var.set(msg))
+            self.root.after(0, lambda: self.update_global_status(msg))
         
         def on_complete(count, total_found=0):
             self.system_manager.remove_pending_import(self.db.data_dir, folder)
             def update_ui():
-                self.dl_status_var.set("Idle")
+                self.reset_ui_if_idle()
                 self.refresh_library_ui()
                 if count > 0:
                     messagebox.showinfo("Import Complete", f"Successfully imported {count} audiobook{'s' if count != 1 else ''}.")
@@ -1682,7 +1673,7 @@ class AAXManagerApp:
             self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
 
             self.root.after(0, self.refresh_library_ui)
-            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(0, lambda: self.reset_ui_if_idle())
 
             self.metadata_manager.sync_missing_covers(
                 on_complete_cb=lambda: self.root.after(0, lambda: self.refresh_library_ui() if self.current_view_mode == 'grid' else None)
@@ -2228,14 +2219,12 @@ class AAXManagerApp:
         """Cancels active imports or conversions."""
         self.converter.cancel()
         self.library_manager.cancel_import()
-        
-        # Clear the persistent queue since the user intentionally aborted
         self.system_manager.clear_all_pending_imports(self.db.data_dir)
         
-        self.dl_status_var.set("Cancelling active task...")
-        self.dl_progress_var.set(0)
-        self.root.after(2000, lambda: self.dl_status_var.set("All tasks cancelled."))
-        self.root.after(5000, lambda: self.dl_status_var.set("Idle"))
+        self.update_global_status("Cancelling active task...")
+        self.update_global_progress(0)
+        self.root.after(2000, lambda: self.update_global_status("All tasks cancelled."))
+        self.root.after(5000, self.reset_ui_if_idle)
 
     def seek_audio(self, offset):
         result = self.playback.seek(offset)
@@ -2363,3 +2352,25 @@ class AAXManagerApp:
         if self.chapters:
             title = self.chapters[self.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.current_chapter_idx + 1}")
             self.info_label.config(text=f"Playing:\n{title}")
+
+    def reset_ui_if_idle(self):
+        """Checks all background workers and only sets Idle if completely inactive."""
+        is_importing = getattr(self.library_manager, '_is_importing', False) or not self.library_manager.import_queue.empty()
+        is_downloading = getattr(self.download_manager, 'is_processing', False)
+        is_converting = getattr(self.converter, 'current_process', None) is not None
+        
+        if not is_importing and not is_downloading and not is_converting:
+            self.dl_status_var.set("Idle")
+            self.dl_progress_var.set(0)
+
+    def update_global_status(self, msg):
+        if msg in ["Idle", ""]:
+            self.reset_ui_if_idle()
+        else:
+            self.dl_status_var.set(msg)
+
+    def update_global_progress(self, pct):
+        if pct == 0:
+            self.reset_ui_if_idle()
+        else:
+            self.dl_progress_var.set(pct)    
