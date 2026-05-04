@@ -73,13 +73,49 @@
             <div id="library-grid"></div>
         </section>
 
-        <!-- View: Games -->
-        <section id="view-games" class="view" style="display: none; padding: 20px; text-align: center;">
-            <h2 style="color: var(--accent);">Achievements</h2>
-            <p style="color: #aaa; margin-top: 20px;">Listen to books to unlock milestones.</p>
-            <div id="games-container" style="margin-top: 20px;">
-                <!-- Future StatsManager integration goes here -->
+        <!-- View: Games (Brainrot Mode) -->
+        <section id="view-games" class="view" style="display: none; height: 100%; position: relative; overflow: hidden; background: var(--bg);">
+            
+            <!-- Game Selection Menu -->
+            <div id="games-menu" style="height: 100%; padding: 20px; overflow-y: auto;">
+                <h2 style="color: var(--accent); text-align: center; margin-bottom: 5px;">Brainrot Mode</h2>
+                <p style="color: #888; text-align: center; margin-bottom: 25px; font-size: 0.9rem;">Keep your hands busy while you listen.</p>
+                
+                <div class="games-grid">
+                    <div class="game-card" onclick="launchGame('particles')">
+                        <div class="game-icon">🫧</div>
+                        <h3>Bubble Pop</h3>
+                        <p>Touch physics toy</p>
+                    </div>
+                    
+                    <div class="game-card" onclick="launchGame('2048')">
+                        <div class="game-icon">🔢</div>
+                        <h3>Merge 2048</h3>
+                        <p>Swipe to combine</p>
+                    </div>
+                    
+                    <div class="game-card" onclick="launchGame('breakout')">
+                        <div class="game-icon">🧱</div>
+                        <h3>Brick Breaker</h3>
+                        <p>Classic paddle action</p>
+                    </div>
+                    <div class="game-card" onclick="launchGame('invaders')">
+                        <div class="game-icon">👾</div>
+                        <h3>Space Invaders</h3>
+                        <p>Slide & auto-fire</p>
+                    </div>
+                </div>
             </div>
+
+            <!-- Active Game Container (Hidden by default) -->
+            <div id="active-game-container" style="display: none; height: 100%; width: 100%; position: absolute; top: 0; left: 0; background: #000; z-index: 50;">
+                <!-- Exit Button -->
+                <button onclick="exitGame()" style="position: absolute; top: 15px; right: 15px; z-index: 100; background: rgba(255,255,255,0.1); border: none; color: white; border-radius: 50%; width: 40px; height: 40px; font-size: 1.2rem; cursor: pointer; backdrop-filter: blur(4px);">✕</button>
+                
+                <!-- Master Canvas -->
+                <canvas id="game-canvas" style="width: 100%; height: 100%; display: block; touch-action: none;"></canvas>
+            </div>
+            
         </section>
     </main>
 

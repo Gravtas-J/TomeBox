@@ -216,3 +216,55 @@ main {
     padding: 15px;
     border-bottom: 1px solid #333;
 }
+
+/* --- Brainrot Mode Menu --- */
+.games-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 15px;
+    padding-bottom: 20px;
+}
+
+.game-card {
+    background-color: var(--card);
+    border-radius: 12px;
+    padding: 20px 15px;
+    text-align: center;
+    cursor: pointer;
+    border: 1px solid #333;
+    transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.game-card:active {
+    transform: scale(0.95);
+    border-color: var(--accent);
+    background-color: rgba(187, 134, 252, 0.05);
+}
+
+.game-icon {
+    font-size: 2.5rem;
+    margin-bottom: 15px;
+    background: #2a2a2a;
+    width: 65px;
+    height: 65px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    box-shadow: inset 0 4px 10px rgba(0,0,0,0.5);
+}
+
+.game-card h3 {
+    margin: 0 0 5px 0;
+    color: var(--text);
+    font-size: 1.05rem;
+}
+
+.game-card p {
+    margin: 0;
+    color: #888;
+    font-size: 0.8rem;
+}
