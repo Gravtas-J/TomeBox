@@ -316,6 +316,18 @@ class AAXManagerApp:
         else:
             self.system_manager.clear_all_pending_imports(self.db.data_dir)
 
+    def clear_sidebar(self):
+        """Wipes the side panel when selection is lost or deleted."""
+        if hasattr(self, 'author_label'):
+            self.author_label.config(text="")
+        if hasattr(self, 'cover_label'):
+            self.cover_label.config(image="", text="No Cover Art")
+        self.current_cover_photo = None
+        
+        if hasattr(self, 'bm_tree'):
+            for row in self.bm_tree.get_children():
+                self.bm_tree.delete(row)
+
     def _on_import_finished(self, path, added_count, total_found=0):
         self.system_manager.remove_pending_import(self.db.data_dir, path)
         self._on_import_complete(added_count, total_found)
@@ -439,27 +451,6 @@ class AAXManagerApp:
                 
             messagebox.showinfo("Success", "Metadata scraped and applied!")
             
-        self.root.after(0, update)
-
-    def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
-        """Updates the side panel when the user clicks a book."""
-        def update():
-            # If the user clicked another book while the image was downloading, ignore this update
-            if self.file_path != filepath and not self._selected_grid_item:
-                return
-                
-            self.author_label.config(text=authors)
-            if cover_path and os.path.exists(cover_path):
-                try:
-                    img = Image.open(cover_path)
-                    img.thumbnail((400, 400))
-                    photo = ImageTk.PhotoImage(img)
-                    self.current_cover_photo = photo
-                    self.cover_label.config(image=photo, text="")
-                except Exception:
-                    self.cover_label.config(image="", text="Image Error")
-            else:
-                self.cover_label.config(image="", text=error_text)
         self.root.after(0, update)
 
     def _on_scrape_error(self, err_msg):
@@ -877,13 +868,19 @@ class AAXManagerApp:
     def on_item_select(self, event=None):
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
-            if not selected: return
+            if not selected:
+                self.clear_sidebar()
+                self._selected_local_path = None
+                return
             item = self.library_tree.item(selected)
             title = item['values'][0]
             authors = item['values'][1]
             asin = item['values'][4]
         else:
-            if not self._selected_grid_item: return
+            if not self._selected_grid_item:
+                self.clear_sidebar()
+                self._selected_local_path = None
+                return
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
@@ -897,8 +894,6 @@ class AAXManagerApp:
         
         if asin and asin != "Unknown":
             padded_asin = str(asin).zfill(10)
-            
-            # Check for the padded ASIN first, then fallback to raw
             test_path_padded = os.path.join(covers_dir, f"{padded_asin}.jpg")
             test_path_raw = os.path.join(covers_dir, f"{asin}.jpg")
             
@@ -907,13 +902,18 @@ class AAXManagerApp:
             elif os.path.exists(test_path_raw):
                 cover_path = test_path_raw
                 
-        if not cover_path:
-            for p, d in self.library_manager.local_library.items():
-                if d.get("title") == title:
+        local_path = None
+        for p, d in self.library_manager.local_library.items():
+            if d.get("title") == title:
+                local_path = p
+                if not cover_path:
                     test_local = os.path.splitext(p)[0] + "_cover.jpg"
                     if os.path.exists(test_local):
                         cover_path = test_local
-                    break
+                break
+
+        # Track the strictly selected path
+        self._selected_local_path = local_path
 
         if cover_path and hasattr(self, 'cover_label'):
             try:
@@ -927,6 +927,8 @@ class AAXManagerApp:
                 self.cover_label.config(image="", text=title)
         elif hasattr(self, 'cover_label'):
             self.cover_label.config(image="", text=title)
+            
+        self.refresh_bookmarks_ui()
 
     def manage_shelves_prompt(self):
         if self.current_view_mode == "list":
@@ -1726,8 +1728,33 @@ class AAXManagerApp:
         if removed_count > 0:
             self.db.save_local_db(self.library_manager.local_library)
             self.refresh_library_ui()
+            
+            # Wipe panel after deletion
+            self.clear_sidebar()
+            self._selected_local_path = None
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
+
+    def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
+        """Updates the side panel when the user clicks a book."""
+        def update():
+            # Strictly reject updates if the fetched path isn't the currently selected path
+            if getattr(self, '_selected_local_path', None) != filepath:
+                return
+                
+            self.author_label.config(text=authors)
+            if cover_path and os.path.exists(cover_path):
+                try:
+                    img = Image.open(cover_path)
+                    img.thumbnail((400, 400))
+                    photo = ImageTk.PhotoImage(img)
+                    self.current_cover_photo = photo
+                    self.cover_label.config(image=photo, text="")
+                except Exception:
+                    self.cover_label.config(image="", text="Image Error")
+            else:
+                self.cover_label.config(image="", text=error_text)
+        self.root.after(0, update)
 
     def set_sleep_timer(self, mode, value=0):
 
@@ -1992,9 +2019,10 @@ class AAXManagerApp:
         for row in self.bm_tree.get_children():
             self.bm_tree.delete(row)
             
-        if not self.file_path: return
+        target_path = getattr(self, '_selected_local_path', None)
+        if not target_path: return
         
-        local_data = self.library_manager.local_library.get(self.file_path, {})
+        local_data = self.library_manager.local_library.get(target_path, {})
         bookmarks = local_data.get("bookmarks", [])
 
         bookmarks.sort(key=lambda x: x.get("abs_time", 0))
@@ -2003,7 +2031,9 @@ class AAXManagerApp:
             chap_idx = bm.get("chapter_idx", 0)
 
             chap_title = f"Chapter {chap_idx + 1}"
-            if self.chapters and chap_idx < len(self.chapters):
+            
+            # Use loaded chapters if it's the active file, otherwise use generic title
+            if target_path == self.file_path and self.chapters and chap_idx < len(self.chapters):
                 chap_title = self.chapters[chap_idx].get("tags", {}).get("title", chap_title)
                 
             t_str = self.format_time(bm.get("time", 0))
@@ -2016,10 +2046,17 @@ class AAXManagerApp:
         if not selected: return
         
         idx = int(selected)
-        bookmarks = self.library_manager.local_library.get(self.file_path, {}).get("bookmarks", [])
+        target_path = getattr(self, '_selected_local_path', None)
+        if not target_path: return
+        
+        bookmarks = self.library_manager.local_library.get(target_path, {}).get("bookmarks", [])
         
         if 0 <= idx < len(bookmarks):
             bm = bookmarks[idx]
+            
+            # Load the file if jumping to a bookmark for a book not currently playing
+            if target_path != self.file_path:
+                self.load_specific_file(target_path)
             
             self.stop_audio()
             self.current_chapter_idx = bm.get("chapter_idx", 0)
@@ -2032,7 +2069,10 @@ class AAXManagerApp:
         if not selected: return
         
         idx = int(selected)
-        bookmarks = self.library_manager.local_library.get(self.file_path, {}).get("bookmarks", [])
+        target_path = getattr(self, '_selected_local_path', None)
+        if not target_path: return
+        
+        bookmarks = self.library_manager.local_library.get(target_path, {}).get("bookmarks", [])
         
         if 0 <= idx < len(bookmarks):
             del bookmarks[idx]
