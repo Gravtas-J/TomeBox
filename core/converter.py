@@ -49,7 +49,7 @@ class AudioConverter:
         fd_concat, concat_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
         fd_meta, metadata_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
         
-        # NEW: The temporary output path for safe cleanup
+        base, ext = os.path.splitext(output_path)
         temp_out_path = f"{output_path}.tmp.m4b"
 
         try:
@@ -198,6 +198,11 @@ class AudioConverter:
             if os.path.exists(metadata_txt_path):
                 try: os.remove(metadata_txt_path)
                 except: pass
+            
+            if os.path.exists(temp_out_path):
+                try: os.remove(temp_out_path)
+                except: pass
+                
             self.current_process = None
 
     def cancel(self):
@@ -229,13 +234,10 @@ class AudioConverter:
     def convert_to_m4b(self, input_path, output_path, title, authors, cover_path, drm_flags, total_duration, progress_cb=None):
         import os
         import subprocess
-
-        # --- SMART COVER RESOLUTION ---
         actual_cover = None
         if cover_path:
             raw_asin, _ = os.path.splitext(os.path.basename(cover_path))
             actual_cover = resolve_cover_path(cover_path, raw_asin)
-        # ------------------------------
 
         base, ext = os.path.splitext(output_path)
         temp_out_path = f"{base}_temp{ext}"
@@ -334,8 +336,10 @@ class AudioConverter:
                     pass
             raise e
         finally:
-            # UNLINK THE PROCESS so we don't hold it in memory
             self.current_process = None
+            if os.path.exists(temp_out_path):
+                try: os.remove(temp_out_path)
+                except OSError: pass
 
     def split_into_chapters(self, input_path, target_dir, chapters, drm_flags, progress_cb=None):
         import subprocess
@@ -360,7 +364,7 @@ class AudioConverter:
             out_name = f"{idx + 1:03d} - {safe_chap_title}.m4b"
             out_path = os.path.join(target_dir, out_name)
             
-            # FIX: Use a valid extension so FFmpeg muxes correctly
+            base, ext = os.path.splitext(out_path)
             temp_out_path = f"{out_path}.tmp.m4b"
 
             start = chapter.get("start_time", 0)
@@ -393,8 +397,12 @@ class AudioConverter:
                 raise Exception("Chapter splitting cancelled by user.")
                 
             if os.path.exists(temp_out_path):
-                os.replace(temp_out_path, out_path)
-                created_files.append(out_path)
+                try:
+                    os.replace(temp_out_path, out_path)
+                    created_files.append(out_path)
+                except OSError:
+                    try: os.remove(temp_out_path)
+                    except OSError: pass
                 
         return True
 

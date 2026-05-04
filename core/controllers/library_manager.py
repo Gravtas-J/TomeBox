@@ -625,7 +625,6 @@ class LibraryManager:
                             update_status(f"Merging {len(group_files)} parts: {safe_album_name}...")
                             
                             group_files.sort(key=natural_sort_key)
-                            success = converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger)
                             
                             success = converter.concat_to_m4b(
                                 group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb

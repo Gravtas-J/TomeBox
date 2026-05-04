@@ -69,11 +69,9 @@ class SystemManager:
         import os
         directories_to_scan = set()
 
-        # 1. Target the main download directory
         if download_dir and os.path.exists(download_dir):
             directories_to_scan.add(download_dir)
 
-        # 2. Target parent folders of existing library items
         if library_paths:
             for path in library_paths:
                 parent = os.path.dirname(path)
@@ -83,10 +81,14 @@ class SystemManager:
         if not directories_to_scan:
             return
 
-        if getattr(self, 'logger', None):
-            self.logger("Running startup scan for orphaned/partial files...")
+        logger = getattr(self, 'logger', None)
+        if logger:
+            logger("Running startup scan for orphaned/partial files...")
             
         cleaned_count = 0
+        
+        temp_suffixes = ('.part', '.tmp.m4b', '_temp.m4b', '_temp.mp3', '_temp.aax', '_temp.aaxc')
+        audio_exts = ('.aax', '.aaxc', '.m4b', '.mp3')
 
         try:
             for directory in directories_to_scan:
@@ -96,36 +98,34 @@ class SystemManager:
                         if not os.path.isfile(filepath):
                             continue
 
-                        # Clean up cancelled FFmpeg conversions (.tmp.m4b) and interrupted downloads (.part)
-                        if filename.endswith(".part") or "_temp." in filename or filename.endswith(".tmp.m4b"):
+                        if filename.endswith(temp_suffixes) or "_temp." in filename:
                             try:
                                 os.remove(filepath)
-                                if getattr(self, 'logger', None):
-                                    self.logger(f"Deleted partial/temp file: {filename}")
+                                if logger:
+                                    logger(f"Deleted partial/temp file: {filename}")
                                 cleaned_count += 1
                             except OSError:
                                 pass
                             continue
 
-                        # Clean up 0-byte corrupted audio files
-                        if filename.lower().endswith(('.aax', '.aaxc', '.m4b', '.mp3')):
+                        if filename.lower().endswith(audio_exts):
                             try:
                                 if os.path.getsize(filepath) == 0:
                                     os.remove(filepath)
-                                    if getattr(self, 'logger', None):
-                                        self.logger(f"Deleted empty 0-byte file: {filename}")
+                                    if logger:
+                                        logger(f"Deleted empty 0-byte file: {filename}")
                                     cleaned_count += 1
                             except OSError:
                                 pass
                 except OSError:
                     pass
 
-            if cleaned_count > 0 and getattr(self, 'logger', None):
-                self.logger(f"Cleanup complete. Removed {cleaned_count} orphaned files.")
+            if cleaned_count > 0 and logger:
+                logger(f"Cleanup complete. Removed {cleaned_count} orphaned files.")
                 
         except Exception as e:
-            if getattr(self, 'logger', None):
-                self.logger(f"Failed to run orphaned file cleanup: {e}")
+            if logger:
+                logger(f"Failed to run orphaned file cleanup: {e}")
                 
     def get_local_ip(self):
         try:
