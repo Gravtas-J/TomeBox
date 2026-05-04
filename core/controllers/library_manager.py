@@ -774,6 +774,6 @@ class LibraryManager:
             # Fire the complete callback exactly once, at the very end
             self.current_status = ""
             if on_complete_cb:
-                on_complete_cb(added_count)
+                on_complete_cb(added_count, final_count)
         
         self.import_queue.put(worker)
