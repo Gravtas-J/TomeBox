@@ -547,6 +547,7 @@ class LibraryManager:
             self.current_status = "Initializing import..."
             if on_status_cb: on_status_cb(self.current_status)
         def worker():
+            self.cancel_requested = False
             import re
             
             def update_status(msg):
@@ -555,7 +556,7 @@ class LibraryManager:
             
             if not os.path.isdir(folder_path):
                 self.current_status = ""
-                if on_complete_cb: on_complete_cb(0)
+                if on_complete_cb: on_complete_cb(0, 0)
                 return
             
             update_status("Scanning and grouping files...")
