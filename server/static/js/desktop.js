@@ -34,12 +34,15 @@
     const ROUTES = {
         '#/library': 'library',
         '#/devices': 'devices',
+        '#/pairing': 'devices',
         '#/account': 'account'
     };
     
     function showView(viewName) {
         document.querySelectorAll('.nav-item').forEach(item => {
-            if (item.dataset.view === viewName) {
+            // Handle active class for both naming conventions
+            if (item.dataset.view === viewName || 
+               (viewName === 'pairing' && item.dataset.view === 'devices')) {
                 item.classList.add('active');
             } else {
                 item.classList.remove('active');
@@ -50,12 +53,18 @@
             view.classList.remove('active');
         });
         
-        const target = document.getElementById(`view-${viewName}`);
+        // Try the new ID first, fallback to the old ID if HTML wasn't updated
+        let target = document.getElementById(`view-${viewName}`);
+        if (!target && viewName === 'pairing') {
+            target = document.getElementById('view-devices');
+        }
+        
         if (target) {
             target.classList.add('active');
         }
         
-        if (viewName === 'devices') {
+        // Ensure the QR loader triggers for the new pairing route
+        if (viewName === 'pairing' || viewName === 'devices') {
             loadDevicesView();
         } else if (viewName === 'account') {
             loadProfilesView();

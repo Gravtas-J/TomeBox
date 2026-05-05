@@ -786,8 +786,9 @@ window.togglePlayerBar = function() {
 };
 
 window.handleRouting = function() {
+    if (document.body.classList.contains('desktop')) return;
     const hash = window.location.hash || '#/library';
-    const views = [document.getElementById('view-library'), document.getElementById('view-games')];
+    const views = [document.getElementById('view-library'), document.getElementById('view-games'), document.getElementById('view-pairing')];
     const navItems = document.querySelectorAll('.sidebar .nav-item');
     
     // Hide all views and reset nav highlights
@@ -799,6 +800,19 @@ window.handleRouting = function() {
         if (gv) gv.style.display = 'block';
         const nav = document.querySelector('.nav-item[data-view="games"]');
         if (nav) nav.classList.add('active');
+        
+        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.start();
+        
+    } else if (hash === '#/pairing') {
+        const pv = document.getElementById('view-pairing');
+        if (pv) pv.style.display = 'block';
+        const nav = document.querySelector('.nav-item[data-view="pairing"]');
+        if (nav) nav.classList.add('active');
+        
+        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.stop();
+        
+        loadPairingView(); // Trigger the QR fetch
+
     } else {
         // Default to Library
         const lv = document.getElementById('view-library');
@@ -806,9 +820,10 @@ window.handleRouting = function() {
         const nav = document.querySelector('.nav-item[data-view="library"]');
         if (nav) nav.classList.add('active');
         
-        // Trigger data load if grid is empty
-        if (typeof exitGame === 'function') {
-            exitGame(); 
+        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.stop();
+        
+        if (typeof allBooks !== 'undefined' && allBooks.length === 0 && typeof loadLibrary === 'function') {
+            loadLibrary();
         }
     }
 };
@@ -839,38 +854,6 @@ window.toggleSearch = function() {
     }
 };
 
-
-
-window.handleRouting = function() {
-    const hash = window.location.hash || '#/library';
-    const views = [document.getElementById('view-library'), document.getElementById('view-games')];
-    const navItems = document.querySelectorAll('.sidebar .nav-item');
-    
-    views.forEach(v => { if(v) v.style.display = 'none'; });
-    navItems.forEach(n => n.classList.remove('active'));
-
-    if (hash === '#/games') {
-        const gv = document.getElementById('view-games');
-        if (gv) gv.style.display = 'block';
-        const nav = document.querySelector('.nav-item[data-view="games"]');
-        if (nav) nav.classList.add('active');
-        
-        // Start the physics engine
-        BrainrotEngine.start();
-    } else {
-        const lv = document.getElementById('view-library');
-        if (lv) lv.style.display = 'block';
-        const nav = document.querySelector('.nav-item[data-view="library"]');
-        if (nav) nav.classList.add('active');
-        
-        // Kill the physics engine to save battery
-        BrainrotEngine.stop();
-        
-        if (typeof allBooks !== 'undefined' && allBooks.length === 0 && typeof loadLibrary === 'function') {
-            loadLibrary();
-        }
-    }
-};
 initializeApp();
 
 
@@ -2315,3 +2298,58 @@ const SpaceInvadersEngine = {
         }
     }
 };
+
+let pairingViewLoaded = false;
+
+async function loadPairingView() {
+    if (pairingViewLoaded) return;
+    
+    const qrContainer = document.getElementById('qr-container');
+    const urlElement = document.getElementById('pairing-url');
+    if (!qrContainer || !urlElement) return;
+    
+    try {
+        const response = await fetch('/api/pairing-info');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        const pairingUrl = data.pairing_url;
+        
+        urlElement.textContent = pairingUrl;
+        
+        // Dynamically load the QR library
+        await new Promise((resolve, reject) => {
+            if (window.QRCode) { resolve(); return; }
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+        
+        qrContainer.innerHTML = '';
+        new QRCode(qrContainer, {
+            text: pairingUrl,
+            width: 200,
+            height: 200,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.H
+        });
+        
+        // Tap to copy functionality
+        urlElement.addEventListener('click', () => {
+            navigator.clipboard.writeText(pairingUrl).then(() => {
+                const original = urlElement.textContent;
+                urlElement.textContent = 'Copied to clipboard!';
+                setTimeout(() => urlElement.textContent = original, 1500);
+            });
+        });
+        
+        pairingViewLoaded = true;
+        
+    } catch (error) {
+        console.error('Failed to load pairing info:', error);
+        qrContainer.innerHTML = `<p style="color: #ff6b6b;">Failed to load: ${error.message}</p>`;
+    }
+}

@@ -27,6 +27,7 @@
         <div class="sidebar-links" style="display: flex; flex-direction: column; padding: 10px 0;">
             <a href="#/library" onclick="toggleSidebar()" class="nav-item active" data-view="library" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">📚 Library</a>
             <a href="#/games" onclick="toggleSidebar()" class="nav-item" data-view="games" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">🎮 Games</a>
+            <a href="#/pairing" onclick="toggleSidebar()" class="nav-item" data-view="pairing" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">🔗 Pair Device</a>
         </div>
     </nav>
 
@@ -116,6 +117,17 @@
                 <canvas id="game-canvas" style="width: 100%; height: 100%; display: block; touch-action: none;"></canvas>
             </div>
             
+        </section>
+        <section id="view-pairing" class="view" style="display: none; padding: 30px 20px; text-align: center;">
+            <h2 style="color: var(--accent); margin-bottom: 10px; margin-top: 0;">Pair Device</h2>
+            <p style="color: #888; font-size: 0.95rem; margin-bottom: 30px;">Scan this QR code with another device to link it to your TomeBox library.</p>
+            
+            <div id="qr-container" style="background: white; padding: 20px; border-radius: 8px; display: inline-block; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);"></div>
+            
+            <div>
+                <p style="color: #888; font-size: 0.9rem; margin-bottom: 8px;">Or copy this URL:</p>
+                <code id="pairing-url" style="display: block; background: #2a2a2a; padding: 15px; border-radius: 6px; word-break: break-all; font-family: monospace; font-size: 0.85em; cursor: pointer; border: 1px solid #444;">Loading...</code>
+            </div>
         </section>
     </main>
 
