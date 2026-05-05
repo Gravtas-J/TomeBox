@@ -1691,7 +1691,7 @@ class AAXManagerApp:
                 self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
                 self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
         finally:
-            self.root.after(0, lambda: self.dl_status_var.set("Idle"))
+            self.root.after(0, self.reset_ui_if_idle)
 
     def remove_local_file(self):
         selected_items = self.library_tree.selection()

@@ -633,7 +633,36 @@ class LibraryManager:
                             if success:
                                 file_paths.append(out_m4b)
                             else:
-                                file_paths.extend(group_files)
+                                # AUTO-RECOVERY: Hunt for the orphaned prior merge file
+                                suspected_orphan = os.path.join(directory, f"{safe_album_name}.m4b")
+                                
+                                if suspected_orphan in group_files:
+                                    update_status(f"Corrupt part detected. Purging {os.path.basename(suspected_orphan)}...")
+                                    try:
+                                        os.remove(suspected_orphan)
+                                        group_files.remove(suspected_orphan)
+                                        if logger: logger(f"Purged offending file: {suspected_orphan}")
+                                        
+                                        # Revert the output name back to the clean version since we deleted the blocker
+                                        out_m4b = suspected_orphan
+                                        
+                                        # Restart the merge!
+                                        if len(group_files) > 1:
+                                            update_status(f"Restarting merge: {safe_album_name}...")
+                                            retry_success = converter.concat_to_m4b(
+                                                group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb
+                                            )
+                                            if retry_success:
+                                                file_paths.append(out_m4b)
+                                            else:
+                                                file_paths.extend(group_files)
+                                        else:
+                                            file_paths.extend(group_files)
+                                    except Exception as e:
+                                        if logger: logger(f"Failed to purge {suspected_orphan}: {e}")
+                                        file_paths.extend(group_files)
+                                else:
+                                    file_paths.extend(group_files)
                         else:
                             file_paths.append(out_m4b)
             if self.cancel_requested:
