@@ -90,7 +90,9 @@ class AAXManagerApp:
         # 2. Setup Assets (Icons are in the ui folder)
         icon_ico = get_resource_path("ui", "tomebox.ico")
         icon_png = get_resource_path("ui", "tomebox.png")
-    
+
+
+        
         
         def apply_taskbar_icon():
             try:
@@ -281,6 +283,39 @@ class AAXManagerApp:
         }
         self.root.after(1500, self._prompt_resume_imports)
 
+    def _on_import_status(self, task_id, msg):
+        self.root.after(0, lambda: self._on_dl_status(task_id, msg, is_global=False))
+        self.root.after(0, lambda: self.update_global_status(msg))
+
+    def _on_import_progress(self, task_id, pct):
+        self.root.after(0, lambda: self._on_dl_progress(task_id, pct, is_global=False))
+        self.root.after(0, lambda: self.update_global_progress(pct))
+
+    def remove_queue_ui_row(self, task_id):
+        if task_id in self.queue_ui_elements:
+            self.queue_ui_elements[task_id]["frame"].destroy()
+            del self.queue_ui_elements[task_id]
+        
+        # If the queue is entirely empty, naturally close the drawer
+        if not self.queue_ui_elements:
+            self.toggle_queue_drawer(False)
+
+    def _schedule_row_removal(self, task_id):
+        self.root.after(3000, lambda: self.remove_queue_ui_row(task_id))
+
+    def cancel_task(self, task_id):
+        """Unified method to cancel either an active import OR an active download from the queue drawer."""
+        if str(task_id).startswith("import_"):
+            self.library_manager.cancel_import(task_id)
+            
+            # Only terminate the FFmpeg process if this specific task is the one currently running
+            if getattr(self.library_manager, 'active_task_id', None) == task_id:
+                self.converter.cancel()
+                
+            self._on_dl_status(task_id, "Canceling...", is_global=False)
+        else:
+            self.download_manager.cancel_download(task_id)
+
     def _prompt_resume_imports(self):
         pending = self.system_manager.load_pending_imports(self.db.data_dir)
         import os
@@ -328,9 +363,16 @@ class AAXManagerApp:
             for row in self.bm_tree.get_children():
                 self.bm_tree.delete(row)
 
-    def _on_import_finished(self, path, added_count, total_found=0):
+    def _on_import_finished(self, path, added_count, total_found=0, task_id=None):
         self.system_manager.remove_pending_import(self.db.data_dir, path)
         self._on_import_complete(added_count, total_found)
+        if task_id:
+            if task_id in getattr(self.library_manager, 'canceled_tasks', set()):
+                status = "Canceled"
+            else:
+                status = "Complete" if added_count > 0 else "Finished"
+            self._on_dl_status(task_id, status, is_global=False)
+            self._schedule_row_removal(task_id)
         
     def _on_import_queue_empty(self):
         """Triggered only when the entire import queue is finished."""
@@ -491,7 +533,11 @@ class AAXManagerApp:
             if hasattr(self, 'dl_all_btn'):
                 self.dl_all_btn.config(state=tk.NORMAL)
             self.root.after(3000, self.reset_ui_if_idle)
-            self.root.after(3000, lambda: self.toggle_queue_drawer(False))
+            
+            # Cleanup download rows when the batch finishes
+            for task_id in list(self.queue_ui_elements.keys()):
+                if not str(task_id).startswith("import_"):
+                    self.remove_queue_ui_row(task_id)
         self.root.after(0, update)
 
     def _on_playback_tick(self, current_time, total_time, real_time_delta):
@@ -585,22 +631,27 @@ class AAXManagerApp:
         # 2. Route the paths to the correct importer
         for path in dropped_paths:
             is_folder = os.path.isdir(path)
+            task_id = f"import_{time.time()}_{os.path.basename(path)}"
             self.system_manager.add_pending_import(self.db.data_dir, path, is_folder)
+            
+            self.toggle_queue_drawer(True)
+            self.add_queue_ui_row(task_id, f"Importing: {os.path.basename(path)}")
             
             if is_folder:
                 self.library_manager.import_folder(
                     folder_path=path, converter=self.converter, active_profile=self.active_profile,
-                    on_status_cb=lambda msg: self.root.after(0, self.update_global_status, msg),
-                    on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                    logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, self.update_global_progress, pct)
+                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                    logger=self.logger, on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+                    task_id=task_id
                 )
             elif os.path.isfile(path):
                 self.library_manager.import_files(
                     file_paths=[path], converter=self.converter, active_profile=self.active_profile,
-                    on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-                    on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                    logger=self.logger
-                    # Removed on_progress_cb here since import_files doesn't support it!
+                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                    logger=self.logger,
+                    task_id=task_id
                 )
 
 
@@ -608,13 +659,21 @@ class AAXManagerApp:
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
         if not filepath: return
         
+        import time
+        import os
+        
+        task_id = f"import_{time.time()}_{os.path.basename(filepath)}"
         self.system_manager.add_pending_import(self.db.data_dir, filepath, False)
+        
+        self.toggle_queue_drawer(True)
+        self.add_queue_ui_row(task_id, f"Importing: {os.path.basename(filepath)}")
         
         self.library_manager.import_files(
             file_paths=[filepath], converter=self.converter, active_profile=self.active_profile,
-            on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
-            on_complete_cb=lambda c, t=0, p=filepath: self._on_import_finished(p, c, t),
-            logger=self.logger
+            on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+            on_complete_cb=lambda c, t=0, p=filepath, tid=task_id: self._on_import_finished(p, c, t, tid),
+            logger=self.logger,
+            task_id=task_id
         )
 
         
@@ -628,28 +687,23 @@ class AAXManagerApp:
             "TomeBox will now scan this folder.\n\nIf multiple audio files belonging to the same audiobook are found, they will be automatically merged into a new, single .m4b file on your hard drive.\n\nDo you wish to proceed?"
         ):
             return
-        self.dl_status_var.set("Scanning folder...")
+            
+        import time
+        import os
+        
+        task_id = f"import_{time.time()}_{os.path.basename(folder)}"
         self.system_manager.add_pending_import(self.db.data_dir, folder, True)
         
-        def on_status(msg):
-            self.root.after(0, lambda: self.update_global_status(msg))
-        
-        def on_complete(count, total_found=0):
-            self.system_manager.remove_pending_import(self.db.data_dir, folder)
-            def update_ui():
-                self.reset_ui_if_idle()
-                self.refresh_library_ui()
-                if count > 0:
-                    messagebox.showinfo("Import Complete", f"Successfully imported {count} audiobook{'s' if count != 1 else ''}.")
-                elif total_found > 0:
-                    messagebox.showinfo("Import Skipped", "The selected files are already in your library.")
-                else:
-                    messagebox.showinfo("No Files Found", "No audio files were found.")
-            self.root.after(0, update_ui)
+        self.toggle_queue_drawer(True)
+        self.add_queue_ui_row(task_id, f"Importing Folder: {os.path.basename(folder)}")
         
         self.library_manager.import_folder(
             folder_path=folder, converter=self.converter, active_profile=self.active_profile,
-            on_status_cb=on_status, on_complete_cb=on_complete, logger=self.logger
+            on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+            on_complete_cb=lambda c, t=0, p=folder, tid=task_id: self._on_import_finished(p, c, t, tid),
+            logger=self.logger, 
+            on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+            task_id=task_id
         )
 
     def bring_to_front(self):
@@ -1221,7 +1275,7 @@ class AAXManagerApp:
         elif not show and queue_str in current_panes:
             self.main_paned.forget(self.queue_frame)
 
-    def add_queue_ui_row(self, asin, title):
+    def add_queue_ui_row(self, task_id, title):
         row_frame = tk.Frame(self.queue_inner, bg="#1c1c1c")
         row_frame.pack(fill="x", pady=2, padx=5)
 
@@ -1236,10 +1290,11 @@ class AAXManagerApp:
         status_lbl = ttk.Label(row_frame, textvariable=status_var, width=15, anchor="w")
         status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
-        cancel_btn = ttk.Button(row_frame, text="✕", command=lambda a=asin: self.cancel_download(a))
+        # The unified task_id now properly binds to the cancel button
+        cancel_btn = ttk.Button(row_frame, text="✕", command=lambda a=task_id: self.cancel_task(a))
         cancel_btn.pack(side=tk.RIGHT)
 
-        self.queue_ui_elements[asin] = {
+        self.queue_ui_elements[task_id] = {
             "frame": row_frame,
             "prog_var": prog_var,
             "status_var": status_var
@@ -2216,13 +2271,20 @@ class AAXManagerApp:
         self.save_playback_state()
 
     def cancel_active_task(self):
-        """Cancels active imports or conversions."""
+        """Global button: Cancels all active imports, conversions, and downloads."""
         self.converter.cancel()
-        self.library_manager.cancel_import()
+        self.library_manager.cancel_import() # None = Cancel All
         self.system_manager.clear_all_pending_imports(self.db.data_dir)
+        self.download_manager.cancel_all()
         
-        self.update_global_status("Cancelling active task...")
+        self.update_global_status("Cancelling all tasks...")
         self.update_global_progress(0)
+        
+        # Mark all UI rows as Canceling
+        for task_id in list(self.queue_ui_elements.keys()):
+            self._on_dl_status(task_id, "Canceling...", is_global=False)
+            self._schedule_row_removal(task_id)
+            
         self.root.after(2000, lambda: self.update_global_status("All tasks cancelled."))
         self.root.after(5000, self.reset_ui_if_idle)
 

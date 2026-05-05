@@ -115,6 +115,9 @@ class LibraryManager:
         self._is_importing = False
         self.on_queue_empty_cb = None
 
+        self.active_task_id = None
+        self.canceled_tasks = set()
+
         threading.Thread(target=self._import_worker_loop, daemon=True).start()
 
         # Core State
@@ -127,8 +130,18 @@ class LibraryManager:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.load_state()
 
-    def cancel_import(self):
-        self.cancel_requested = True
+    def cancel_import(self, task_id=None):
+        if task_id:
+            self.canceled_tasks.add(task_id)
+            # If the targeted task is actively running, kill it immediately
+            if self.active_task_id == task_id:
+                self.cancel_requested = True
+        else:
+            # Cancel All (Global behavior)
+            self.cancel_requested = True
+            with self.import_queue.mutex:
+                self.import_queue.queue.clear()
+            self.canceled_tasks.clear()
 
     def _import_worker_loop(self):
         """Background daemon that processes imports sequentially to prevent crashing."""
@@ -298,7 +311,7 @@ class LibraryManager:
         settings["shelves_db"][asin] = tags_list
         self.db.save_settings(settings)
 
-    def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None):
+    def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None, task_id=None):
         if self._is_importing or not self.import_queue.empty():
             self.current_status = f"Queued {len(file_paths)} files for import..."
             if on_status_cb: on_status_cb(self.current_status)
@@ -308,6 +321,13 @@ class LibraryManager:
         """Processes an array of files, extracts metadata, and adds them to the library database."""
         def worker():
             self.cancel_requested = False
+
+            if task_id and task_id in self.canceled_tasks:
+                if on_complete_cb: on_complete_cb(0, len(file_paths))
+                return
+                
+            self.active_task_id = task_id
+
             def update_status(msg):
                 self.current_status = msg
                 if on_status_cb: on_status_cb(msg)
@@ -316,6 +336,11 @@ class LibraryManager:
             added_count = 0
             
             for filepath in file_paths:
+                if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                    update_status("Import cancelled.")
+                    if on_complete_cb: on_complete_cb(0, len(file_paths))
+                    self.active_task_id = None
+                    return
                 if not os.path.exists(filepath): continue
                 if filepath in self.local_library: continue
                 
@@ -435,6 +460,8 @@ class LibraryManager:
             self.current_status = ""
             if on_complete_cb:
                 on_complete_cb(added_count, len(file_paths))
+                
+            self.active_task_id = None
 
         # Run it in the background so a 50-file drag-and-drop doesn't freeze the app
         self.import_queue.put(worker)
@@ -539,7 +566,7 @@ class LibraryManager:
                 
             time.sleep(2)
 
-    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None):
+    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None, task_id=None):
         if self._is_importing or not self.import_queue.empty():
             self.current_status = f"Queued folder for import: {os.path.basename(folder_path)}"
             if on_status_cb: on_status_cb(self.current_status)
@@ -548,6 +575,11 @@ class LibraryManager:
             if on_status_cb: on_status_cb(self.current_status)
         def worker():
             self.cancel_requested = False
+            if task_id and task_id in self.canceled_tasks:
+                if on_complete_cb: on_complete_cb(0, 0)
+                return
+                
+            self.active_task_id = task_id
             import re
             
             def update_status(msg):
@@ -610,7 +642,8 @@ class LibraryManager:
                     
                 # Process each identified album group
                 for album_name, group_files in album_groups.items():
-                    if self.cancel_requested: break
+                    if self.cancel_requested or (task_id and task_id in self.canceled_tasks): 
+                        break
 
                     if album_name == "AAX_NO_MERGE" or len(group_files) == 1:
                         file_paths.extend(group_files)
@@ -666,13 +699,16 @@ class LibraryManager:
                                     file_paths.extend(group_files)
                         else:
                             file_paths.append(out_m4b)
-            if self.cancel_requested:
+            if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                 update_status("Import cancelled.")
                 if on_complete_cb: on_complete_cb(0, 0)
+                self.active_task_id = None
                 return
+
             if not file_paths:
                 if logger: logger(f"No audio files found in {folder_path}")
                 if on_complete_cb: on_complete_cb(0, 0)
+                self.active_task_id = None
                 return
             update_status(f"Found {len(file_paths)} formatted books. Importing...")
             final_count = len(file_paths)
@@ -682,6 +718,8 @@ class LibraryManager:
             added_count = 0
             
             for filepath in file_paths:
+                if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                    break
                 if not os.path.exists(filepath):
                     continue
                 
@@ -797,12 +835,19 @@ class LibraryManager:
                 self.local_library[filepath] = entry
                 added_count += 1
             
+            if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                update_status("Import cancelled.")
+                if on_complete_cb: on_complete_cb(0, final_count)
+                self.active_task_id = None
+                return
+
             if added_count > 0:
                 self.db.save_local_db(self.local_library)
             
-            # Fire the complete callback exactly once, at the very end
             self.current_status = ""
             if on_complete_cb:
                 on_complete_cb(added_count, final_count)
+                
+            self.active_task_id = None
         
         self.import_queue.put(worker)
