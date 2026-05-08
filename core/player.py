@@ -17,6 +17,24 @@ class AudioPlayer:
     def play(self, filepath, start_time, remaining_duration, speed, volume, voice_boost, skip_silence, drm_flags=None):
         self.stop()
         
+        check_cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "a", 
+            "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1"
+        ]
+        if drm_flags: 
+            check_cmd.extend(drm_flags)
+        check_cmd.append(filepath)
+        
+        try:
+            res = ProcessRunner.run_blocking(check_cmd, capture_output=True, text=True)
+            if not res.stdout.strip():
+                self.logger("Playback aborted: No readable audio stream detected.")
+                if self.on_error:
+                    self.on_error("NO_AUDIO")
+                return False
+        except Exception as e:
+            self.logger(f"Stream verification warning: {e}")
+        
         cmd = [
             "ffplay", "-nodisp", "-autoexit", "-loglevel", "error", 
             "-ss", str(start_time), "-t", str(remaining_duration)
@@ -27,7 +45,6 @@ class AudioPlayer:
             
         filters = []
         if speed != 1.0: 
-            # FFmpeg atempo must be between 0.5 and 2.0. Chain them for extreme speeds.
             temp_speed = speed
             while temp_speed > 2.0:
                 filters.append("atempo=2.0")
@@ -46,8 +63,6 @@ class AudioPlayer:
 
         self.logger(f"Starting player: {' '.join(cmd)}")
 
-        # stdout/stderr go to DEVNULL to prevent buffer lockups.
-        # stdin stays as PIPE to keep FFplay alive and prevent instant EOF exit.
         self.process = ProcessRunner.run_async(
             cmd,
             stdout=subprocess.DEVNULL,
@@ -59,6 +74,8 @@ class AudioPlayer:
         self.is_paused = False
         
         threading.Thread(target=self._monitor, args=(self.process,), daemon=True).start()
+        
+        return True 
 
     def _monitor(self, proc):
         # We simply wait for FFplay to hit its -t limit and exit naturally.

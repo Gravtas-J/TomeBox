@@ -62,7 +62,7 @@ class PlaybackController:
         actual_start_time = base_start + self.current_play_time
         remaining_duration = self.chapter_duration - self.current_play_time
         
-        self.player.play(
+        success = self.player.play(
             filepath=self.file_path,
             start_time=actual_start_time,
             remaining_duration=remaining_duration,
@@ -73,6 +73,9 @@ class PlaybackController:
             drm_flags=drm_flags
         )
         
+        if not success:
+            return 
+            
         self.is_playing = True
         self.is_paused = False
         self._last_tick_time = time.time()

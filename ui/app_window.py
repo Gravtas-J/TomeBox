@@ -176,7 +176,7 @@ class AAXManagerApp:
             logger=self.logger,
             on_tick_cb=self._on_playback_tick,
             on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
-            on_error_cb=lambda code: self.root.after(0, self.stop_audio)
+            on_error_cb=self._on_playback_error
         )
         self.system_manager = SystemManager(logger=self.logger)
         self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
@@ -282,6 +282,23 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
         self.root.after(1500, self._prompt_resume_imports)
+
+    def _on_playback_error(self, error_code):
+        """Catches player thread crashes and pushes a visible alert to the user."""
+        def update():
+            self.stop_audio()
+            
+            if error_code == "NO_AUDIO":
+                messagebox.showerror(
+                    "Playback Failed", 
+                    "No audio stream found in this title.\n\nThe file may be corrupted, or the DRM decryption failed during download. Try deleting and re-downloading the file."
+                )
+            else:
+                messagebox.showerror(
+                    "Playback Error", 
+                    f"An unexpected playback error occurred.\nError Code: {error_code}"
+                )
+        self.root.after(0, update)
 
     def _on_import_status(self, task_id, msg):
         self.root.after(0, lambda: self._on_dl_status(task_id, msg, is_global=False))
