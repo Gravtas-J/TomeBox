@@ -630,7 +630,8 @@ class LibraryManager:
                     dir_to_files[root_dir] = audio_files
 
             file_paths = []
-            
+            file_metadata_cache = {}
+
             # 2. Process groups and catch MP3/M4B blobs using Album metadata
             for directory, files in dir_to_files.items():
                 if len(files) == 1:
@@ -638,7 +639,6 @@ class LibraryManager:
                     continue
                 
                 update_status(f"Analyzing parts in {os.path.basename(directory)}...")
-                
                 if on_status_cb: on_status_cb(f"Analyzing parts in {os.path.basename(directory)}...")
                 
                 album_groups = {}
@@ -656,8 +656,11 @@ class LibraryManager:
                         data = converter.get_metadata_and_chapters(full_path)
                         tags = data.get("format", {}).get("tags", {})
                         album = tags.get("album", os.path.basename(directory))
+                        
+                        file_metadata_cache[full_path] = tags # <--- Cache the tags
                     except Exception:
                         album = os.path.basename(directory)
+                        file_metadata_cache[full_path] = {} # <--- Empty cache on fail
                         
                     album_groups.setdefault(album, []).append(full_path)
                     
@@ -691,7 +694,23 @@ class LibraryManager:
                         if not os.path.exists(out_m4b):
                             update_status(f"Merging {len(group_files)} parts: {safe_album_name}...")
                             
-                            group_files.sort(key=natural_sort_key)
+                            def advanced_sort_key(filepath):
+                                tags = file_metadata_cache.get(filepath, {})
+                                track_num = 999999 # Push untracked files to the end
+                                
+                                track_str = tags.get("track", "")
+                                if track_str:
+                                    try:
+                                        # Handles formats like '1', '01', or '1/15'
+                                        track_num = int(str(track_str).split('/')[0])
+                                    except ValueError:
+                                        pass
+                                
+                                filename = os.path.basename(filepath)
+                                # Tuple sorts by track_num first, then natural filename if tracks tie
+                                return (track_num, natural_sort_key(filename))
+                                
+                            group_files.sort(key=advanced_sort_key)
                             
                             success = converter.concat_to_m4b(
                                 group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb
