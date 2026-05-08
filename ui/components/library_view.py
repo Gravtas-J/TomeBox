@@ -149,6 +149,8 @@ def setup_library_view(app, parent):
     app.v_scroll.config(command=app.library_tree.yview)
     app.h_scroll.config(command=app.library_tree.xview)
     app.library_tree.bind("<<TreeviewSelect>>", app.on_item_select)
+
+    app.library_tree.bind("<Double-1>", app.master_play)
     
     app.current_view_mode = "list"
     app.grid_images_ref = [] 

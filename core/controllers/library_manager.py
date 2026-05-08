@@ -370,6 +370,7 @@ class LibraryManager:
                 authors = "Unknown Author"
                 format_clean = ext.replace(".", "").upper()
                 embedded_meta = {}
+                extracted_chapters = []
                 
                 # Replace the old callback check with our new helper
                 update_status(f"Importing: {filename}")
@@ -382,6 +383,7 @@ class LibraryManager:
                     try:
                         data = converter.get_metadata_and_chapters(filepath)
                         tags = data.get("format", {}).get("tags", {})
+                        extracted_chapters = data.get("chapters", [])
 
                         if "title" in tags: title = tags["title"]
                         if "artist" in tags: authors = tags["artist"]
@@ -418,6 +420,7 @@ class LibraryManager:
                     "authors": authors,
                     "owner": active_profile,
                     "duration_min": embedded_meta.get("duration_min", 0),
+                    "chapters": extracted_chapters
                 }
 
                 if embedded_meta.get("series"):
@@ -754,6 +757,7 @@ class LibraryManager:
                 authors = "Unknown Author"
                 format_clean = ext.replace(".", "").upper()
                 embedded_meta = {}
+                extracted_chapters = []
 
                 if on_status_cb:
                     update_status(f"Importing: {filename}")
@@ -763,7 +767,8 @@ class LibraryManager:
                     try:
                         data = converter.get_metadata_and_chapters(filepath)
                         tags = data.get("format", {}).get("tags", {})
-                        
+                        extracted_chapters = data.get("chapters", [])
+
                         if "title" in tags: title = tags["title"]
                         if "artist" in tags: authors = tags["artist"]
                         elif "album_artist" in tags: authors = tags["album_artist"]
@@ -773,7 +778,8 @@ class LibraryManager:
                             "year": tags.get("date", "") or tags.get("year", ""),
                             "comment": tags.get("comment", ""),
                             "narrator": tags.get("composer", ""),
-                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60)
+                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60),
+                            "chapters": extracted_chapters
                         }
                         
                         if "series" in tags:

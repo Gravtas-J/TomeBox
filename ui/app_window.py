@@ -2020,27 +2020,18 @@ class AAXManagerApp:
         self.file_path = filepath
         is_encrypted = filepath.endswith(".aax") or filepath.endswith(".aaxc")
         
+        # --- 1. Clear ghost state immediately to prevent UI hanging on the old book ---
+        self.chapters = []
+        self.current_chapter_idx = 0
+        self.current_play_time = 0.0
+        self.chapter_duration = 0.0
+        self.update_info() 
+        
         self.dl_status_var.set("Analyzing...")
         self.root.update()
-        if not self.chapters:
-            self.logger.info("No chapters found in file. Generating dummy master chapter.")
-            local_data = self.library_manager.local_library.get(self.file_path, {})
-            duration_sec = local_data.get("duration_min", 0) * 60
-            
-            # If the database doesn't know the duration yet, ask FFprobe directly
-            if duration_sec <= 0:
-                try:
-                    data = self.converter.get_metadata_and_chapters(self.file_path)
-                    duration_sec = float(data.get("format", {}).get("duration", 0))
-                except Exception:
-                    duration_sec = 86400 # Fallback to 24 hours if completely unreadable to prevent crashes
-                    
-            self.chapters = [{
-                "id": 0,
-                "start_time": "0.000000",
-                "end_time": str(duration_sec),
-                "tags": {"title": "Full Audiobook"}
-            }]
+        
+        local_data = self.library_manager.local_library.get(filepath, {})
+        
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
@@ -2049,54 +2040,81 @@ class AAXManagerApp:
                 self.file_path = ""
                 return
 
-        self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
-        self.chapters = self.extract_chapters(self.file_path)
+        # --- 2. Database Chapter Caching ---
+        cached_chapters = local_data.get("chapters")
         
-        if self.chapters:
-            local_data = self.library_manager.local_library.get(filepath, {})
+        if cached_chapters:
+            # Instant load from cache
+            self.chapters = cached_chapters
+        else:
+            # First time load: Run ffprobe and cache the result
+            self.dl_status_var.set(f"Extracting chapters: {os.path.basename(self.file_path)}")
+            self.root.update()
             
-            # The Web Player tracks absolute time (last_position). 
-            # The PC Player tracks chapter index + relative time.
-            abs_pos = None
-            if "progress" in local_data and self.active_profile in local_data["progress"]:
-                abs_pos = local_data["progress"][self.active_profile]
-            elif "last_position" in local_data:
-                abs_pos = local_data["last_position"]
-                
-            if abs_pos is not None:
-                # Translate Web's absolute time to PC's chapter format
-                found_chap = 0
-                for i, chap in enumerate(self.chapters):
-                    start = float(chap.get("start_time", 0))
-                    end = float(chap.get("end_time", 0))
-                    if start <= abs_pos < end:
-                        found_chap = i
-                        break
-                    # Catch-all if position somehow overshoots the last chapter
-                    if i == len(self.chapters) - 1 and abs_pos >= end:
-                        found_chap = i
-                        
-                self.current_chapter_idx = found_chap
-                self.current_play_time = max(0.0, abs_pos - float(self.chapters[found_chap].get("start_time", 0)))
-            else:
-                # Fallback to standard PC tracking if no web data exists
-                self.current_chapter_idx = local_data.get("last_chapter", 0)
-                self.current_play_time = local_data.get("last_time", 0.0)
+            self.chapters = self.extract_chapters(self.file_path)
             
-            if self.current_chapter_idx >= len(self.chapters):
-                self.current_chapter_idx = 0
-                self.current_play_time = 0.0
-                
-            self.update_info()
+            local_data["chapters"] = self.chapters
+            self.library_manager.local_library[filepath] = local_data
+            self.library_manager.db.save_local_db(self.library_manager.local_library)
+
+        self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
+        
+        # --- 3. Moved dummy chapter generation here so it evaluates properly ---
+        if not self.chapters:
+            self.logger.info("No chapters found in file. Generating dummy master chapter.")
+            duration_sec = local_data.get("duration_min", 0) * 60
             
-            chapter = self.chapters[self.current_chapter_idx]
-            self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
+            if duration_sec <= 0:
+                try:
+                    duration_sec = self.converter.get_duration(self.file_path)
+                except Exception:
+                    duration_sec = 86400 
+                    
+            self.chapters = [{
+                "id": 0,
+                "start_time": "0.000000",
+                "end_time": str(duration_sec),
+                "tags": {"title": "Full Audiobook"}
+            }]
             
-            curr_str = self.format_time(self.current_play_time)
-            dur_str = self.format_time(self.chapter_duration)
-            self.time_label.config(text=f"{curr_str} / {dur_str}")
-            percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
-            self.progress_var.set(percent)
+        # --- 4. Resume time-syncing logic ---
+        abs_pos = None
+        if "progress" in local_data and self.active_profile in local_data["progress"]:
+            abs_pos = local_data["progress"][self.active_profile]
+        elif "last_position" in local_data:
+            abs_pos = local_data["last_position"]
+            
+        if abs_pos is not None:
+            found_chap = 0
+            for i, chap in enumerate(self.chapters):
+                start = float(chap.get("start_time", 0))
+                end = float(chap.get("end_time", 0))
+                if start <= abs_pos < end:
+                    found_chap = i
+                    break
+                if i == len(self.chapters) - 1 and abs_pos >= end:
+                    found_chap = i
+                    
+            self.current_chapter_idx = found_chap
+            self.current_play_time = max(0.0, abs_pos - float(self.chapters[found_chap].get("start_time", 0)))
+        else:
+            self.current_chapter_idx = local_data.get("last_chapter", 0)
+            self.current_play_time = local_data.get("last_time", 0.0)
+        
+        if self.current_chapter_idx >= len(self.chapters):
+            self.current_chapter_idx = 0
+            self.current_play_time = 0.0
+            
+        self.update_info()
+        
+        chapter = self.chapters[self.current_chapter_idx]
+        self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
+        
+        curr_str = self.format_time(self.current_play_time)
+        dur_str = self.format_time(self.chapter_duration)
+        self.time_label.config(text=f"{curr_str} / {dur_str}")
+        percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
+        self.progress_var.set(percent)
 
         self.metadata_manager.fetch_display_metadata(filepath)
         self.refresh_bookmarks_ui()
