@@ -1533,44 +1533,39 @@ class AAXManagerApp:
         open_match_to_audible_window(self, filepath)
         
     def start_scrape_thread(self, filepath):
-        data = self.library_manager.local_library.get(filepath, {})
-        current_title = data.get("title", os.path.basename(filepath))
-        
-        query = simpledialog.askstring("Search Catalog", "Enter book title or author to search:", initialvalue=current_title)
-        if not query: return
-        
-        self.dl_status_var.set("Searching catalogs (Audible & Google)...")
-        self.metadata_manager.search_catalog(filepath, query)
+        """Re-routes the scraper button to the new unified Match UI."""
+        from ui.components.dialogs import open_match_to_audible_window
+        open_match_to_audible_window(self, filepath)
 
-    def show_scrape_results(self, filepath, products):
-        popup = tk.Toplevel(self.root)
-        popup.title("Select Correct Book")
-        popup.geometry("600x300")
-        popup.transient(self.root)
+    # def show_scrape_results(self, filepath, products):
+    #     popup = tk.Toplevel(self.root)
+    #     popup.title("Select Correct Book")
+    #     popup.geometry("600x300")
+    #     popup.transient(self.root)
         
-        style = ttk.Style()
-        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
-        popup.configure(bg=bg_color)
+    #     style = ttk.Style()
+    #     bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    #     popup.configure(bg=bg_color)
         
-        listbox = tk.Listbox(popup, width=80, height=12)
-        listbox.pack(padx=10, pady=10, fill="both", expand=True)
+    #     listbox = tk.Listbox(popup, width=80, height=12)
+    #     listbox.pack(padx=10, pady=10, fill="both", expand=True)
         
-        for p in products:
-            title = p.get("title", "")
-            raw_authors = p.get("authors", [])
-            authors = ", ".join([a.get("name", "") for a in raw_authors])
-            source = p.get("source", "Audible")
-            listbox.insert(tk.END, f"[{source}] {title} | {authors} ({p.get('asin')})")
+    #     for p in products:
+    #         title = p.get("title", "")
+    #         raw_authors = p.get("authors", [])
+    #         authors = ", ".join([a.get("name", "") for a in raw_authors])
+    #         source = p.get("source", "Audible")
+    #         listbox.insert(tk.END, f"[{source}] {title} | {authors} ({p.get('asin')})")
             
-        def on_select():
-            sel = listbox.curselection()
-            if not sel: return
-            selected_asin = products[sel[0]].get("asin")
-            popup.destroy()
-            self.dl_status_var.set("Fetching and embedding metadata...")
-            self.metadata_manager.apply_scraped_metadata(filepath, selected_asin)
+    #     def on_select():
+    #         sel = listbox.curselection()
+    #         if not sel: return
+    #         selected_asin = products[sel[0]].get("asin")
+    #         popup.destroy()
+    #         self.dl_status_var.set("Fetching and embedding metadata...")
+    #         self.metadata_manager.apply_scraped_metadata(filepath, selected_asin)
             
-        ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
+    #     ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
 
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children('')]

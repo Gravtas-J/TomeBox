@@ -145,9 +145,9 @@ class AudibleClient:
         resp = self._request_with_backoff(
             client.get, 
             "1.0/catalog/products", 
-            title=query, 
+            keywords=query, 
             num_results=num_results, 
-            response_groups="product_desc,product_attrs,contributors"
+            response_groups="product_desc,product_attrs,contributors,media"
         )
         return resp.get("products", [])
 

@@ -49,17 +49,19 @@ class MetadataManager:
         import requests
         results = []
         try:
-            url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{requests.utils.quote(query)}&maxResults=5"
+            url = f"https://www.googleapis.com/books/v1/volumes?q={requests.utils.quote(query)}&maxResults=5"
             resp = requests.get(url, timeout=5)
             
             if resp.status_code == 200:
                 for item in resp.json().get("items", []):
                     vol = item.get("volumeInfo", {})
+                    images = vol.get("imageLinks", {})
                     results.append({
                         "title": vol.get("title", "Unknown Title"),
                         "authors": [{"name": a} for a in vol.get("authors", ["Unknown Author"])],
-                        "asin": "GB_" + item.get("id", ""),  # Use Volume ID as a fake ASIN
-                        "source": "Google"
+                        "asin": "GB_" + item.get("id", ""),
+                        "source": "Google",
+                        "cover_url": images.get("thumbnail") or images.get("smallThumbnail")
                     })
             elif resp.status_code == 429:
                 if hasattr(self, 'logger'): self.logger("Google Books API rate limit reached (HTTP 429).")
