@@ -672,9 +672,21 @@ class LibraryManager:
                         safe_album_name = "".join([c for c in album_name if c.isalnum() or c in [' ', '-', '_']]).rstrip()
                         out_m4b = os.path.join(directory, f"{safe_album_name}.m4b")
                         
-                        # Prevent naming collision if a file is already named exactly AlbumName.m4b
-                        if os.path.exists(out_m4b) and out_m4b in group_files:
-                            out_m4b = os.path.join(directory, f"{safe_album_name}_merged.m4b")
+                        if out_m4b in group_files:
+                            update_status(f"Using existing merge: {safe_album_name}")
+                            if logger: logger(f"Skipping redundant merge. Master file {os.path.basename(out_m4b)} already exists.")
+                            file_paths.append(out_m4b)
+                            continue
+                            
+                        fallback_m4b = os.path.join(directory, f"{safe_album_name}_merged.m4b")
+                        if fallback_m4b in group_files:
+                            update_status(f"Using existing merge: {safe_album_name}")
+                            if logger: logger(f"Skipping redundant merge. Master file {os.path.basename(fallback_m4b)} already exists.")
+                            file_paths.append(fallback_m4b)
+                            continue
+                        
+                        if os.path.exists(out_m4b):
+                            out_m4b = fallback_m4b
                             
                         if not os.path.exists(out_m4b):
                             update_status(f"Merging {len(group_files)} parts: {safe_album_name}...")
