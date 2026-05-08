@@ -1244,6 +1244,17 @@ class AAXManagerApp:
             card = tk.Frame(outer_card, bg=default_bg, width=170, height=240, bd=0, highlightthickness=0)
             card.pack_propagate(False) 
             card.pack(padx=2, pady=2) 
+            
+            is_missing_file = "Downloaded" in status and row_path and not os.path.exists(row_path)
+            is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
+            
+            if is_missing_file:
+                warning_lbl = tk.Label(card, text="⚠️ File Missing", bg="#ff4444", fg="#ffffff", font=("Segoe UI", 8, "bold"))
+                warning_lbl.pack(side=tk.TOP, fill="x")
+            elif is_missing_duration:
+                warning_lbl = tk.Label(card, text="⚠️ No Duration", bg="#ffaa00", fg="#000000", font=("Segoe UI", 8, "bold"))
+                warning_lbl.pack(side=tk.TOP, fill="x")
+
             img_obj = None
             if asin in self.cover_cache:
                 img_obj = self.cover_cache[asin]
@@ -1261,7 +1272,9 @@ class AAXManagerApp:
             img_label.pack(pady=(5, 0))
             
             display_title = title[:45] + "..." if len(title) > 45 else title
-            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=default_fg, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
+            
+            text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
+            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
             text_label.pack(pady=(5, 0))
             
             def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
@@ -1374,8 +1387,24 @@ class AAXManagerApp:
                 self.library_tree.grid(row=0, column=0, sticky="nsew")
                 self.h_scroll.grid(row=1, column=0, sticky="ew")
 
+                # Configure the health warning tag colors
+                self.library_tree.tag_configure('warning', foreground='#ffaa00') # Orange for missing metadata
+                self.library_tree.tag_configure('error', foreground='#ff4444')   # Red for missing files
+
                 for row in filtered_rows:
-                    self.library_tree.insert("", "end", values=row)
+                    title, authors, series_str, duration_str, asin, status, row_path = row
+                    
+                    # Evaluate Health
+                    tags = ()
+                    is_missing_file = "Downloaded" in status and row_path and not os.path.exists(row_path)
+                    is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
+
+                    if is_missing_file:
+                        tags = ('error',)
+                    elif is_missing_duration:
+                        tags = ('warning',)
+
+                    self.library_tree.insert("", "end", values=row, tags=tags)
 
                 if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
                     self.sort_treeview(self.library_tree, self.current_sort_col, self.current_sort_descending)
