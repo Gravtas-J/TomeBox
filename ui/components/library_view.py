@@ -227,6 +227,10 @@ def setup_library_view(app, parent):
     app.error_btn = ttk.Button(status_frame, textvariable=app.error_btn_var, command=app.open_error_log, state=tk.DISABLED)
     app.error_btn.pack(side=tk.RIGHT, padx=5)
     
+    app.api_health_var = tk.StringVar(value="API: Online")
+    api_health_label = ttk.Label(status_frame, textvariable=app.api_health_var, foreground="#888888")
+    api_health_label.pack(side=tk.RIGHT, padx=15)
+
     ttk.Progressbar(dl_prog_frame, variable=app.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
 
     app.refresh_library_ui()

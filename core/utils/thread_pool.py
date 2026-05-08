@@ -1,21 +1,41 @@
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import time
+import threading
 
 class AppThreadPool:
-    """Centralized thread manager to prevent runaway thread spawning."""
+    """Centralized thread manager with task throttling capabilities."""
     def __init__(self, max_workers=10, logger=None):
-        # 10 workers is a safe ceiling for an I/O heavy desktop app
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.logger = logger
+        
+        # Throttling state
+        self._api_lock = threading.Lock()
+        self._last_api_call = 0.0
+        self.api_throttle_delay = 1.5  # Minimum seconds between API-bound tasks
 
-    def submit(self, fn, *args, **kwargs):
-        """Submits a task to the pool and attaches an error handler."""
-        future = self.executor.submit(fn, *args, **kwargs)
+    def submit(self, fn, *args, task_type="standard", **kwargs):
+        """Submits a task. Use task_type='api' to enforce rate limit delays."""
+        if task_type == "api":
+            future = self.executor.submit(self._throttled_wrapper, fn, *args, **kwargs)
+        else:
+            future = self.executor.submit(fn, *args, **kwargs)
+            
         future.add_done_callback(self._handle_exception)
         return future
 
+    def _throttled_wrapper(self, fn, *args, **kwargs):
+        """Blocks execution until the required throttle delay has passed."""
+        with self._api_lock:
+            now = time.time()
+            elapsed = now - self._last_api_call
+            if elapsed < self.api_throttle_delay:
+                time.sleep(self.api_throttle_delay - elapsed)
+            self._last_api_call = time.time()
+            
+        return fn(*args, **kwargs)
+
     def _handle_exception(self, future):
-        """Silently catches and logs thread crashes so they don't take down the UI."""
         try:
             future.result()
         except Exception as e:
@@ -25,5 +45,4 @@ class AppThreadPool:
                 print(f"Thread Pool Exception: {e}")
 
     def shutdown(self):
-        """Cleanly kills all pending tasks."""
         self.executor.shutdown(wait=False, cancel_futures=True)

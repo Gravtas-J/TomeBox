@@ -51,6 +51,7 @@ class MetadataManager:
         try:
             url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{requests.utils.quote(query)}&maxResults=5"
             resp = requests.get(url, timeout=5)
+            
             if resp.status_code == 200:
                 for item in resp.json().get("items", []):
                     vol = item.get("volumeInfo", {})
@@ -60,31 +61,72 @@ class MetadataManager:
                         "asin": "GB_" + item.get("id", ""),  # Use Volume ID as a fake ASIN
                         "source": "Google"
                     })
+            elif resp.status_code == 429:
+                if hasattr(self, 'logger'): self.logger("Google Books API rate limit reached (HTTP 429).")
+            else:
+                if hasattr(self, 'logger'): self.logger(f"Google Books API returned status code: {resp.status_code}")
+                
+        except requests.exceptions.Timeout:
+            if hasattr(self, 'logger'): self.logger("Google Books search timed out.")
+        except requests.exceptions.RequestException as e:
+            if hasattr(self, 'logger'): self.logger(f"Google Books network error: {e}")
         except Exception as e:
-            if hasattr(self, 'logger'): self.logger(f"Google Search Error: {e}")
+            if hasattr(self, 'logger'): self.logger(f"Unexpected Google Books search error: {e}")
+            
         return results
 
     def search_catalog(self, filepath, query):
-        """Searches both Audible and Google Books for matches."""
+        """Searches Audible -> Google Books -> Local tags in a strict fallback cascade."""
         import threading
         def worker():
             products = []
+            audible_failed = False
             
             # 1. Try Audible (if logged in)
             if getattr(self, 'api', None) and self.api.auth:
                 try:
-                    import audible
-                    client = audible.Client(auth=self.api.auth)
-                    resp = client.get("1.0/catalog/products", title=query, response_groups="product_attrs", num_results=5)
-                    for p in resp.get("products", []):
-                        p["source"] = "Audible"
-                        products.append(p)
+                    # Reroute to use the api_client so we catch the new structured errors
+                    raw_products = self.api.search_catalog(query, num_results=5)
+                    for p in raw_products:
+                        # ASIN Parsing Update: Check 'asin', fallback to 'id' if storefront structure changed
+                        asin = p.get("asin") or p.get("id")
+                        if asin:
+                            p["asin"] = asin
+                            p["source"] = "Audible"
+                            products.append(p)
                 except Exception as e:
-                    if hasattr(self, 'logger'): self.logger(f"Audible search failed: {e}")
+                    audible_failed = True
+                    err_type = type(e).__name__
+                    if hasattr(self, 'logger'): self.logger(f"Audible search failed ({err_type}): {e}")
+                    
+                    if "RateLimitError" in err_type and hasattr(self, 'on_error'):
+                        self.on_error("Audible API rate limit reached. Falling back to alternative sources.")
+
+            # 2. Strict Fallback: Try Google Books if Audible failed or returned 0 results
+            if audible_failed or not products:
+                products.extend(self.search_google_books(query))
             
-            # 2. Add Google Books results
-            products.extend(self.search_google_books(query))
-            
+            # 3. Strict Fallback: Local Tag Extraction via converter.py/ffprobe
+            if not products:
+                try:
+                    from core.converter import AudioConverter
+                    converter = AudioConverter(self.logger)
+                    data = converter.get_metadata_and_chapters(filepath)
+                    tags = data.get("format", {}).get("tags", {})
+                    
+                    if tags:
+                        title = tags.get("title", os.path.basename(filepath))
+                        artist = tags.get("artist") or tags.get("album_artist") or "Unknown Author"
+                        
+                        products.append({
+                            "title": title,
+                            "authors": [{"name": artist}],
+                            "asin": "LOCAL_TAGS",
+                            "source": "Local File Tags"
+                        })
+                except Exception as e:
+                    if hasattr(self, 'logger'): self.logger(f"Local tag extraction failed: {e}")
+
             if hasattr(self, 'on_search_complete') and self.on_search_complete:
                 self.on_search_complete(filepath, products)
                 

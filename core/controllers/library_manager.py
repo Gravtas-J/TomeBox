@@ -9,7 +9,7 @@ except ImportError:
     pass
 import queue
 import re
-
+import time
 try:
     from rapidfuzz import fuzz
     RAPIDFUZZ_AVAILABLE = True
@@ -50,7 +50,6 @@ def _normalize_title(title):
     t = re.sub(r"\s+", " ", t).strip()
     
     return t
-
 
 def _find_matching_cloud_item(title, cloud_items, threshold=85):
     """Returns the best-matching cloud item for a given local title, or None."""
@@ -130,6 +129,25 @@ class LibraryManager:
         self.cloud_cache_path = self.db.get_cloud_cache_path(self.active_profile)
         self.load_state()
 
+        self.is_rate_limited = False
+        self.rate_limit_reset_time = 0.0
+
+    def trigger_rate_limit(self, cooldown_seconds=60):
+        """Flags the manager as rate limited and sets the expiration timestamp."""
+        self.is_rate_limited = True
+        self.rate_limit_reset_time = time.time() + cooldown_seconds
+        self.current_status = f"Rate limited. Pausing tasks for {cooldown_seconds}s."
+
+    def check_rate_limit(self):
+        """Returns True if currently rate limited, automatically clearing the flag if expired."""
+        if self.is_rate_limited:
+            if time.time() > self.rate_limit_reset_time:
+                self.is_rate_limited = False
+                self.current_status = ""
+                return False
+            return True
+        return False
+    
     def cancel_import(self, task_id=None):
         if task_id:
             self.canceled_tasks.add(task_id)

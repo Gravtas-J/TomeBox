@@ -6,8 +6,18 @@ import sys
 class CallableLogger:
     def __init__(self, logger):
         self._logger = logger
+
     def __call__(self, msg):
         self._logger.info(msg)
+
+    def error(self, msg, exc_info=False):
+        """Passes error logs through, optionally with stack traces."""
+        self._logger.error(msg, exc_info=exc_info)
+        
+    def exception(self, msg):
+        """Automatically captures and logs the current exception stack trace."""
+        self._logger.exception(msg)
+        
     def __getattr__(self, name):
         return getattr(self._logger, name)
 

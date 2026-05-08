@@ -487,10 +487,44 @@ class AAXManagerApp:
             
         self.root.after(0, update)
 
+    def update_api_health(self, message, is_error=False):
+        """Thread-safe update of the API health status label."""
+        def update():
+            if hasattr(self, 'api_health_var'):
+                self.api_health_var.set(f"API: {message}")
+            if is_error:
+                # Auto-reset the health indicator back to Online after the 60s cooldown expires
+                self.root.after(60000, lambda: self.api_health_var.set("API: Online"))
+        self.root.after(0, update)
+
     def _on_scrape_error(self, err_msg):
+        """Catches metadata scrape errors, maps them to plain text, and updates the UI."""
         def update():
             self.reset_ui_if_idle()
-            messagebox.showerror("Scrape Failed", err_msg)
+            
+            err_lower = err_msg.lower()
+            
+            # Map technical errors to user-friendly messages
+            if "rate limit" in err_lower or "429" in err_lower:
+                user_msg = "Audible API rate limit reached. Pausing scrape for 60s."
+                self.update_api_health("Rate Limited", is_error=True)
+                
+            elif "timeout" in err_lower or "unavailable" in err_lower:
+                user_msg = "Metadata server unresponsive. Using local tags."
+                self.update_api_health("Offline", is_error=True)
+                
+            else:
+                user_msg = "Failed to fetch metadata. Using local tags."
+                self.update_api_health("Error", is_error=True)
+                
+            # Update the main task status bar to ensure the user sees it, 
+            # rather than throwing a disruptive messagebox popup.
+            self.dl_status_var.set(user_msg)
+            
+            # Optionally, log the error trace silently to the log file via our new logger method
+            if hasattr(self, 'logger'):
+                self.logger.error(f"UI caught scrape error: {err_msg}")
+                
         self.root.after(0, update)
 
     def _on_dl_status(self, asin, status_text, is_global=False):

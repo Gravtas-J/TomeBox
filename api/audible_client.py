@@ -3,9 +3,14 @@ import requests
 try:
     import audible
     from audible.aescipher import decrypt_voucher_from_licenserequest
+    from httpx import HTTPStatusError, RequestError
 except ImportError:
     pass
 import time
+
+
+class RateLimitError(Exception): pass
+class APIUnavailableError(Exception): pass
 
 def find_url_in_response(d):
     """Recursively hunts for an offline_url anywhere in a nested API response."""
@@ -43,6 +48,22 @@ def find_key_iv_in_voucher(d):
 class AudibleClient:
     def __init__(self):
         self.auth = None
+
+    def _request_with_backoff(self, request_func, *args, max_retries=3, base_delay=2, **kwargs):
+        """Executes an API call with exponential backoff for 429 errors."""
+        for attempt in range(max_retries):
+            try:
+                return request_func(*args, **kwargs)
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "too many requests" in err_str:
+                    if attempt == max_retries - 1:
+                        raise RateLimitError("Audible API rate limit reached (HTTP 429).")
+                    time.sleep(base_delay * (2 ** attempt))
+                elif any(code in err_str for code in ["403", "500", "502", "503", "504"]):
+                    raise APIUnavailableError(f"Audible API unavailable: {e}")
+                else:
+                    raise e
 
     def is_authenticated(self):
         return self.auth is not None
@@ -84,27 +105,50 @@ class AudibleClient:
                     # If it's a different ValueError, raise it normally
                     raise e
         return ""
-
+    
     def fetch_library(self):
         if not self.auth:
             raise Exception("Not authenticated")
         client = audible.Client(auth=self.auth)
-        resp = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
+        
+        resp = self._request_with_backoff(
+            client.get, 
+            "1.0/library", 
+            response_groups="product_desc,product_attrs,series,contributors,media", 
+            num_results=1000
+        )
         return resp.get("items", [])
+
+    def _handle_api_error(self, e):
+        """Standardizes exception handling across Audible API calls."""
+        err_str = str(e).lower()
+        if "429" in err_str or "too many requests" in err_str:
+            raise RateLimitError("Audible API rate limit reached (HTTP 429).")
+        elif any(code in err_str for code in ["403", "500", "502", "503", "504"]):
+            raise APIUnavailableError(f"Audible API unavailable: {e}")
+        raise e
 
     def fetch_product_metadata(self, asin, detailed=False):
         if not self.auth:
             raise Exception("Not authenticated")
         client = audible.Client(auth=self.auth)
         rg = "product_desc,product_attrs,contributors,media,series" if detailed else "media,product_attrs"
-        resp = client.get(f"1.0/catalog/products/{asin}", response_groups=rg)
+        
+        resp = self._request_with_backoff(client.get, f"1.0/catalog/products/{asin}", response_groups=rg)
         return resp.get("product", {})
 
     def search_catalog(self, query, num_results=5):
         if not self.auth:
             raise Exception("Not authenticated")
         client = audible.Client(auth=self.auth)
-        resp = client.get("1.0/catalog/products", title=query, num_results=num_results, response_groups="product_desc,product_attrs,contributors")
+        
+        resp = self._request_with_backoff(
+            client.get, 
+            "1.0/catalog/products", 
+            title=query, 
+            num_results=num_results, 
+            response_groups="product_desc,product_attrs,contributors"
+        )
         return resp.get("products", [])
 
     def get_download_license(self, asin):
