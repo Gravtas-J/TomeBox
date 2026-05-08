@@ -944,19 +944,19 @@ class AAXManagerApp:
         if not selected:
             return
             
-        item = tree.item(selected)
-        # The index in the Treeview is 1-based, so subtract 1 for the 0-based list
-        target_idx = int(item['values'][0]) - 1 
+        
+        target_idx = tree.index(selected)
 
         if 0 <= target_idx < len(self.chapters):
             # Close the window
-            self.chapter_win.destroy()
+            if hasattr(self, 'chapter_win') and self.chapter_win:
+                self.chapter_win.destroy()
             
-            # Stop current playback
+            # Stop current playback and save state
             self.stop_audio()
                 
+            # Set the new target
             self.current_chapter_idx = target_idx
-            
             self.current_play_time = 0.0
             
             self.play_chapter()
