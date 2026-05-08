@@ -4,7 +4,7 @@ from ui.components.dialogs import open_auth_window, open_achievements_window
 
 import tkinter as tk
 from tkinter import ttk
-from ui.components.dialogs import open_auth_window, open_achievements_window, open_pairing_window
+from ui.components.dialogs import open_auth_window, open_achievements_window, open_pairing_window, open_audio_device_settings
 
 def setup_menu_bar(app):
     """Builds the top menu bar using native OS integration."""
@@ -18,6 +18,7 @@ def setup_menu_bar(app):
     app.main_menu.add_cascade(label="File", menu=app.file_menu)
     
     app.file_menu.add_command(label="Set Download Folder", command=app.set_download_folder)
+    app.file_menu.add_command(label="Set Audio Output", command=lambda: open_audio_device_settings(app))
     app.file_menu.add_command(label="Authentication & Profiles", command=lambda: open_auth_window(app))
     app.file_menu.add_separator()
     app.file_menu.add_checkbutton(

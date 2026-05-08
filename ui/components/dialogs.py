@@ -77,6 +77,58 @@ def open_error_log_window(app):
         
     ttk.Button(btn_frame, text="Clear All", command=clear_all).pack(side=tk.RIGHT, padx=5)
 
+def open_audio_device_settings(app):
+        """Queries the OS for audio hardware and displays a selection menu."""
+        try:
+            import sounddevice as sd
+            devices = []
+            # Query the OS and filter out inputs (microphones)
+            for d in sd.query_devices():
+                if d['max_output_channels'] > 0 and d['name'] not in devices:
+                    devices.append(d['name'])
+        except ImportError:
+            messagebox.showerror("Dependency Missing", "Please run 'pip install sounddevice' to enable hardware scanning.")
+            return
+        except Exception as e:
+            messagebox.showerror("Device Error", f"Could not query audio devices:\n{e}")
+            return
+
+        devices.insert(0, "System Default")
+        current_device = app.settings.get("audio_device", "System Default")
+
+        popup = tk.Toplevel(app.root)
+        popup.title("Playback Device Settings")
+        popup.geometry("450x150")
+        popup.transient(app.root)
+        
+        # Theme matching
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+        popup.configure(bg=bg_color)
+        
+        ttk.Label(popup, text="Select Hardware Output:").pack(pady=(20, 5))
+        
+        device_var = tk.StringVar(value=current_device)
+        combo = ttk.Combobox(popup, textvariable=device_var, values=devices, state="readonly", width=50)
+        combo.pack(pady=5)
+        
+        def apply():
+            selected = device_var.get()
+            app.settings["audio_device"] = selected
+            app.db.save_settings(app.settings)
+            
+            app.playback.set_audio_device(selected)
+            
+            # If audio is actively playing, bounce the stream so the change takes effect immediately
+            if app.is_playing:
+                app.pause_audio()
+                app.is_paused = False
+                app.resume_playback()
+                
+            popup.destroy()
+            
+        ttk.Button(popup, text="Apply", command=apply).pack(pady=(10, 0))
+
 def open_auth_window(app):
     if getattr(app, 'auth_window', None) and app.auth_window.winfo_exists():
         app.auth_window.lift()

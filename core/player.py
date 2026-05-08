@@ -14,7 +14,7 @@ class AudioPlayer:
         self.on_complete = on_complete_cb
         self.on_error = on_error_cb
 
-    def play(self, filepath, start_time, remaining_duration, speed, volume, voice_boost, skip_silence, drm_flags=None):
+    def play(self, filepath, start_time, remaining_duration, speed, volume, voice_boost, skip_silence, drm_flags=None, audio_device=None):
         self.stop()
         
         check_cmd = [
@@ -63,11 +63,17 @@ class AudioPlayer:
 
         self.logger(f"Starting player: {' '.join(cmd)}")
 
+        run_env = os.environ.copy()
+        if audio_device and audio_device != "System Default":
+            run_env["SDL_AUDIO_DEVICE_NAME"] = audio_device
+            self.logger(f"Routing audio to hardware device: {audio_device}")
+
         self.process = ProcessRunner.run_async(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            stdin=subprocess.PIPE
+            stdin=subprocess.PIPE,
+            env=run_env 
         )
         
         self.is_playing = True
@@ -75,7 +81,7 @@ class AudioPlayer:
         
         threading.Thread(target=self._monitor, args=(self.process,), daemon=True).start()
         
-        return True 
+        return True
 
     def _monitor(self, proc):
         # We simply wait for FFplay to hit its -t limit and exit naturally.

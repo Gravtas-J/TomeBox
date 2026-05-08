@@ -28,7 +28,7 @@ import sys
 import socket
 from api.audible_client import AudibleClient
 
-from ui.components.dialogs import open_auth_window, open_chapter_window, open_sleep_menu, open_achievements_window, show_achievement_toast, open_pairing_window, open_error_log_window
+from ui.components.dialogs import open_auth_window, show_achievement_toast, open_pairing_window, open_error_log_window
 from ui.components.theme import apply_theme
 from ui.components.menu_bar import setup_menu_bar
 from ui.components.player_bar import setup_player_bar
@@ -178,6 +178,10 @@ class AAXManagerApp:
             on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
             on_error_cb=self._on_playback_error
         )
+        # Load saved audio device
+        saved_device = self.settings.get("audio_device", "System Default")
+        self.playback.set_audio_device(saved_device)
+
         self.system_manager = SystemManager(logger=self.logger)
         self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
 
@@ -282,6 +286,8 @@ class AAXManagerApp:
             "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
         }
         self.root.after(1500, self._prompt_resume_imports)
+
+    
 
     def _on_playback_error(self, error_code):
         """Catches player thread crashes and pushes a visible alert to the user."""

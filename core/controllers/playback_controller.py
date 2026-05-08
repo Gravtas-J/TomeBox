@@ -26,6 +26,7 @@ class PlaybackController:
         self.chapter_duration = 0.0
         self.playback_speed = 1.0
         self.volume = 100
+        self.audio_device = "System Default"
         
         # Status Flags
         self.is_playing = False
@@ -34,6 +35,9 @@ class PlaybackController:
         # Internal Threading
         self._last_tick_time = 0
         self._monitor_active = False
+
+    def set_audio_device(self, device_name):
+        self.audio_device = device_name
 
     def load_file(self, filepath, chapters, start_chapter_idx, start_time):
         """Loads a new file and sets the initial state without playing."""
@@ -70,7 +74,8 @@ class PlaybackController:
             volume=self.volume,
             voice_boost=voice_boost,
             skip_silence=skip_silence,
-            drm_flags=drm_flags
+            drm_flags=drm_flags,
+            audio_device=self.audio_device
         )
         
         if not success:
