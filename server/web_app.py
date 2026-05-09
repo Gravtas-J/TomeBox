@@ -5,6 +5,8 @@ from fastapi import FastAPI, Request, HTTPException, status, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from core.utils.paths import get_resource_path
+from core.utils.process_runner import ProcessRunner
+
 def create_server_app(tomebox):
     api = FastAPI()
     static_dir = get_resource_path("server", "static")
@@ -98,7 +100,8 @@ def create_server_app(tomebox):
                 "items_count": len(tomebox.library_manager.cloud_items)
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Refresh failed: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error during library refresh.")
 
     @api.get("/auth")
     def authenticate_device(token: str):
@@ -426,16 +429,16 @@ def create_server_app(tomebox):
                 return []
             try:
                 cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
-                result = subprocess.run(
+                result = ProcessRunner.run_blocking(
                     cmd,
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
-                    errors='replace',
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    errors='replace'
                 )
                 raw_chapters = json.loads(result.stdout).get("chapters", [])
-            except Exception:
+            except Exception as e:
+                if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - FFprobe chapter extraction failed: {e}")
                 return []
         
         # Always normalize to the {start, title} shape the web client expects.
@@ -571,7 +574,8 @@ def create_server_app(tomebox):
                     if hasattr(tomebox, 'logger'):
                         tomebox.logger(f"Library fetch failed during profile switch: {e}")
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to load auth: {str(e)}")
+                if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Failed to load auth for {name}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to load authentication for profile.")
         else:
             # Profile has no auth — clear the current api_client
             tomebox.api_client.auth = None
@@ -697,7 +701,8 @@ def create_server_app(tomebox):
             raise HTTPException(status_code=500, detail="Failed to generate login URL in time")
             
         if state.get("error"):
-            raise HTTPException(status_code=500, detail=state["error"])
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Login start failed: {state['error']}")
+            raise HTTPException(status_code=500, detail="Login process failed or was cancelled.")
             
         return {"auth_url": state["auth_url"]}
 
@@ -726,7 +731,8 @@ def create_server_app(tomebox):
             raise HTTPException(status_code=504, detail="Amazon token exchange timed out.")
             
         if state.get("error"):
-            raise HTTPException(status_code=500, detail=state["error"])
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Login complete failed: {state['error']}")
+            raise HTTPException(status_code=500, detail="Amazon token exchange failed.")
             
         return {"status": "success", "profile": profile}
         
@@ -863,7 +869,8 @@ def create_server_app(tomebox):
                 
             return {"status": "success", "message": "Import started in background"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Local path import failed: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error during import task.")
         
     @api.delete("/api/library/import")
     def cancel_import_web():
@@ -981,7 +988,8 @@ def create_server_app(tomebox):
             tomebox.metadata_manager.apply_scraped_metadata(path, asin)
             return {"status": "success", "message": "Scrape and embed started in background"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Metadata scrape failed: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error during metadata scrape.")
 
     @api.post("/api/library/remove")
     async def remove_library_entry(request: Request):
