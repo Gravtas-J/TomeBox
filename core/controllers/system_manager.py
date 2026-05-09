@@ -86,17 +86,26 @@ class SystemManager:
                 continue
 
     def toggle_system_sleep(self, prevent_sleep=True):
-        """Prevents Windows from sleeping during active background tasks."""
+        """Prevents Windows and the display from sleeping during active background tasks."""
         if os.name != 'nt':
             return
         try:
             import ctypes
+            
+            # Windows API Constants
+            ES_CONTINUOUS = 0x80000000
+            ES_SYSTEM_REQUIRED = 0x00000001
+            ES_DISPLAY_REQUIRED = 0x00000002
+            
             if prevent_sleep:
-                self.logger("Applying sleep prevention for active background task.")
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+                self.logger("Applying system and display sleep prevention for active task.")
+                ctypes.windll.kernel32.SetThreadExecutionState(
+                    ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+                )
             else:
-                self.logger("Releasing system sleep prevention.")
-                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+                self.logger("Releasing system and display sleep prevention.")
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+                
         except Exception as e:
             self.logger(f"Failed to toggle sleep state: {e}")
 

@@ -16,7 +16,7 @@ try:
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
 from core.utils.process_runner import ProcessRunner
-
+from core.utils.formatting import format_series_list
 def _normalize_title(title):
     """Strips common boilerplate and normalises punctuation for comparison."""
     if not title:
@@ -233,9 +233,7 @@ class LibraryManager:
             raw_authors = item.get("authors") or []
             authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
             
-            raw_series = item.get("series") or []
-            series_list = [f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")]
-            series_str = ", ".join(series_list)
+            series_str = format_series_list(item.get("series"))
             
             duration_min = item.get("runtime_length_min") or 0
             hours, mins = divmod(duration_min, 60)
@@ -243,7 +241,6 @@ class LibraryManager:
             
             asin = item.get("asin", "Unknown")
             
-            # --- THE FIX: Look up against the new title dictionary ---
             local_data = local_titles.get(title) 
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             local_path = local_data['path'] if local_data else ""
@@ -264,7 +261,7 @@ class LibraryManager:
 
                 loc_series = data.get("series", "N/A")
                 if meta.get("series") and loc_series == "N/A":
-                    loc_series = ", ".join([f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in meta.get("series") if isinstance(s, dict) and s.get("title")])
+                    loc_series = format_series_list(meta.get("series"))
 
                 duration_min = meta.get("runtime_length_min") or data.get("duration_min") or 0
                 loc_duration = f"{duration_min//60}h {duration_min%60}m" if duration_min > 0 else "N/A"

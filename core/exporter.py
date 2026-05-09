@@ -1,6 +1,6 @@
 import csv
 import html
-
+from core.utils.formatting import format_series_list
 class LibraryExporter:
     @staticmethod
     def _sanitize_csv(value):
@@ -16,36 +16,35 @@ class LibraryExporter:
             writer = csv.writer(f)
             writer.writerow(["Title", "Author(s)", "Series", "Duration (mins)", "ASIN", "Status", "Local Path"])
 
-            local_titles = {data["title"]: data for path, data in local_library.items()}
-            cloud_titles = []
+            # ---> FIX: Create lookup maps for both ASIN (Primary) and Title (Fallback)
+            local_by_asin = {}
+            local_by_title = {}
+            for path, data in local_library.items():
+                asin = data.get("asin")
+                if asin and asin != "Unknown":
+                    local_by_asin[asin] = data
+                local_by_title[data["title"]] = data
+
+            processed_asins = set()
 
             for item in cloud_items:
                 title = item.get("title", "Unknown")
-                cloud_titles.append(title)
+                asin = item.get("asin", "Unknown")
+                processed_asins.add(asin)
                 
                 raw_authors = item.get("authors") or []
                 authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
                 
-                raw_series = item.get("series") or []
-                series_list = []
-                for s in raw_series:
-                    if isinstance(s, dict):
-                        s_title = s.get("title", "")
-                        s_seq = s.get("sequence", "")
-                        if s_title and s_seq:
-                            series_list.append(f"{s_title} (Bk {s_seq})")
-                        elif s_title:
-                            series_list.append(s_title)
-                series_str = ", ".join(series_list)
+                series_str = format_series_list(item.get("series"))
 
                 duration = item.get("runtime_length_min") or 0
-                asin = item.get("asin", "Unknown")
 
-                local_data = local_titles.get(title)
+                # ---> FIX: Match logic prioritized by ASIN then Title
+                local_data = local_by_asin.get(asin) or local_by_title.get(title)
+                
                 status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
                 local_path = local_data['path'] if local_data else ""
 
-                # Apply CSV sanitization before writing
                 writer.writerow([
                     LibraryExporter._sanitize_csv(title), 
                     LibraryExporter._sanitize_csv(authors), 
@@ -56,19 +55,24 @@ class LibraryExporter:
                     local_path
                 ])
 
+            # Export local files that aren't in the cloud list
             for path, data in local_library.items():
-                if data["title"] not in cloud_titles:
+                local_asin = data.get("asin", "Unknown")
+                if local_asin not in processed_asins:
                     writer.writerow([
                         LibraryExporter._sanitize_csv(data["title"]), 
                         "Local File", "N/A", "N/A", 
-                        data.get("asin", "Unknown"), 
+                        local_asin, 
                         f"Downloaded ({data.get('format', 'Unknown')})", 
                         path
                     ])
 
     @staticmethod
     def export_html(output_file, local_library, cloud_items):
-        html_content = """
+        # 1. Initialize a list to accumulate parts
+        parts = []
+        
+        parts.append("""
         <!DOCTYPE html>
         <html>
         <head>
@@ -92,27 +96,21 @@ class LibraryExporter:
         <body>
             <h1>My TomeBox Library</h1>
             <div class="grid">
-        """
+        """)
 
         local_titles = {data["title"]: data for path, data in local_library.items()}
         cloud_titles = []
 
+        # 2. Append cloud items
         for item in cloud_items:
             raw_title = item.get("title", "Unknown")
             cloud_titles.append(raw_title)
             
-            # HTML Escape ALL injected data
             title = html.escape(raw_title)
-            
             raw_authors = item.get("authors") or []
             authors = html.escape(", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)]))
             
-            raw_series = item.get("series") or []
-            series_list = []
-            for s in raw_series:
-                if isinstance(s, dict) and s.get("title"):
-                    series_list.append(f"{s.get('title')} (Bk {s.get('sequence', '')})")
-            series_str = html.escape(", ".join(series_list))
+            series_str = html.escape(format_series_list(item.get("series")))
 
             images = item.get("product_images", {})
             img_url = html.escape(images.get("500") or images.get("252") or "")
@@ -126,7 +124,7 @@ class LibraryExporter:
 
             img_tag = f'<img src="{img_url}" class="cover-art" alt="Cover">' if img_url else '<div class="cover-art">No Cover Art</div>'
 
-            html_content += f"""
+            parts.append(f"""
                 <div class="card">
                     {img_tag}
                     <div class="card-content">
@@ -136,14 +134,15 @@ class LibraryExporter:
                         <div class="status {status_class}">{status_text}</div>
                     </div>
                 </div>
-            """
+            """)
 
+        # 3. Append unique local items
         for path, data in local_library.items():
             if data["title"] not in cloud_titles:
                 safe_title = html.escape(data.get("title", "Unknown"))
                 safe_format = html.escape(data.get('format', 'Unknown'))
                 
-                html_content += f"""
+                parts.append(f"""
                     <div class="card">
                         <div class="cover-art">Local File</div>
                         <div class="card-content">
@@ -152,13 +151,14 @@ class LibraryExporter:
                             <div class="status downloaded">Downloaded ({safe_format})</div>
                         </div>
                     </div>
-                """
+                """)
 
-        html_content += """
+        parts.append("""
             </div>
         </body>
         </html>
-        """
+        """)
 
+        # 4. Final join and write
         with open(output_file, "w", encoding="utf-8") as f:
-            f.write(html_content)
+            f.write("".join(parts))

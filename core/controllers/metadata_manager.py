@@ -8,7 +8,7 @@ try:
 except ImportError:
     pass
 from core.utils.process_runner import ProcessRunner
-
+from core.utils.formatting import format_series_list
 class MetadataManager:
     def __init__(self, api_client, library_manager, logger, covers_dir, callbacks):
         self.api = api_client
@@ -201,17 +201,9 @@ class MetadataManager:
                     # --- IMPROVED SERIES PARSING ---
                     raw_series = product.get("series", [])
                     if raw_series and fields_to_apply.get("series", True):
-                        parsed_series = []
-                        for s in raw_series:
-                            if isinstance(s, dict) and s.get("title"):
-                                s_title = s.get("title")
-                                s_seq = s.get("sequence", "")
-                                if s_seq:
-                                    parsed_series.append(f"{s_title} (Bk {s_seq})")
-                                else:
-                                    parsed_series.append(s_title)
-                        if parsed_series:
-                            series = ", ".join(parsed_series)
+                        formatted = format_series_list(raw_series)
+                        if formatted:
+                            series = formatted
                             
                     # --- IMPROVED DURATION PARSING ---
                     duration_min = product.get("runtime_length_min")
