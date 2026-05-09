@@ -17,13 +17,24 @@ class SystemManager:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     def enforce_single_instance(self, on_wake_callback):
-        """Ensures only one instance of TomeBox is running via TCP port locking."""
-        self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        """Ensures only one instance of TomeBox is running via file lock."""
+        import tempfile
+        import os
+        import sys
+        import socket
+        import threading
+        
         try:
-            self.lock_socket.bind(('127.0.0.1', self.lock_port))
-            self.lock_socket.listen(1)
-            threading.Thread(target=self._instance_listener_worker, args=(on_wake_callback,), daemon=True).start()
-        except socket.error:
+            import portalocker
+            lock_path = os.path.join(tempfile.gettempdir(), 'tomebox_instance.lock')
+            self.lock_file = open(lock_path, 'w')
+            # If the file is locked by another instance, this will instantly raise an exception
+            portalocker.lock(self.lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except ImportError:
+            self.logger("WARNING: portalocker not installed. Falling back to port-based locking.")
+            self.lock_file = None
+        except Exception:
+            # The file is locked: We are instance #2
             self.logger("Another instance detected. Sending wake signal...")
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -32,10 +43,34 @@ class SystemManager:
                 s.close()
             except Exception:
                 pass
-            # Kill this duplicate instance immediately
             sys.exit(0)
 
+        # We are instance #1. Bind the port to receive WAKEUP signals from future instances.
+        # SO_REUSEADDR ensures we can bind immediately even if the port was recently closed.
+        self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            self.lock_socket.bind(('127.0.0.1', self.lock_port))
+            self.lock_socket.listen(1)
+            threading.Thread(target=self._instance_listener_worker, args=(on_wake_callback,), daemon=True).start()
+        except socket.error as e:
+            if not getattr(self, 'lock_file', None):
+                # Fallback: If portalocker isn't installed and the port bind failed, assume duplicate
+                self.logger("Another instance detected via socket bind. Sending wake signal...")
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.connect(('127.0.0.1', self.lock_port))
+                    s.sendall(b"WAKEUP")
+                    s.close()
+                except Exception:
+                    pass
+                sys.exit(0)
+            else:
+                self.logger(f"Could not bind wake listener port: {e}")
+
     def _instance_listener_worker(self, on_wake_callback):
+        import time
         while True:
             try:
                 conn, addr = self.lock_socket.accept()
@@ -47,7 +82,8 @@ class SystemManager:
                 conn.close()
             except Exception as e:
                 self.logger(f"Socket listener error: {e}")
-                break
+                time.sleep(1)
+                continue
 
     def toggle_system_sleep(self, prevent_sleep=True):
         """Prevents Windows from sleeping during active background tasks."""

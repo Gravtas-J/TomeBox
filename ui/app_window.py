@@ -266,11 +266,9 @@ class AAXManagerApp:
         
         # Background Workers
         self._last_disk_save_time = 0.0
-        
+
         # Timers & UI Flags
         self.tray_icon = None
-        self._sleep_timer_id = None
-        self._resize_timer = None
         self.browser_login_btn = None
 
         self.setup_ui()
