@@ -8,7 +8,7 @@ def setup_sidebar(app, parent):
     app.cover_frame = ttk.Frame(parent)
     app.cover_frame.pack(fill="x", padx=5, pady=10)
     
-    app.cover_label = ttk.Label(app.cover_frame, text="No Cover Art")
+    app.cover_label = ttk.Label(app.cover_frame, text="No Cover Art", cursor="hand2") 
     app.cover_label.pack(pady=5)
     
     app.author_label = ttk.Label(app.cover_frame, text="", font=("Segoe UI", 10, "italic"))

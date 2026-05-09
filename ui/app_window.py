@@ -28,7 +28,7 @@ import sys
 import socket
 from api.audible_client import AudibleClient
 
-from ui.components.dialogs import open_auth_window, show_achievement_toast, open_pairing_window, open_error_log_window
+from ui.components.dialogs import open_auth_window, show_achievement_toast, open_pairing_window, open_error_log_window, open_cover_modal
 from ui.components.theme import apply_theme
 from ui.components.menu_bar import setup_menu_bar
 from ui.components.player_bar import setup_player_bar
@@ -1025,10 +1025,15 @@ class AAXManagerApp:
                 photo = ImageTk.PhotoImage(img)
                 self.cover_label.config(image=photo, text="")
                 self.current_cover_photo = photo 
+                
+                self.cover_label.bind("<Button-1>", lambda e, a=asin, t=title, p=cover_path: open_cover_modal(self, a, t, explicit_path=p))
+                
             except Exception:
                 self.cover_label.config(image="", text=title)
+                self.cover_label.unbind("<Button-1>") # Unbind to prevent crashes on broken images
         elif hasattr(self, 'cover_label'):
             self.cover_label.config(image="", text=title)
+            self.cover_label.unbind("<Button-1>") # Unbind if there is no cover
             
         self.refresh_bookmarks_ui()
 
@@ -1291,9 +1296,9 @@ class AAXManagerApp:
                         self.cover_cache[asin] = img_obj 
                     except: pass
                 
-            img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0)
-            img_label.pack(pady=(5, 0))
             
+            img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0, cursor="hand2")
+            img_label.pack(pady=(5, 0))
             display_title = title[:45] + "..." if len(title) > 45 else title
             
             text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
@@ -1320,7 +1325,9 @@ class AAXManagerApp:
             card.bind("<Button-1>", on_card_click)
             card.bind("<Double-1>", on_card_double_click)
             img_label.bind("<Button-1>", on_card_click)
+            img_label.bind("<Button-1>", lambda e, a=asin, t=title: open_cover_modal(self, a, t), add="+")
             img_label.bind("<Double-1>", on_card_double_click)
+            
             text_label.bind("<Button-1>", on_card_click)
             text_label.bind("<Double-1>", on_card_double_click)
 
@@ -1536,36 +1543,6 @@ class AAXManagerApp:
         """Re-routes the scraper button to the new unified Match UI."""
         from ui.components.dialogs import open_match_to_audible_window
         open_match_to_audible_window(self, filepath)
-
-    # def show_scrape_results(self, filepath, products):
-    #     popup = tk.Toplevel(self.root)
-    #     popup.title("Select Correct Book")
-    #     popup.geometry("600x300")
-    #     popup.transient(self.root)
-        
-    #     style = ttk.Style()
-    #     bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
-    #     popup.configure(bg=bg_color)
-        
-    #     listbox = tk.Listbox(popup, width=80, height=12)
-    #     listbox.pack(padx=10, pady=10, fill="both", expand=True)
-        
-    #     for p in products:
-    #         title = p.get("title", "")
-    #         raw_authors = p.get("authors", [])
-    #         authors = ", ".join([a.get("name", "") for a in raw_authors])
-    #         source = p.get("source", "Audible")
-    #         listbox.insert(tk.END, f"[{source}] {title} | {authors} ({p.get('asin')})")
-            
-    #     def on_select():
-    #         sel = listbox.curselection()
-    #         if not sel: return
-    #         selected_asin = products[sel[0]].get("asin")
-    #         popup.destroy()
-    #         self.dl_status_var.set("Fetching and embedding metadata...")
-    #         self.metadata_manager.apply_scraped_metadata(filepath, selected_asin)
-            
-    #     ttk.Button(popup, text="Apply Metadata", command=on_select).pack(pady=(0, 10))
 
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children('')]
@@ -1863,13 +1840,17 @@ class AAXManagerApp:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
 
     def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
-        """Updates the side panel when the user clicks a book."""
+        """Updates the side panel when the user clicks a book or a background scrape finishes."""
         def update():
-            # Strictly reject updates if the fetched path isn't the currently selected path
             if getattr(self, '_selected_local_path', None) != filepath:
                 return
                 
             self.author_label.config(text=authors)
+
+            local_data = self.library_manager.local_library.get(filepath, {})
+            asin = local_data.get("asin", "Unknown")
+            title = local_data.get("title", "Unknown")
+            
             if cover_path and os.path.exists(cover_path):
                 try:
                     img = Image.open(cover_path)
@@ -1877,10 +1858,16 @@ class AAXManagerApp:
                     photo = ImageTk.PhotoImage(img)
                     self.current_cover_photo = photo
                     self.cover_label.config(image=photo, text="")
+                    
+                    self.cover_label.bind("<Button-1>", lambda e, a=asin, t=title, p=cover_path: open_cover_modal(self, a, t, explicit_path=p))
+                    
                 except Exception:
                     self.cover_label.config(image="", text="Image Error")
+                    self.cover_label.unbind("<Button-1>")
             else:
                 self.cover_label.config(image="", text=error_text)
+                self.cover_label.unbind("<Button-1>")
+                
         self.root.after(0, update)
 
     def set_sleep_timer(self, mode, value=0):

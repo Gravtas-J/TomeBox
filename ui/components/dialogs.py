@@ -735,3 +735,100 @@ def open_match_to_audible_window(app, filepath):
         win.after(100, do_search)
 
     win.focus_set()
+
+def open_cover_modal(app, asin, title, explicit_path=None):
+    """Opens a high-resolution, clickable cover art modal."""
+    import os
+    from PIL import Image, ImageTk
+
+    existing = getattr(app, "_active_cover_modal", None)
+    if existing is not None:
+        try:
+            if existing.winfo_exists():
+                existing.lift()
+                existing.focus_force()
+                return
+        except tk.TclError:
+            pass
+        app._active_cover_modal = None
+
+    # Resolve cover path
+    cover_path = explicit_path
+    if not cover_path:
+        padded_asin = str(asin).zfill(10)
+        test_path_padded = os.path.join(app.covers_dir, f"{padded_asin}.jpg")
+        test_path_raw = os.path.join(app.covers_dir, f"{asin}.jpg")
+        if os.path.exists(test_path_padded):
+            cover_path = test_path_padded
+        elif os.path.exists(test_path_raw):
+            cover_path = test_path_raw
+
+    if not cover_path or not os.path.exists(cover_path):
+        return
+
+    try:
+        img = Image.open(cover_path)
+
+        max_size = 800
+        w, h = img.size
+        if w > max_size or h > max_size:
+            ratio = min(max_size / w, max_size / h)
+            new_w, new_h = int(w * ratio), int(h * ratio)
+            resample_filter = getattr(Image, "Resampling", Image).LANCZOS
+            img = img.resize((new_w, new_h), resample_filter)
+
+        # Build modal hidden so we don't see a flicker
+        modal = tk.Toplevel(app.root)
+        modal.title(title)
+        modal.withdraw()
+
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background") or "#1e1e1e"
+        modal.configure(bg=bg_color, highlightthickness=2, highlightbackground="#4a90e2")
+
+        photo = ImageTk.PhotoImage(img)
+        modal.image = photo  # prevent GC
+
+        # takefocus=0 keeps focus on the toplevel so clicking the image
+        # doesn't trigger FocusOut on the modal
+        lbl = tk.Label(modal, image=photo, bg=bg_color, bd=0,
+                       cursor="hand2", takefocus=0)
+        lbl.pack(fill="both", expand=True)
+
+        # Center before stripping decorations
+        modal.update_idletasks()
+        mw, mh = img.width, img.height
+        x = app.root.winfo_x() + (app.root.winfo_width() // 2) - (mw // 2)
+        y = app.root.winfo_y() + (app.root.winfo_height() // 2) - (mh // 2)
+        modal.geometry(f"{mw}x{mh}+{x}+{y}")
+
+        modal.overrideredirect(True)
+        modal.deiconify()
+        modal.lift()
+        modal.attributes("-topmost", True)
+        modal.focus_force()
+
+        # Register as the active modal
+        app._active_cover_modal = modal
+
+        def dismiss(event=None):
+            if getattr(app, "_active_cover_modal", None) is modal:
+                app._active_cover_modal = None
+            try:
+                modal.destroy()
+            except tk.TclError:
+                pass
+
+        # Dismiss bindings: click image, Escape, click outside (FocusOut), or WM close
+        lbl.bind("<Button-1>", dismiss)
+        modal.bind("<Escape>", dismiss)
+        modal.bind("<FocusOut>", dismiss)
+        modal.protocol("WM_DELETE_WINDOW", dismiss)
+
+    except Exception as e:
+        # Make sure we don't leave a stale singleton reference
+        app._active_cover_modal = None
+        import traceback
+        traceback.print_exc()
+        if hasattr(app, "logger"):
+            app.logger.error(f"Failed to open cover modal: {e}")
