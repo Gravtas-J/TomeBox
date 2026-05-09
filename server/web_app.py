@@ -417,31 +417,46 @@ def create_server_app(tomebox):
         if not path or path not in tomebox.library_manager.local_library:
             raise HTTPException(status_code=403, detail="Forbidden: File is not registered in the local library.")
         
+        # Pull from cache, falling back to live ffprobe
         local_data = tomebox.library_manager.local_library.get(path, {})
-        if "chapters" in local_data and local_data["chapters"]:
-            return local_data["chapters"]
+        raw_chapters = local_data.get("chapters")
         
-        if not path or not os.path.exists(path): return []
-        try:
-            cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
+        if not raw_chapters:
+            if not os.path.exists(path):
+                return []
+            try:
+                cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                raw_chapters = json.loads(result.stdout).get("chapters", [])
+            except Exception:
+                return []
+        
+        # Always normalize to the {start, title} shape the web client expects.
+        # raw_chapters may be either ffprobe-shape dicts (from cache or live ffprobe)
+        # or already-normalized dicts. Handle both.
+        chapters = []
+        for ch in raw_chapters:
+            # Prefer start_time (seconds, string) — fall back to start (already-normalized seconds)
+            try:
+                start = float(ch.get("start_time", ch.get("start", 0)))
+            except (TypeError, ValueError):
+                start = 0.0
             
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', 
-                errors='replace', 
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            title = (
+                ch.get("tags", {}).get("title")
+                or ch.get("title")
+                or f"Chapter {ch.get('id', 0) + 1}"
             )
-            
-            data = json.loads(result.stdout)
-            chapters = []
-            for ch in data.get("chapters", []):
-                start_time = float(ch.get("start_time", 0))
-                title = ch.get("tags", {}).get("title", f"Chapter {ch.get('id', 0) + 1}")
-                chapters.append({"start": start_time, "title": title})
-            return chapters
-        except Exception: return []
+            chapters.append({"start": start, "title": title})
+        
+        return chapters
 
     @api.get("/api/stream")
     def stream_audio(path: str, request: Request):
