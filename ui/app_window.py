@@ -686,6 +686,25 @@ class AAXManagerApp:
             on_stopped_cb=on_stopped,
             on_error_cb=on_error
         )
+    
+    def remove_firewall_rule_prompt(self):
+        import os
+        if os.name != 'nt':
+            messagebox.showinfo("Not Applicable", "Firewall management is only automated on Windows.")
+            return
+            
+        if messagebox.askyesno(
+            "Remove Firewall Rule", 
+            "This will require Administrator privileges to remove the 'TomeBox Web Server' rule from Windows Defender Firewall.\n\n"
+            "If you restart the Web Server later, you will be prompted to approve the rule again.\n\n"
+            "Do you want to continue?"
+        ):
+            success = self.system_manager.remove_firewall_rule()
+            if success:
+                messagebox.showinfo("Success", "Firewall rule removed successfully.")
+            else:
+                messagebox.showerror("Action Failed", "Failed to remove the firewall rule. You may have declined the admin prompt, or the rule did not exist.")
+                
     def on_file_drop(self, event):
         from tkinter import messagebox
         import os

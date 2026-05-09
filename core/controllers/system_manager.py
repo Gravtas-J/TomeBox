@@ -218,7 +218,42 @@ class SystemManager:
             self.logger(f"Failed to trigger UAC for firewall: {e}")
             return False
         
+    def remove_firewall_rule(self):
+        """Triggers a UAC prompt to remove the TomeBox firewall rule."""
+        import ctypes
+        import sys
+        
+        rule_name = "TomeBox Web Server"
+        
+        # Check if it actually exists first so we don't annoy them with a useless UAC prompt
+        if not self._is_firewall_rule_installed():
+            self.logger("Firewall rule not found. Nothing to remove.")
+            return True
 
+        cmd_args = f'advfirewall firewall delete rule name="{rule_name}"'
+        
+        self.logger("Requesting Administrator privileges to remove firewall rule...")
+        
+        try:
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                "netsh", 
+                cmd_args, 
+                None, 
+                0
+            )
+            
+            if result > 32:
+                self.logger("Firewall rule removed successfully via UAC.")
+                return True
+            else:
+                self.logger(f"User declined UAC prompt or it failed. Code: {result}")
+                return False
+        except Exception as e:
+            self.logger(f"Failed to trigger UAC for firewall removal: {e}")
+            return False
+        
     def toggle_web_server(self, app_instance, on_started_cb, on_stopped_cb, on_error_cb):
         """Starts or stops the FastAPI mobile companion server."""
         if self.web_server is not None:
