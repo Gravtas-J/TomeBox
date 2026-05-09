@@ -264,6 +264,13 @@ class AAXManagerApp:
         # Directory Paths
         self.default_download_dir = self.settings.get("download_dir", self.base_dir)
         
+        self.import_root = self.settings.get("import_root")
+        if not self.import_root:
+            # Fallback to the user's download directory, or the app base directory
+            self.import_root = self.settings.get("download_folder", self.default_download_dir)
+            self.settings["import_root"] = self.import_root
+            self.db.save_settings(self.settings)
+        
         # Background Workers
         self._last_disk_save_time = 0.0
 
@@ -1226,13 +1233,14 @@ class AAXManagerApp:
         if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
             self.load_specific_file(last_path)
     
-    def set_download_folder(self):
-        directory = filedialog.askdirectory(title="Select Default Download Folder")
+    def set_import_root(self):
+        """Allows the user to designate a safe root directory for remote imports."""
+        directory = filedialog.askdirectory(title="Select Safe Import Root Directory")
         if directory:
-            self.default_download_dir = directory
-            self.settings["download_folder"] = directory
+            self.import_root = directory
+            self.settings["import_root"] = directory
             self.db.save_settings(self.settings)
-            messagebox.showinfo("Folder Saved", f"Default download folder updated to:\n{directory}")
+            messagebox.showinfo("Folder Saved", f"Network import boundary updated to:\n{directory}\n\nRemote devices can only import files from within this folder.")
 
     def cancel_all_downloads(self):
         if messagebox.askyesno("Cancel All", "Cancel all active and pending downloads?"):

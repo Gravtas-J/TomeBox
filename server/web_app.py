@@ -838,6 +838,27 @@ def create_server_app(tomebox):
             raise HTTPException(status_code=400, detail="Invalid path provided.")
 
         try:
+            import_root = getattr(tomebox, 'import_root', None)
+            if not import_root:
+                raise HTTPException(status_code=500, detail="Server misconfiguration: No import root defined.")
+
+            # Resolve absolute paths to neutralize ../../ traversal attacks
+            abs_requested = os.path.abspath(path)
+            abs_root = os.path.abspath(import_root)
+
+            # Ensure the requested path is strictly a child of the allowed root
+            if os.path.commonpath([abs_root, abs_requested]) != abs_root:
+                if hasattr(tomebox, 'logger'):
+                    tomebox.logger(f"SECURITY BLOCKED: Attempted import outside safe boundary -> {path}")
+                raise HTTPException(status_code=403, detail="Forbidden: Path is outside the allowed import directory.")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - Path validation failed: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error during path validation.")
+
+        try:
             active_profile = tomebox.settings.get("active_profile", "Main")
             
             # Dummy callbacks since the Web UI isn't hooked into the desktop's event loop
