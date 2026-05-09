@@ -55,7 +55,7 @@ class AudioConverter:
         try:
             with os.fdopen(fd_concat, 'w', encoding='utf-8') as f_concat:
                 for path in file_paths:
-                    safe_path = path.replace('\\', '/').replace("'", r"\'")
+                    safe_path = path.replace('\\', '/').replace("'", "'\\''")
                     f_concat.write(f"file '{safe_path}'\n")
 
             first_artist = "Unknown Author"

@@ -1,6 +1,9 @@
+import threading
+
 class StatsManager:
     def __init__(self, db_manager, callbacks):
         self.db = db_manager
+        self.stats_lock = threading.Lock()
         self.on_achievement = callbacks.get("on_achievement")
         
         self.achievements = {
@@ -13,12 +16,13 @@ class StatsManager:
         }
         
     def add_stat(self, stat_name, amount=1):
-        settings = self.db.load_settings()
-        stats = settings.get("stats", {})
-        stats[stat_name] = stats.get(stat_name, 0) + amount
-        settings["stats"] = stats
-        self.db.save_settings(settings)
-        self.check_achievements(settings)
+        with self.stats_lock:
+            settings = self.db.load_settings()
+            stats = settings.get("stats", {})
+            stats[stat_name] = stats.get(stat_name, 0) + amount
+            settings["stats"] = stats
+            self.db.save_settings(settings)
+            self.check_achievements(settings)
 
     def check_achievements(self, settings):
         stats = settings.get("stats", {})

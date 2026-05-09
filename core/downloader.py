@@ -15,9 +15,9 @@ class AudiobookDownloader:
         download_url, a_key, a_iv = self.api.get_download_license(asin)
 
         # 2. Setup file paths
-        safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in " _-.'"]).rstrip()
         ext = ".aaxc" if a_key else ".aax"
-        filepath = os.path.join(save_dir, f"{safe_title}{ext}")
+        filepath = os.path.join(save_dir, f"{safe_title} [{asin}]{ext}")
         temp_filepath = f"{filepath}.part"
 
         self.logger(f"Downloading {ext} file to: {temp_filepath}")

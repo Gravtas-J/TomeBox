@@ -287,6 +287,10 @@ def create_server_app(tomebox):
     
     @api.get("/api/cover/{asin}")
     def get_cover(asin: str):
+        import re
+        if not re.match(r"^[A-Za-z0-9_-]+$", str(asin)):
+            raise HTTPException(status_code=400, detail="Invalid ASIN format.")
+            
         from core.converter import resolve_cover_path
         
         covers_dir = getattr(tomebox, 'covers_dir', tomebox.base_dir)
@@ -307,28 +311,37 @@ def create_server_app(tomebox):
             position = data.get("position")
             profile = data.get("profile", "Main")
 
-            # CHANGED: All tomebox.local_library instances updated to tomebox.library_manager.local_library
+            try:
+                position = float(position)
+            except (ValueError, TypeError):
+                return {"status": "error", "detail": "Invalid position data"}
+
             if path and path in tomebox.library_manager.local_library:
                 if "progress" not in tomebox.library_manager.local_library[path]:
                     tomebox.library_manager.local_library[path]["progress"] = {}
                     
+                # Always update the active memory immediately
                 tomebox.library_manager.local_library[path]["progress"][profile] = position
                 tomebox.library_manager.local_library[path]["last_position"] = position
-                
                 tomebox.settings[f"last_played_{profile}"] = path
                 
-                tomebox.db.save_settings(tomebox.settings)
-                
-                # CHANGED: Save the correct dictionary
-                tomebox.db.save_local_db(tomebox.library_manager.local_library)
+                import time
+                current_time = time.time()
+                if current_time - getattr(tomebox, '_last_progress_save', 0) > 10:
+                    tomebox.db.save_settings(tomebox.settings)
+                    tomebox.db.save_local_db(tomebox.library_manager.local_library)
+                    tomebox._last_progress_save = current_time
 
+                # Sync the playhead to the desktop UI if the book is actively open there
                 if getattr(tomebox, 'file_path', None) == path:
-                    if tomebox.root:  # Only sync to GUI if GUI exists
+                    if getattr(tomebox, 'root', None): 
                         tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")
+            
         return {"status": "success"}
+    
     @api.get("/pairing", response_class=HTMLResponse)
     def show_pairing_page(request: Request):
         """Renders a pairing QR code page accessible to already-paired devices."""
@@ -849,6 +862,10 @@ def create_server_app(tomebox):
         asin = data.get("asin")
         path = data.get("path")
         
+        import re
+        if not asin or not re.match(r"^[A-Za-z0-9_-]+$", str(asin)):
+            raise HTTPException(status_code=400, detail="Invalid ASIN format.")
+
         # --- SECURITY FIX: Prevent Path Injection ---
         if not path or path not in tomebox.library_manager.local_library:
             raise HTTPException(status_code=403, detail="Forbidden: Target file is not registered in the local library.")

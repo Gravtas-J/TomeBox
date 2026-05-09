@@ -173,9 +173,13 @@ class DownloadManager:
             
             cmd = ["ffmpeg", "-y"]
             if a_key and a_iv:
+                # AAXC decryption uses the per-file content key and IV
                 cmd.extend(["-audible_key", a_key, "-audible_iv", a_iv])
-            elif a_key: 
-                cmd.extend(["-activation_bytes", a_key])
+            else: 
+                # Standard AAX files use the account-wide activation bytes
+                act_bytes = self.downloader.api.get_activation_bytes()
+                if act_bytes:
+                    cmd.extend(["-activation_bytes", act_bytes])
                 
             cmd.extend(["-i", filepath, "-c", "copy", m4b_filepath])
             

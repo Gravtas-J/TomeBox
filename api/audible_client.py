@@ -54,7 +54,18 @@ class AudibleClient:
         for attempt in range(max_retries):
             try:
                 return request_func(*args, **kwargs)
+            except HTTPStatusError as e:
+                status = e.response.status_code
+                if status == 429:
+                    if attempt == max_retries - 1:
+                        raise RateLimitError("Audible API rate limit reached (HTTP 429).")
+                    time.sleep(base_delay * (2 ** attempt))
+                elif status in (403, 500, 502, 503, 504):
+                    raise APIUnavailableError(f"Audible API unavailable (HTTP {status}).")
+                else:
+                    raise e
             except Exception as e:
+                # Fallback for RequestError or non-HTTP errors
                 err_str = str(e).lower()
                 if "429" in err_str or "too many requests" in err_str:
                     if attempt == max_retries - 1:
@@ -111,16 +122,42 @@ class AudibleClient:
             raise Exception("Not authenticated")
         client = audible.Client(auth=self.auth)
         
-        resp = self._request_with_backoff(
-            client.get, 
-            "1.0/library", 
-            response_groups="product_desc,product_attrs,series,contributors,media", 
-            num_results=1000
-        )
-        return resp.get("items", [])
+        all_items = []
+        current_page = 1
+        page_size = 1000 
+        
+        while True:
+            resp = self._request_with_backoff(
+                client.get, 
+                "1.0/library", 
+                response_groups="product_desc,product_attrs,series,contributors,media", 
+                num_results=page_size,
+                page=current_page
+            )
+            
+            items = resp.get("items", [])
+            if not items:
+                break
+                
+            all_items.extend(items)
+            
+            if len(items) < page_size:
+                break
+                
+            current_page += 1
+            
+        return all_items
 
     def _handle_api_error(self, e):
         """Standardizes exception handling across Audible API calls."""
+        if isinstance(e, HTTPStatusError):
+            status = e.response.status_code
+            if status == 429:
+                raise RateLimitError("Audible API rate limit reached (HTTP 429).")
+            elif status in (403, 500, 502, 503, 504):
+                raise APIUnavailableError(f"Audible API unavailable (HTTP {status}).")
+            raise e
+            
         err_str = str(e).lower()
         if "429" in err_str or "too many requests" in err_str:
             raise RateLimitError("Audible API rate limit reached (HTTP 429).")

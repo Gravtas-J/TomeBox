@@ -296,11 +296,8 @@ class LibraryManager:
         """Fetches the latest library from Audible. Returns True on success."""
         if not self.api.auth:
             raise Exception("Not authenticated")
-            
-        client = audible.Client(auth=self.api.auth)
-        response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors,media", num_results=1000)
         
-        self.cloud_items = response.get("items", [])
+        self.cloud_items = self.api.fetch_library()
         self._build_master_metadata()
         
         # Save to disk
@@ -514,14 +511,15 @@ class LibraryManager:
 
         try:
             logger.info("Background sync: Polling Audible API...")
-            client = audible.Client(auth=self.api.auth)
-            response = client.get("1.0/library", response_groups="product_desc,product_attrs,series,contributors", num_results=1000)
-            new_items = response.get("items", [])
+            new_items = self.api.fetch_library()
             
             if on_status_cb:
                 on_status_cb("Library Synced (Online)")
             
-            if len(new_items) != len(self.cloud_items):
+            current_asins = {item.get("asin") for item in self.cloud_items if item.get("asin")}
+            new_asins = {item.get("asin") for item in new_items if item.get("asin")}
+            
+            if current_asins != new_asins:
                 logger.info(f"Background sync: Detected library change. Old: {len(self.cloud_items)}, New: {len(new_items)}")
                 self.cloud_items = new_items
                 self._build_master_metadata()
@@ -585,7 +583,7 @@ class LibraryManager:
             if ui_needs_refresh and on_refresh_cb:
                 on_refresh_cb()
                 
-            time.sleep(2)
+            time.sleep(30)
 
     def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None, task_id=None):
         if self._is_importing or not self.import_queue.empty():

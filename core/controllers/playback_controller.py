@@ -112,23 +112,26 @@ class PlaybackController:
         new_time = self.current_play_time + offset_seconds
         
         if new_time < 0:
-            deficit = abs(new_time)
-            
-            # Cascade backwards through chapters to consume the deficit
-            while deficit > 0 and self.current_chapter_idx > 0:
-                self.current_chapter_idx -= 1
-                ch = self.chapters[self.current_chapter_idx]
-                self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
+                deficit = abs(new_time)
                 
-                if deficit >= self.chapter_duration:
-                    deficit -= self.chapter_duration
-                else:
-                    self.current_play_time = self.chapter_duration - deficit
-                    deficit = 0
+                # Cascade backwards through chapters to consume the deficit
+                while deficit > 0 and self.current_chapter_idx > 0:
+                    self.current_chapter_idx -= 1
+                    ch = self.chapters[self.current_chapter_idx]
+                    self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
                     
-            # If we hit the very beginning of the book, clamp to 0
-            if deficit > 0:
-                self.current_play_time = 0.0
+                    if deficit >= self.chapter_duration:
+                        deficit -= self.chapter_duration
+                        # ---> FIX: Ensure time resets to start of chapter on a perfect boundary hit
+                        if deficit == 0:
+                            self.current_play_time = 0.0
+                    else:
+                        self.current_play_time = self.chapter_duration - deficit
+                        deficit = 0
+                        
+                # If we hit the very beginning of the book, clamp to 0
+                if deficit > 0:
+                    self.current_play_time = 0.0
                 
         elif new_time >= self.chapter_duration:
             return "NEXT_CHAPTER" # Signal the UI to handle chapter transition

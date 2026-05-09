@@ -93,6 +93,11 @@ function renderGrid() {
         let authorStr = data.authors || 'Unknown Author';
         const titleStr = data.title || "Unknown Title";
         const asin = data.asin || "Unknown";
+
+        
+        const safeAsin = escapeHtml(asin);
+        const urlAsin = encodeURIComponent(asin);
+        
         const bookShelves = data.shelves || [];
         bookShelves.forEach(s => uniqueShelves.add(s));
         
@@ -111,10 +116,9 @@ function renderGrid() {
         }
 
         const coverHtml = asin !== "Unknown" 
-            ? `<img src="/api/cover/${asin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+            ? `<img src="/api/cover/${urlAsin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
             : `<div class="cover-placeholder">📖</div>`;
 
-        // Status badge — Downloaded (green) or Cloud (blue)
         const badge = isCloudOnly
             ? '<div class="status-badge cloud-only">Cloud</div>'
             : '<div class="status-badge downloaded">Downloaded</div>';
@@ -122,15 +126,14 @@ function renderGrid() {
         const card = document.createElement('div');
         card.className = 'book-card';
         
-        // --- NEW: Dynamic Actions & Progress Bar ---
         const actionButton = isCloudOnly 
-            ? `<button class="action-btn-primary btn-small" onclick="if(window.queueSingleDownload) window.queueSingleDownload('${asin}'); event.stopPropagation();">⬇️ Download</button>`
+            ? `<button class="action-btn-primary btn-small" onclick="if(window.queueSingleDownload) window.queueSingleDownload('${safeAsin}'); event.stopPropagation();">⬇️ Download</button>`
             : ``; 
             
         const cardProgressBar = `
             <div class="card-progress-track">
-                <div id="progress-bar-${asin}" class="card-progress-fill"></div>
-                <div id="progress-text-${asin}" class="card-progress-text"></div>
+                <div id="progress-bar-${safeAsin}" class="card-progress-fill"></div>
+                <div id="progress-text-${safeAsin}" class="card-progress-text"></div>
             </div>
         `;
 
@@ -143,7 +146,7 @@ function renderGrid() {
                     console.log(`Cloud-only book clicked: ${titleStr} (Downloads not supported on this view)`);
                 }
             } else {
-                startPlayback(path, titleStr, authorStr, resumePos, asin);
+                startPlayback(path, titleStr, authorStr, resumePos, safeAsin);
             }
         };
         

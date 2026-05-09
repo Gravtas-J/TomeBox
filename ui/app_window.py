@@ -192,7 +192,7 @@ class AAXManagerApp:
         self.current_chapter_idx = 0
         self.player_process = None
         self.failed_tasks = []
-        
+
         self.debug_mode = tk.BooleanVar(value=False)
         self.dl_progress_var = tk.DoubleVar()
         self.dl_status_var = tk.StringVar(value="Idle")
@@ -1120,6 +1120,15 @@ class AAXManagerApp:
             # 5. The Nuclear Option: Kill the process tree.
             import os
             import subprocess
+            import time
+            try:
+                if hasattr(self, 'db') and hasattr(self.db, 'conn') and self.db.conn:
+                    self.db.conn.close()
+                elif hasattr(self, 'library_manager') and hasattr(self.library_manager, 'db'):
+                    self.library_manager.db.conn.close()
+                time.sleep(0.2) # Give the OS a moment to flush the WAL file to disk
+            except Exception as e:
+                print(f"Error closing database gracefully: {e}")
             if os.name == 'nt':
                 # /T flag = "Tree Kill" (Kills this process and everything it spawned)
                 ProcessRunner.run_async(['taskkill', '/F', '/T', '/PID', str(os.getpid())])

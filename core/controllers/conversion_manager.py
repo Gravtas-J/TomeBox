@@ -50,7 +50,7 @@ class ConversionManager:
                         authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
                         break
 
-                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg") if asin else None
                 drm_flags = self.get_drm_flags(input_path)
 
                 self.converter.convert_to_m4b(
@@ -99,10 +99,12 @@ class ConversionManager:
             try:
                 drm_flags = self.get_drm_flags(input_path)
                 original_data = self.library_manager.local_library.get(input_path, {})
-                book_title = original_data.get("title", os.path.splitext(os.path.basename(input_path))[0])
-                safe_book_title = "".join([c for c in book_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
                 
-                target_dir = os.path.join(output_dir, safe_book_title)
+                book_title = original_data.get("title", os.path.splitext(os.path.basename(input_path))[0])
+                asin = original_data.get("asin", "UNKNOWN")
+                safe_book_title = "".join([c for c in book_title if c.isalnum() or c in " _-.'"]).rstrip()
+                
+                target_dir = os.path.join(output_dir, f"{safe_book_title} [{asin}]")
                 os.makedirs(target_dir, exist_ok=True)
 
                 self.converter.split_into_chapters(
@@ -110,7 +112,6 @@ class ConversionManager:
                     drm_flags=drm_flags, progress_cb=self.on_progress
                 )
                 
-                # Removed the os.remove(input_path) logic to keep the master file intact
 
                 if self.on_complete:
                     self.on_complete(f"Audiobook split into {len(chapters)} files.\n\nSaved to:\n{target_dir}\n\nOriginal file preserved.")
@@ -130,6 +131,8 @@ class ConversionManager:
     def convert_batch(self, file_list):
         def worker():
             total = len(file_list)
+            error_count = 0 
+            
             try:
                 with keep.running():
                     for idx, filepath in enumerate(file_list, 1):
@@ -146,7 +149,7 @@ class ConversionManager:
                         out_path = f"{base_name}.m4b"
                         
                         drm_flags = self.get_drm_flags(filepath)
-                        cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
+                        cover_path = os.path.join(self.covers_dir, f"{asin}.jpg") if asin else None
                         
                         authors = ""
                         for item in getattr(self.library_manager, 'cloud_items', []):
@@ -184,6 +187,9 @@ class ConversionManager:
                                 
                         except Exception as e:
                             self.logger(f"Batch Convert Exception on {title}: {e}")
+                            error_count += 1
+                            if self.on_error:
+                                self.on_error(filepath, "Batch Convert", str(e))
                             
             finally:
                 if self.on_status:
@@ -191,6 +197,9 @@ class ConversionManager:
                 if self.on_progress:
                     self.on_progress(0)
                 if self.on_complete:
-                    self.on_complete("Batch conversion complete!")
+                    if error_count > 0:
+                        self.on_complete(f"Batch conversion finished with {error_count} error(s).\n\nCheck the Errors window for details.")
+                    else:
+                        self.on_complete("Batch conversion complete!")
 
         self.thread_pool.submit(worker)
