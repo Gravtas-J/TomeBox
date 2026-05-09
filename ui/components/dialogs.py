@@ -403,6 +403,7 @@ def show_achievement_toast(app, title, desc):
 
 def open_pairing_window(app):
     import socket
+    import uuid
     
     # Dynamically grab the host machine's local IP
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -414,8 +415,15 @@ def open_pairing_window(app):
     finally:
         s.close()
 
-    token = app.db.load_settings().get("auth_token")
-    pairing_url = f"http://{local_ip}:8000/auth?token={token}"
+    # Fallback initialization just in case it wasn't set on boot
+    token = app.settings.get("auth_token")
+    if not token:
+        token = str(uuid.uuid4())
+        app.settings["auth_token"] = token
+        app.db.save_settings(app.settings)
+
+    # Use a mutable state dictionary so button callbacks always see the newest URL
+    current_state = {"url": f"http://{local_ip}:8000/auth?token={token}"}
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
@@ -423,7 +431,6 @@ def open_pairing_window(app):
     top.transient(app.root)
     top.resizable(False, False)
     
-    # Build all widgets, then size the window to fit
     main_frame = tk.Frame(top, bg="#2b2b2b", padx=25, pady=20)
     main_frame.pack(fill="both", expand=True)
     
@@ -433,9 +440,9 @@ def open_pairing_window(app):
     tk.Label(main_frame, text="Point your phone's camera at this code\nto securely load your library.",
              bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center").pack(pady=(0, 15))
 
-    # Generate QR
+    # Generate initial QR
     qr = qrcode.QRCode(box_size=8, border=2)
-    qr.add_data(pairing_url)
+    qr.add_data(current_state["url"])
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     tk_image = ImageTk.PhotoImage(img)
@@ -447,29 +454,60 @@ def open_pairing_window(app):
     tk.Label(main_frame, text="Or open this URL manually:",
              bg="#2b2b2b", fg="#cccccc", font=("Arial", 9)).pack(pady=(0, 5))
 
-    # URL display - use a Text widget for proper wrapping with monospace
     url_text = tk.Text(main_frame, height=2, wrap="word", bg="#1e1e1e", fg="#bb86fc",
                       font=("Consolas", 9), relief="flat", padx=10, pady=8)
-    url_text.insert("1.0", pairing_url)
+    url_text.insert("1.0", current_state["url"])
     url_text.config(state="disabled")
     url_text.pack(fill="x", pady=(0, 5))
 
-    # Copy button for convenience
+    # --- Button Callbacks ---
     def copy_url():
         top.clipboard_clear()
-        top.clipboard_append(pairing_url)
+        top.clipboard_append(current_state["url"])
         copy_btn.config(text="Copied!")
         top.after(1500, lambda: copy_btn.config(text="Copy URL"))
-    
-    copy_btn = tk.Button(main_frame, text="Copy URL", command=copy_url,
+
+    def regenerate_token():
+        # Overwrite the old token and save to disk immediately
+        new_token = str(uuid.uuid4())
+        app.settings["auth_token"] = new_token
+        app.db.save_settings(app.settings)
+        
+        current_state["url"] = f"http://{local_ip}:8000/auth?token={new_token}"
+        
+        # Visually refresh the QR Code
+        new_qr = qrcode.QRCode(box_size=8, border=2)
+        new_qr.add_data(current_state["url"])
+        new_qr.make(fit=True)
+        new_img = new_qr.make_image(fill_color="black", back_color="white")
+        new_tk_image = ImageTk.PhotoImage(new_img)
+        
+        qr_label.config(image=new_tk_image)
+        qr_label.image = new_tk_image  # Prevent garbage collection
+        
+        # Visually refresh the Text Box
+        url_text.config(state="normal")
+        url_text.delete("1.0", tk.END)
+        url_text.insert("1.0", current_state["url"])
+        url_text.config(state="disabled")
+
+    # --- Action Buttons ---
+    btn_frame = tk.Frame(main_frame, bg="#2b2b2b")
+    btn_frame.pack(pady=(10, 0))
+
+    copy_btn = tk.Button(btn_frame, text="Copy URL", command=copy_url,
                          bg="#bb86fc", fg="#1e1e1e", font=("Arial", 9, "bold"),
                          relief="flat", padx=15, pady=5)
-    copy_btn.pack(pady=(5, 0))
+    copy_btn.pack(side=tk.LEFT, padx=5)
 
-    # Now size the window to fit its contents
+    regen_btn = tk.Button(btn_frame, text="Regenerate Token", command=regenerate_token,
+                          bg="#ff4444", fg="white", font=("Arial", 9, "bold"),
+                          relief="flat", padx=15, pady=5)
+    regen_btn.pack(side=tk.LEFT, padx=5)
+
+    # Size and center the window
     top.update_idletasks()
     
-    # Centre on parent window
     parent_x = app.root.winfo_x()
     parent_y = app.root.winfo_y()
     parent_w = app.root.winfo_width()
