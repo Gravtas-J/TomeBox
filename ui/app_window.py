@@ -70,6 +70,41 @@ if hasattr(sys, '_MEIPASS'):
 if os.path.exists(bundled_bin_dir):
     os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 class AAXManagerApp:
+    @property
+    def file_path(self): return self.playback.file_path
+    @file_path.setter
+    def file_path(self, val): self.playback.file_path = val
+
+    @property
+    def chapters(self): return self.playback.chapters
+    @chapters.setter
+    def chapters(self, val): self.playback.chapters = val
+
+    @property
+    def current_chapter_idx(self): return self.playback.current_chapter_idx
+    @current_chapter_idx.setter
+    def current_chapter_idx(self, val): self.playback.current_chapter_idx = val
+
+    @property
+    def current_play_time(self): return self.playback.current_play_time
+    @current_play_time.setter
+    def current_play_time(self, val): self.playback.current_play_time = val
+
+    @property
+    def chapter_duration(self): return self.playback.chapter_duration
+    @chapter_duration.setter
+    def chapter_duration(self, val): self.playback.chapter_duration = val
+
+    @property
+    def is_playing(self): return self.playback.is_playing
+    @is_playing.setter
+    def is_playing(self, val): self.playback.is_playing = val
+
+    @property
+    def is_paused(self): return self.playback.is_paused
+    @is_paused.setter
+    def is_paused(self, val): self.playback.is_paused = val
+
     def __init__(self, root, base_dir):
         self.root = root
         self.root.title("TomeBox")
@@ -185,11 +220,8 @@ class AAXManagerApp:
         self.system_manager = SystemManager(logger=self.logger)
         self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
 
-        self.file_path = ""
         self.auth_bytes = tk.StringVar(value="")
         self.locale = tk.StringVar(value="us")
-        self.chapters = []
-        self.current_chapter_idx = 0
         self.player_process = None
         self.failed_tasks = []
 
@@ -221,14 +253,6 @@ class AAXManagerApp:
         self.sleep_menu_popup = None
         self.current_cover_photo = None
         
-        # File & Playback State
-        self.file_path = ""
-        self.chapters = []
-        self.current_chapter_idx = 0
-        self.current_play_time = 0.0
-        self.chapter_duration = 0.0
-        self.is_playing = False
-        self.is_paused = False
         
         # Sleep Timer State
         self.sleep_mode = None
@@ -1147,9 +1171,6 @@ class AAXManagerApp:
             # Let the playback controller handle the chapter/time math
             if self.playback.seek_to_absolute(abs_position):
                 
-                # Keep local UI variables synced with the controller's new reality
-                self.current_chapter_idx = self.playback.current_chapter_idx
-                self.current_play_time = self.playback.current_play_time
                 
                 # Visually move the progress bar on the PC screen
                 if hasattr(self, 'progress_var') and self.chapters:
@@ -2316,15 +2337,8 @@ class AAXManagerApp:
         chapter = self.chapters[self.current_chapter_idx]
         self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
         self.update_info()
-
-        # 2. Load the state into the controller
-        self.playback.load_file(
-            filepath=self.file_path,
-            chapters=self.chapters,
-            start_chapter_idx=self.current_chapter_idx,
-            start_time=self.current_play_time
-        )
         
+        # 2. Resume playback
         self.is_paused = False
         self.resume_playback()
 
@@ -2350,9 +2364,6 @@ class AAXManagerApp:
             self.is_playing = False
             self.is_paused = True
             
-            # Sync the PC's memory with where the controller stopped
-            self.current_play_time = self.playback.current_play_time
-            
             curr_str = self.format_time(self.current_play_time)
             dur_str = self.format_time(self.chapter_duration)
             self.time_label.config(text=f"{curr_str} / {dur_str}")
@@ -2363,7 +2374,6 @@ class AAXManagerApp:
         self.playback.stop()
         self.is_playing = False
         self.is_paused = False
-        self.current_play_time = self.playback.current_play_time
         self.save_playback_state()
 
     def cancel_active_task(self):
@@ -2390,11 +2400,6 @@ class AAXManagerApp:
         if result == "NEXT_CHAPTER":
             self.next_chapter()
             return # next_chapter handles playback and UI resumption natively
-            
-        # Keep local UI state completely synced in case the controller crossed a chapter boundary
-        self.current_chapter_idx = self.playback.current_chapter_idx
-        self.current_play_time = self.playback.current_play_time
-        self.chapter_duration = self.playback.chapter_duration
         
         # Update the Title/Info label in case the chapter changed
         self.update_info() 
@@ -2453,15 +2458,9 @@ class AAXManagerApp:
     def next_chapter(self):
         self.save_playback_state()
         
-        # 1. Ask the controller to advance its internal state
         if self.playback.next_chapter():
             
-            # 2. Sync the UI's variables to match the controller's new reality
-            self.current_chapter_idx = self.playback.current_chapter_idx
-            self.current_play_time = self.playback.current_play_time
-            self.chapter_duration = self.playback.chapter_duration
             
-            # 3. Handle Chapter Sleep Timer
             if self.sleep_mode == "chapters":
                 self.sleep_chapters_remaining -= 1
                 if self.sleep_chapters_remaining <= 0:
@@ -2479,7 +2478,6 @@ class AAXManagerApp:
                 else:
                     self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
 
-            # 4. Resume playing the newly loaded chapter
             self.is_paused = False
             self.update_info()
             self.resume_playback()
@@ -2495,11 +2493,7 @@ class AAXManagerApp:
         
         # 1. Ask the controller to revert its state
         self.playback.prev_chapter()
-        
-        # 2. Sync the UI's variables
-        self.current_chapter_idx = self.playback.current_chapter_idx
-        self.current_play_time = self.playback.current_play_time
-        self.chapter_duration = self.playback.chapter_duration
+
         
         # 3. Resume playing
         self.is_paused = False
