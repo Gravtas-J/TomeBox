@@ -221,8 +221,8 @@ def create_server_app(tomebox):
             if item.get("title"): master_metadata[item["title"]] = item
 
         for path, data in tomebox.library_manager.local_library.items():
-            if item.get("asin"): master_metadata[item["asin"]] = item
-            if item.get("title"): master_metadata[item["title"]] = item
+            if data.get("asin"): master_metadata[data["asin"]] = data
+            if data.get("title"): master_metadata[data["title"]] = data
 
         for path, data in tomebox.library_manager.local_library.items():
             item_copy = dict(data)
