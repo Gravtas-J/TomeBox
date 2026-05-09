@@ -39,7 +39,7 @@ class AudioConverter:
     def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None, progress_cb=None):
         import tempfile
         import os
-        import subprocess
+
 
         if not file_paths:
             return False
@@ -131,14 +131,13 @@ class AudioConverter:
             cmd.extend(["-movflags", "+faststart+use_metadata_tags", "-progress", "pipe:1", temp_out_path]) 
 
             self.is_cancelled = False
-            self.current_process = subprocess.Popen(
+            self.current_process = ProcessRunner.run_async(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
+                universal_newlines=True,
                 encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                errors='replace'
             )
 
             last_percent = -1
@@ -233,7 +232,6 @@ class AudioConverter:
 
     def convert_to_m4b(self, input_path, output_path, title, authors, cover_path, drm_flags, total_duration, progress_cb=None):
         import os
-        import subprocess
         actual_cover = None
         if cover_path:
             raw_asin, _ = os.path.splitext(os.path.basename(cover_path))

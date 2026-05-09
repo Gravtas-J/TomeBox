@@ -13,7 +13,7 @@ except ImportError:
                 def __exit__(self, *args): pass
             return ContextDummy()
     keep = KeepDummy()
-
+from core.utils.process_runner import ProcessRunner
 class DownloadManager:
     def __init__(self, api_client, logger, library_manager, callbacks, thread_pool):
         self.thread_pool = thread_pool
@@ -168,7 +168,6 @@ class DownloadManager:
             if self.on_status_change:
                 self.on_status_change(asin, "Decrypting to M4B...", is_global=False)
             
-            import subprocess
             m4b_filepath = os.path.splitext(filepath)[0] + ".m4b"
             
             cmd = ["ffmpeg", "-y"]
@@ -184,8 +183,7 @@ class DownloadManager:
             cmd.extend(["-i", filepath, "-c", "copy", m4b_filepath])
             
             try:
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                result = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
+                result = ProcessRunner.run_blocking(cmd, capture_output=True)
                 
                 if self.active_flags.get(asin, False):
                     if os.path.exists(m4b_filepath):
