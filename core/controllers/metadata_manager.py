@@ -134,8 +134,11 @@ class MetadataManager:
                 
         threading.Thread(target=worker, daemon=True).start()
 
-    def apply_scraped_metadata(self, filepath, selected_asin):
+    def apply_scraped_metadata(self, filepath, selected_asin, fields_to_apply=None):
         """Fetches the final cover/details from the chosen source and embeds it additively."""
+        if fields_to_apply is None:
+            fields_to_apply = {"title": True, "author": True, "series": True, "cover": True}
+            
         import threading
         def worker():
             import requests
@@ -148,13 +151,9 @@ class MetadataManager:
             title = local_data.get("title", os.path.basename(filepath))
             authors = local_data.get("authors", "Unknown Author")
             series = local_data.get("series", "")
-            old_asin = local_data.get("asin")  # Capture the old ASIN for cleanup
+            old_asin = local_data.get("asin")  
             
             cover_path = os.path.join(self.covers_dir, f"{selected_asin}.jpg")
-            
-            # Logic flags to determine if we should overwrite
-            title_is_filename = title == os.path.basename(filepath) or title.endswith(('.m4b', '.mp3', '.aax', '.aaxc'))
-            authors_is_unknown = authors in ["", "Unknown", "Unknown Author", "Local File"]
             
             try:
                 # --- GOOGLE BOOKS ROUTING ---
@@ -166,20 +165,21 @@ class MetadataManager:
                         vol = resp.json().get("volumeInfo", {})
                         
                         api_title = vol.get("title", "")
-                        if api_title and title_is_filename:
+                        if api_title and fields_to_apply.get("title", True):
                             title = api_title
                             
                         api_authors = ", ".join(vol.get("authors", ["Unknown Author"]))
-                        if api_authors != "Unknown Author" and authors_is_unknown:
+                        if api_authors != "Unknown Author" and fields_to_apply.get("author", True):
                             authors = api_authors
                         
-                        images = vol.get("imageLinks", {})
-                        cover_url = images.get("thumbnail") or images.get("smallThumbnail")
-                        if cover_url:
-                            cover_url = cover_url.replace("http:", "https:")
-                            img_data = requests.get(cover_url, timeout=5).content
-                            with open(cover_path, "wb") as f:
-                                f.write(img_data)
+                        if fields_to_apply.get("cover", True):
+                            images = vol.get("imageLinks", {})
+                            cover_url = images.get("thumbnail") or images.get("smallThumbnail")
+                            if cover_url:
+                                cover_url = cover_url.replace("http:", "https:")
+                                img_data = requests.get(cover_url, timeout=5).content
+                                with open(cover_path, "wb") as f:
+                                    f.write(img_data)
                                 
                 # --- AUDIBLE ROUTING ---
                 elif getattr(self, 'api', None) and self.api.auth:
@@ -190,35 +190,50 @@ class MetadataManager:
                     product = resp.get("product", {})
                     
                     api_title = product.get("title", "")
-                    if api_title and title_is_filename:
+                    if api_title and fields_to_apply.get("title", True):
                         title = api_title
                         
                     raw_authors = product.get("authors", [])
                     api_authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                    if api_authors and authors_is_unknown:
+                    if api_authors and fields_to_apply.get("author", True):
                         authors = api_authors
                         
+                    # --- IMPROVED SERIES PARSING ---
                     raw_series = product.get("series", [])
-                    if raw_series and not series:
-                        series = ", ".join([f"{s.get('title')} (Bk {s.get('sequence', '')})" for s in raw_series if isinstance(s, dict) and s.get("title")])
+                    if raw_series and fields_to_apply.get("series", True):
+                        parsed_series = []
+                        for s in raw_series:
+                            if isinstance(s, dict) and s.get("title"):
+                                s_title = s.get("title")
+                                s_seq = s.get("sequence", "")
+                                if s_seq:
+                                    parsed_series.append(f"{s_title} (Bk {s_seq})")
+                                else:
+                                    parsed_series.append(s_title)
+                        if parsed_series:
+                            series = ", ".join(parsed_series)
+                            
+                    # --- IMPROVED DURATION PARSING ---
+                    duration_min = product.get("runtime_length_min")
+                    if duration_min:
+                        local_data["duration_min"] = duration_min
                     
-                    images = product.get("product_images", {})
-                    image_url = images.get("500") or images.get("252")
-                    if image_url:
-                        img_data = requests.get(image_url).content
-                        with open(cover_path, "wb") as f:
-                            f.write(img_data)
+                    if fields_to_apply.get("cover", True):
+                        images = product.get("product_images", {})
+                        image_url = images.get("500") or images.get("252")
+                        if image_url:
+                            img_data = requests.get(image_url).content
+                            with open(cover_path, "wb") as f:
+                                f.write(img_data)
 
                 # --- COVER CLEANUP & RENAME ---
                 if old_asin and old_asin != selected_asin:
                     old_cover_path = os.path.join(self.covers_dir, f"{old_asin}.jpg")
                     if os.path.exists(old_cover_path):
                         if os.path.exists(cover_path):
-                            # We downloaded a new official cover, so delete the old orphaned one
                             try: os.remove(old_cover_path)
                             except: pass
                         else:
-                            # We didn't get a new cover, so rename the old one to match the new ASIN
                             try: os.rename(old_cover_path, cover_path)
                             except: pass
 
@@ -233,16 +248,23 @@ class MetadataManager:
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
                 # 4. Embed into file using FFmpeg
-                if os.path.exists(cover_path) and filepath.endswith(('.m4b', '.mp3')):
+                if filepath.endswith(('.m4b', '.mp3')):
                     temp_out = filepath + ".tmp.m4b"
                     
                     cmd = [
-                        "ffmpeg", "-y", "-i", filepath, "-i", cover_path,
-                        "-map", "0", "-map", "1", "-c", "copy",
-                        "-disposition:v", "attached_pic",
+                        "ffmpeg", "-y", "-i", filepath
+                    ]
+                    
+                    # Only map new cover if we applied a new cover and it exists
+                    if fields_to_apply.get("cover", True) and os.path.exists(cover_path):
+                        cmd.extend(["-i", cover_path, "-map", "0", "-map", "1", "-c", "copy", "-disposition:v", "attached_pic"])
+                    else:
+                        cmd.extend(["-map", "0", "-c", "copy"])
+                        
+                    cmd.extend([
                         "-metadata", f"title={title}",
                         "-metadata", f"artist={authors}"
-                    ]
+                    ])
                     
                     if series:
                         cmd.extend(["-metadata", f"show={series}", "-metadata", f"series={series}"])
@@ -262,6 +284,7 @@ class MetadataManager:
                     self.on_error("Failed to fetch and apply metadata. Check connection.")
 
         threading.Thread(target=worker, daemon=True).start()
+        
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""
         import requests

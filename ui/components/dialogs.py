@@ -524,6 +524,19 @@ def open_match_to_audible_window(app, filepath):
     author_var = tk.StringVar(value=initial_author)
     ttk.Entry(search_frame, textvariable=author_var, width=40).grid(row=1, column=1, sticky="w", pady=2)
 
+    options_frame = ttk.LabelFrame(main_frame, text="Fields to Overwrite", padding=5)
+    options_frame.pack(fill="x", pady=(0, 10))
+
+    apply_title_var = tk.BooleanVar(value=True)
+    apply_author_var = tk.BooleanVar(value=True)
+    apply_series_var = tk.BooleanVar(value=True)
+    apply_cover_var = tk.BooleanVar(value=True)
+
+    ttk.Checkbutton(options_frame, text="Title", variable=apply_title_var).pack(side=tk.LEFT, padx=10)
+    ttk.Checkbutton(options_frame, text="Author", variable=apply_author_var).pack(side=tk.LEFT, padx=10)
+    ttk.Checkbutton(options_frame, text="Series", variable=apply_series_var).pack(side=tk.LEFT, padx=10)
+    ttk.Checkbutton(options_frame, text="Cover Art", variable=apply_cover_var).pack(side=tk.LEFT, padx=10)
+
     status_var = tk.StringVar(value="")
 
     # --- Results Canvas ---
@@ -725,7 +738,13 @@ def open_match_to_audible_window(app, filepath):
 
         app.metadata_manager.on_apply_complete = on_done
         app.metadata_manager.on_error = on_error
-        app.metadata_manager.apply_scraped_metadata(filepath, asin)
+        fields = {
+            "title": apply_title_var.get(),
+            "author": apply_author_var.get(),
+            "series": apply_series_var.get(),
+            "cover": apply_cover_var.get()
+        }
+        app.metadata_manager.apply_scraped_metadata(filepath, asin, fields_to_apply=fields)
 
     search_btn.config(command=do_search)
     apply_btn.config(command=do_apply)
