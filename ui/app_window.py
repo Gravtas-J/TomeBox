@@ -686,7 +686,30 @@ class AAXManagerApp:
             on_stopped_cb=on_stopped,
             on_error_cb=on_error
         )
-    
+        
+    def add_firewall_rule_prompt(self):
+        import os
+        if os.name != 'nt':
+            messagebox.showinfo("Not Applicable", "Firewall management is only automated on Windows.")
+            return
+            
+        # Check if it's already there before bothering them with a UAC prompt
+        if self.system_manager._is_firewall_rule_installed():
+            messagebox.showinfo("Already Installed", "The 'TomeBox Web Server' firewall rule is already active on your system.")
+            return
+            
+        if messagebox.askyesno(
+            "Add Firewall Rule", 
+            "This will require Administrator privileges to add the 'TomeBox Web Server' rule to Windows Defender Firewall.\n\n"
+            "This allows your mobile device to communicate with the TomeBox companion server over your local Wi-Fi network.\n\n"
+            "Do you want to continue?"
+        ):
+            success = self.system_manager._add_firewall_rule()
+            if success:
+                messagebox.showinfo("Success", "Firewall rule added successfully.")
+            else:
+                messagebox.showerror("Action Failed", "Failed to add the firewall rule. You may have declined the admin prompt.")
+
     def remove_firewall_rule_prompt(self):
         import os
         if os.name != 'nt':
@@ -704,7 +727,7 @@ class AAXManagerApp:
                 messagebox.showinfo("Success", "Firewall rule removed successfully.")
             else:
                 messagebox.showerror("Action Failed", "Failed to remove the firewall rule. You may have declined the admin prompt, or the rule did not exist.")
-                
+
     def on_file_drop(self, event):
         from tkinter import messagebox
         import os

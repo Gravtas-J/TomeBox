@@ -63,6 +63,7 @@ def setup_menu_bar(app):
     # app.file_menu.add_command(label="Open Web UI (Beta)", command=app.open_web_ui)
     app.file_menu.add_command(label="Show Pairing Info", command=lambda: open_pairing_window(app), state=tk.DISABLED)
     app.file_menu.add_command(label="Remove Firewall Rule", command=app.remove_firewall_rule_prompt)
+    app.file_menu.add_command(label="Add Firewall Rule", command=app.add_firewall_rule_prompt)
     app.file_menu.add_separator()
     app.file_menu.add_command(label="Exit", command=app.on_closing)
 
