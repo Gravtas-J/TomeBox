@@ -5,7 +5,10 @@ try:
     from audible.aescipher import decrypt_voucher_from_licenserequest
     from httpx import HTTPStatusError, RequestError
 except ImportError:
-    pass
+    raise ImportError(
+        "CRITICAL: The 'audible' package is missing. "
+        "Please install it by running: pip install audible"
+    )
 import time
 
 
