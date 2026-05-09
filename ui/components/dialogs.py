@@ -403,7 +403,8 @@ def show_achievement_toast(app, title, desc):
 
 def open_pairing_window(app):
     import socket
-    import uuid
+    import time
+    import secrets
     
     # Dynamically grab the host machine's local IP
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -415,15 +416,20 @@ def open_pairing_window(app):
     finally:
         s.close()
 
-    # Fallback initialization just in case it wasn't set on boot
-    token = app.settings.get("auth_token")
-    if not token:
-        token = str(uuid.uuid4())
-        app.settings["auth_token"] = token
-        app.db.save_settings(app.settings)
+    # --- Generate 5-Minute OTP ---
+    if not hasattr(app, '_active_otps'):
+        app._active_otps = {}
+        
+    # Clear expired OTPs
+    now = time.time()
+    app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
+    
+    # Mint fresh OTP
+    otp = secrets.token_urlsafe(16)
+    app._active_otps[otp] = now + 300  # Expires in 300 seconds (5 mins)
 
     # Use a mutable state dictionary so button callbacks always see the newest URL
-    current_state = {"url": f"http://{local_ip}:8000/auth?token={token}"}
+    current_state = {"url": f"http://{local_ip}:8000/auth?otp={otp}"}
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
@@ -467,13 +473,14 @@ def open_pairing_window(app):
         copy_btn.config(text="Copied!")
         top.after(1500, lambda: copy_btn.config(text="Copy URL"))
 
-    def regenerate_token():
-        # Overwrite the old token and save to disk immediately
-        new_token = str(uuid.uuid4())
-        app.settings["auth_token"] = new_token
-        app.db.save_settings(app.settings)
+    def refresh_qr_code():
+        # Mint a new 5-minute OTP
+        now = time.time()
+        app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
+        new_otp = secrets.token_urlsafe(16)
+        app._active_otps[new_otp] = now + 300
         
-        current_state["url"] = f"http://{local_ip}:8000/auth?token={new_token}"
+        current_state["url"] = f"http://{local_ip}:8000/auth?otp={new_otp}"
         
         # Visually refresh the QR Code
         new_qr = qrcode.QRCode(box_size=8, border=2)
@@ -500,7 +507,7 @@ def open_pairing_window(app):
                          relief="flat", padx=15, pady=5)
     copy_btn.pack(side=tk.LEFT, padx=5)
 
-    regen_btn = tk.Button(btn_frame, text="Regenerate Token", command=regenerate_token,
+    regen_btn = tk.Button(btn_frame, text="Refresh Code", command=refresh_qr_code,
                           bg="#ff4444", fg="white", font=("Arial", 9, "bold"),
                           relief="flat", padx=15, pady=5)
     regen_btn.pack(side=tk.LEFT, padx=5)
@@ -889,3 +896,96 @@ def open_cover_modal(app, asin, title, explicit_path=None):
         traceback.print_exc()
         if hasattr(app, "logger"):
             app.logger.error(f"Failed to open cover modal: {e}")
+
+def open_device_management_window(app):
+    import time
+    from datetime import datetime
+
+    if getattr(app, 'device_win', None) and app.device_win.winfo_exists():
+        app.device_win.lift()
+        app.device_win.focus_set()
+        return
+
+    app.device_win = tk.Toplevel(app.root)
+    app.device_win.title("Manage Paired Devices")
+    # ---> FIX: Increased height from 350 to 400 to ensure buttons breathe
+    app.device_win.geometry("500x400")
+    app.device_win.transient(app.root)
+
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    app.device_win.configure(bg=bg_color)
+
+    main_frame = ttk.Frame(app.device_win, padding=10)
+    main_frame.pack(fill="both", expand=True)
+
+    ttk.Label(main_frame, text="Connected Devices", font=("Segoe UI", 12, "bold")).pack(pady=(0, 10), anchor="w")
+    list_frame = ttk.Frame(main_frame)
+    list_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+    # --- Treeview & Left-Aligned Scrollbar Setup ---
+    columns = ("TokenHash", "Device Name", "Last Seen") 
+    
+    # Pack the scrollbar FIRST, on the left
+    scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+    scrollbar.pack(side=tk.RIGHT, fill="y", padx=(0, 5))
+
+    tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
+
+    tree.heading("Device Name", text="Device Name")
+    tree.column("Device Name", width=200, anchor="w")
+
+    tree.heading("Last Seen", text="Last Seen")
+    tree.column("Last Seen", width=150, anchor="w")
+
+    # Hide the TokenHash column (used for data tracking)
+    tree.column("TokenHash", width=0, stretch=tk.NO)
+    tree.heading("TokenHash", text="")
+
+    # Tie them together and pack the tree next to the scrollbar
+    tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=tree.yview)
+    tree.pack(side=tk.LEFT, fill="both", expand=True)
+
+    def refresh_list():
+        for row in tree.get_children():
+            tree.delete(row)
+
+        devices = app.settings.get("paired_devices", {})
+        for token_hash, data in devices.items():
+            name = data.get("name", "Unknown Device")
+            last_seen_ts = data.get("last_seen", 0)
+
+            if last_seen_ts:
+                last_seen_str = datetime.fromtimestamp(last_seen_ts).strftime("%Y-%m-%d %H:%M")
+            else:
+                last_seen_str = "Never"
+
+            tree.insert("", "end", values=(token_hash, name, last_seen_str))
+
+    refresh_list()
+
+    # --- Bottom Controls ---
+    btn_frame = ttk.Frame(app.device_win, padding=(10, 0, 10, 10))
+    btn_frame.pack(fill="x", side=tk.BOTTOM)
+
+    def revoke_device():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Device", "Please select a device to revoke.", parent=app.device_win)
+            return
+
+        item = tree.item(selected[0])
+        token_hash = item['values'][0]
+        device_name = item['values'][1]
+
+        if messagebox.askyesno("Revoke Access", f"Are you sure you want to disconnect '{device_name}'?\n\nThis device will immediately lose access to your library.", parent=app.device_win):
+            devices = app.settings.get("paired_devices", {})
+            if token_hash in devices:
+                del devices[token_hash]
+                app.settings["paired_devices"] = devices
+                app.db.save_settings(app.settings)
+                refresh_list()
+
+    ttk.Button(btn_frame, text="Close", command=app.device_win.destroy).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(btn_frame, text="Revoke Selected", command=revoke_device).pack(side=tk.RIGHT)

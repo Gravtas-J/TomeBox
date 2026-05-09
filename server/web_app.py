@@ -19,7 +19,7 @@ def create_server_app(tomebox):
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
         # Allow static files, auth, and pairing endpoints to bypass entirely
-        if request.url.path in ["/auth", "/favicon.ico", "/pairing"] or request.url.path.startswith("/static"):
+        if request.url.path in ["/auth", "/favicon.ico", "/pairing", "/api/auth/exchange"] or request.url.path.startswith("/static"):
             return await call_next(request)
         
         client_ip = request.client.host if request.client else None
@@ -33,16 +33,39 @@ def create_server_app(tomebox):
                 # Networked devices should use the mobile companion at /, not /desktop
                 return RedirectResponse(url="/", status_code=302)
         
-        # Normal token check for all other endpoints
-        server_token = tomebox.db.load_settings().get("auth_token")
+        # Extract token from cookie or Authorization header
         client_token = request.cookies.get("tomebox_token")
-        
         if not client_token:
             auth_header = request.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
                 client_token = auth_header.split(" ")[1]
         
-        if client_token != server_token:
+        # --- NEW AUTH VALIDATION ---
+        is_valid = False
+        if client_token:
+            # 1. Check legacy master token (backwards compatibility)
+            server_token = tomebox.db.load_settings().get("auth_token")
+            if client_token == server_token:
+                is_valid = True
+            else:
+                # 2. Check secure device-specific tokens
+                try:
+                    hashed_client = tomebox.db.hash_device_token(client_token)
+                    paired_devices = tomebox.settings.get("paired_devices", {})
+                    if hashed_client in paired_devices:
+                        is_valid = True
+                        
+                        # Throttle last_seen updates to prevent DB lock spam (every 1 hour max)
+                        import time
+                        now = time.time()
+                        if now - paired_devices[hashed_client].get("last_seen", 0) > 3600:
+                            paired_devices[hashed_client]["last_seen"] = now
+                            tomebox.settings["paired_devices"] = paired_devices
+                            tomebox.db.save_settings(tomebox.settings)
+                except Exception as e:
+                    pass
+                    
+        if not is_valid:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Unauthorized: Invalid or missing session."}
@@ -104,26 +127,75 @@ def create_server_app(tomebox):
             raise HTTPException(status_code=500, detail="Internal server error during library refresh.")
 
     @api.get("/auth")
-    def authenticate_device(token: str):
-        server_token = tomebox.db.load_settings().get("auth_token")
-        
-        if token == server_token:
-            # Create a redirect back to the clean root interface
+    def authenticate_device(request: Request, token: str = None, otp: str = None):
+        import time
+        import secrets
+
+        # Support legacy QR codes temporarily
+        if token and token == tomebox.settings.get("auth_token"):
             redirect = RedirectResponse(url="/", status_code=302)
-            
-            # Set the secure cookie
-            # httponly=True prevents malicious JavaScript from reading the token
-            redirect.set_cookie(
-                key="tomebox_token", 
-                value=token, 
-                httponly=True, 
-                max_age=31536000, # Valid for 1 year
-                samesite="lax"
-            )
+            redirect.set_cookie(key="tomebox_token", value=token, httponly=True, max_age=31536000, samesite="lax")
             return redirect
-        else:
-            return HTMLResponse("<h1>Invalid Pairing Token</h1><p>Please scan the QR code from the TomeBox desktop app again.</p>", status_code=401)
+
+        # Process fresh OTP
+        active_otps = getattr(tomebox, '_active_otps', {})
+        now = time.time()
+
+        if otp and otp in active_otps and active_otps[otp] > now:
+            del active_otps[otp] # Burn the OTP instantly
+            
+            # Mint and secure new device token
+            new_token = secrets.token_urlsafe(32)
+            hashed_token = tomebox.db.hash_device_token(new_token)
+            
+            paired_devices = tomebox.settings.get("paired_devices", {})
+            ua = request.headers.get("user-agent", "")
+            
+            # Simple device fingerprinting
+            name = "Mobile Device"
+            if "iPhone" in ua or "iPad" in ua: name = "Apple Device"
+            elif "Android" in ua: name = "Android Device"
+            elif "Macintosh" in ua: name = "Mac Desktop"
+            elif "Windows" in ua: name = "Windows Desktop"
+
+            paired_devices[hashed_token] = {"name": name, "created": now, "last_seen": now}
+            tomebox.settings["paired_devices"] = paired_devices
+            tomebox.db.save_settings(tomebox.settings)
+            
+            redirect = RedirectResponse(url="/", status_code=302)
+            redirect.set_cookie(key="tomebox_token", value=new_token, httponly=True, max_age=31536000, samesite="lax")
+            return redirect
+            
+        return HTMLResponse("<h1>Expired Link</h1><p>This pairing code has expired. Please generate a new one from the TomeBox desktop app.</p>", status_code=401)
+
+    @api.post("/api/auth/exchange")
+    async def exchange_otp(request: Request):
+        """Allows API clients to swap an OTP for a permanent Bearer token."""
+        import time
+        import secrets
+        
+        data = await request.json()
+        otp = data.get("otp", "").strip()
+        
+        active_otps = getattr(tomebox, '_active_otps', {})
+        now = time.time()
+        
+        if otp and otp in active_otps and active_otps[otp] > now:
+            del active_otps[otp]
+            
+            new_token = secrets.token_urlsafe(32)
+            hashed_token = tomebox.db.hash_device_token(new_token)
+            
+            paired_devices = tomebox.settings.get("paired_devices", {})
+            paired_devices[hashed_token] = {"name": "API Client", "created": now, "last_seen": now}
+            tomebox.settings["paired_devices"] = paired_devices
+            tomebox.db.save_settings(tomebox.settings)
+            
+            return {"status": "success", "token": new_token}
+            
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP.")
     
+
     @api.get("/", response_class=HTMLResponse)
     def web_interface():
         html_path = get_resource_path("server", "mobile_ui.html")
@@ -157,12 +229,20 @@ def create_server_app(tomebox):
         except FileNotFoundError:
             return HTMLResponse(content="<h1>Error: desktop_ui.html not found</h1>", status_code=404)
         
-        # Set the auth cookie so subsequent API calls succeed without manual pairing.
-        # This is safe because the middleware already verified this is a localhost connection.
-        server_token = tomebox.db.load_settings().get("auth_token")
+        import secrets
+        import time
+        
+        new_token = secrets.token_urlsafe(32)
+        hashed_token = tomebox.db.hash_device_token(new_token)
+        
+        paired_devices = tomebox.settings.get("paired_devices", {})
+        paired_devices[hashed_token] = {"name": "Desktop Web UI", "created": time.time(), "last_seen": time.time()}
+        tomebox.settings["paired_devices"] = paired_devices
+        tomebox.db.save_settings(tomebox.settings)
+
         response.set_cookie(
             key="tomebox_token",
-            value=server_token,
+            value=new_token,
             httponly=True,
             max_age=31536000,
             samesite="lax"

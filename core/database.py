@@ -3,6 +3,9 @@ import json
 import sqlite3
 import threading
 import uuid
+import hashlib
+import secrets
+
 class DatabaseManager:
     def __init__(self, base_dir):
         self.base_dir = base_dir
@@ -47,15 +50,32 @@ class DatabaseManager:
                     settings_dict[key] = json.loads(value)
                 except:
                     settings_dict[key] = value
+            
+            db_changed = False
+            
+            # Legacy token (kept temporarily for backwards compatibility)
             if "auth_token" not in settings_dict:
                 new_token = str(uuid.uuid4())
                 settings_dict["auth_token"] = new_token
-                # Save immediately so it persists in the database
-                cursor.execute(
-                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", 
-                    ("auth_token", json.dumps(new_token))
-                )
+                cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("auth_token", json.dumps(new_token)))
+                db_changed = True
+                
+            # NEW: Master salt for hashing device tokens
+            if "device_salt" not in settings_dict:
+                new_salt = secrets.token_hex(32)
+                settings_dict["device_salt"] = new_salt
+                cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("device_salt", json.dumps(new_salt)))
+                db_changed = True
+                
+            # NEW: Schema for tracking individual devices
+            if "paired_devices" not in settings_dict:
+                settings_dict["paired_devices"] = {}
+                cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("paired_devices", json.dumps({})))
+                db_changed = True
+                
+            if db_changed:
                 self.conn.commit()
+                
         return settings_dict
 
     def save_settings(self, settings_dict):
@@ -64,6 +84,22 @@ class DatabaseManager:
             for key, val in settings_dict.items():
                 cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(val)))
             self.conn.commit()
+
+    def hash_device_token(self, raw_token):
+        """Securely hashes a device token using the master salt."""
+        # Grab the salt from settings (avoiding a recursive lock if possible)
+        salt = ""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key='device_salt'")
+            row = cursor.fetchone()
+            if row:
+                try:
+                    salt = json.loads(row[0])
+                except:
+                    salt = row[0]
+                    
+        return hashlib.sha256(f"{salt}{raw_token}".encode()).hexdigest()
 
     def load_local_db(self):
         library = {}
