@@ -2,17 +2,7 @@ import os
 import threading
 import traceback
 import shutil
-
-try:
-    from wakepy import keep
-except ImportError:
-    class KeepDummy:
-        def running(self):
-            class ContextDummy:
-                def __enter__(self): pass
-                def __exit__(self, *args): pass
-            return ContextDummy()
-    keep = KeepDummy()
+from core.utils.wake import keep
 
 class ConversionManager:
     def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb, thread_pool):

@@ -18,10 +18,10 @@ import time
 try:
     import audible
     from tkinterdnd2 import DND_FILES, TkinterDnD
-    from wakepy import keep
 except ImportError:
-    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow tkinterdnd2 wakepy")
+    messagebox.showerror("Missing Dependency", "Please run: pip install audible requests pillow tkinterdnd2")
     exit()
+from core.utils.wake import keep
 import pystray
 from pystray import MenuItem as item
 import sys

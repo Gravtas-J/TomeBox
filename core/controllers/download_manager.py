@@ -2,17 +2,7 @@ import os
 import threading
 import traceback
 from core.downloader import AudiobookDownloader
-try:
-    from wakepy import keep
-except ImportError:
-    # Safe fallback if wakepy isn't installed
-    class KeepDummy:
-        def running(self):
-            class ContextDummy:
-                def __enter__(self): pass
-                def __exit__(self, *args): pass
-            return ContextDummy()
-    keep = KeepDummy()
+from core.utils.wake import keep
 from core.utils.process_runner import ProcessRunner
 class DownloadManager:
     def __init__(self, api_client, logger, library_manager, callbacks, thread_pool):
