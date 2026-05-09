@@ -183,6 +183,7 @@ class AAXManagerApp:
             library_manager=self.library_manager,
             logger=self.logger,
             covers_dir=self.covers_dir,
+            thread_pool=self.thread_pool,
             callbacks={
                 "on_search_complete": self._on_scrape_search_results,
                 "on_apply_complete": self._on_scrape_apply_complete,

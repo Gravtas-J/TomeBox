@@ -33,14 +33,9 @@ class ConversionManager:
                 title = original_data.get("title", os.path.basename(output_path))
                 asin = original_data.get("asin", "")
 
-                authors = ""
-                for item in getattr(self.library_manager, 'cloud_items', []):
-                    if item.get("asin") == asin:
-                        raw_authors = item.get("authors", [])
-                        authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                        break
-
+                authors = self.library_manager.get_authors_for_asin(asin)
                 cover_path = os.path.join(self.covers_dir, f"{asin}.jpg") if asin else None
+
                 drm_flags = self.get_drm_flags(input_path)
 
                 self.converter.convert_to_m4b(
@@ -140,13 +135,7 @@ class ConversionManager:
                         
                         drm_flags = self.get_drm_flags(filepath)
                         cover_path = os.path.join(self.covers_dir, f"{asin}.jpg") if asin else None
-                        
-                        authors = ""
-                        for item in getattr(self.library_manager, 'cloud_items', []):
-                            if item.get("asin") == asin:
-                                raw_authors = item.get("authors", [])
-                                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                                break
+                        authors = self.library_manager.get_authors_for_asin(asin)
 
                         try:
                             total_duration = self.converter.get_duration(filepath)

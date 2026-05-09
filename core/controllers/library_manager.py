@@ -213,6 +213,14 @@ class LibraryManager:
             if item.get("title"): self.master_metadata[item["title"]] = item
             if item.get("asin"): self.master_metadata[item["asin"]] = item
 
+    def get_authors_for_asin(self, asin):
+        """Helper to extract and format the authors string for a given ASIN from the cloud cache."""
+        for item in self.cloud_items:
+            if item.get("asin") == asin:
+                raw_authors = item.get("authors", [])
+                return ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+        return ""
+
     def get_view_data(self, search_query="", filter_type="All", shelf_filter="All Shelves"):
         rows = []
         all_unique_shelves = set()
@@ -322,7 +330,98 @@ class LibraryManager:
             
         settings["shelves_db"][asin] = tags_list
         self.db.save_settings(settings)
+    
+    def _process_single_file_for_import(self, filepath, active_profile, converter, logger=None):
+        """Extracts metadata, matches against cloud, and builds a library entry dict for a single file."""
+        import hashlib
+        from core.utils.process_runner import ProcessRunner
 
+        ext = os.path.splitext(filepath)[1].lower()
+        filename = os.path.basename(filepath)
+        title = filename
+        authors = "Unknown Author"
+        format_clean = ext.replace(".", "").upper()
+        embedded_meta = {}
+        extracted_chapters = []
+
+        if format_clean in ["M4B", "MP3"]:
+            try:
+                data = converter.get_metadata_and_chapters(filepath)
+                tags = data.get("format", {}).get("tags", {})
+                extracted_chapters = data.get("chapters", [])
+
+                if "title" in tags: title = tags["title"]
+                if "artist" in tags: authors = tags["artist"]
+                elif "album_artist" in tags: authors = tags["album_artist"]
+                
+                embedded_meta = {
+                    "album": tags.get("album", ""),
+                    "year": tags.get("date", "") or tags.get("year", ""),
+                    "comment": tags.get("comment", ""),
+                    "narrator": tags.get("composer", ""),
+                    "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60),
+                    "chapters": extracted_chapters
+                }
+                
+                if "series" in tags:
+                    embedded_meta["series"] = tags["series"]
+                elif "show" in tags:
+                    embedded_meta["series"] = tags["show"]
+                
+                for stream in data.get("streams", []):
+                    if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
+                        embedded_meta["has_embedded_cover"] = True
+                        break
+            except Exception as e:
+                if logger: logger(f"Failed to read tags for {filename}: {e}")
+
+        matched_cloud_item = _find_matching_cloud_item(title, self.cloud_items)
+
+        entry = {
+            "title": title,
+            "format": format_clean,
+            "path": filepath,
+            "authors": authors,
+            "owner": active_profile,
+            "duration_min": embedded_meta.get("duration_min", 0),
+            "chapters": extracted_chapters
+        }
+
+        if embedded_meta.get("series"): entry["series"] = embedded_meta["series"]
+        if embedded_meta.get("narrator"): entry["narrator"] = embedded_meta["narrator"]
+        if embedded_meta.get("year"): entry["year"] = embedded_meta["year"]
+
+        if matched_cloud_item:
+            entry["title"] = matched_cloud_item.get("title", title)
+            entry["asin"] = matched_cloud_item.get("asin", "")
+            
+            raw_authors = matched_cloud_item.get("authors", [])
+            if raw_authors:
+                entry["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+            
+            if logger:
+                logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
+        else:
+            fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
+            cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
+            extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
+            
+            if not extraction_succeeded:
+                try:
+                    extract_cmd = ["ffmpeg", "-y", "-i", filepath, "-an", "-vframes", "1", cover_output]
+                    result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
+                    
+                    if result.returncode == 0 and os.path.exists(cover_output) and os.path.getsize(cover_output) > 0:
+                        extraction_succeeded = True
+                        if logger: logger(f"Extracted embedded cover for {title}")
+                except Exception as e:
+                    if logger: logger(f"Cover extraction failed for {title}: {e}")
+            
+            if extraction_succeeded:
+                entry["asin"] = fake_asin
+
+        return entry
+    
     def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None, task_id=None):
         if self._is_importing or not self.import_queue.empty():
             self.current_status = f"Queued {len(file_paths)} files for import..."
@@ -360,113 +459,10 @@ class LibraryManager:
                 if ext not in valid_exts: continue
                 
                 filename = os.path.basename(filepath)
-                title = filename
-                authors = "Unknown Author"
-                format_clean = ext.replace(".", "").upper()
-                embedded_meta = {}
-                extracted_chapters = []
-                
-                # Replace the old callback check with our new helper
                 update_status(f"Importing: {filename}")
                 
-                if on_status_cb:
-                    on_status_cb(f"Importing: {filename}")
+                entry = self._process_single_file_for_import(filepath, active_profile, converter, logger)
                 
-                # Scrape tags if it's an M4B or MP3
-                if format_clean in ["M4B", "MP3"]:
-                    try:
-                        data = converter.get_metadata_and_chapters(filepath)
-                        tags = data.get("format", {}).get("tags", {})
-                        extracted_chapters = data.get("chapters", [])
-
-                        if "title" in tags: title = tags["title"]
-                        if "artist" in tags: authors = tags["artist"]
-                        elif "album_artist" in tags: authors = tags["album_artist"]
-                        
-                        # Grab extended metadata just like the folder importer
-                        embedded_meta = {
-                            "album": tags.get("album", ""),
-                            "year": tags.get("date", "") or tags.get("year", ""),
-                            "comment": tags.get("comment", ""),
-                            "narrator": tags.get("composer", ""),
-                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60)
-                        }
-                        
-                        if "series" in tags:
-                            embedded_meta["series"] = tags["series"]
-                        elif "show" in tags:
-                            embedded_meta["series"] = tags["show"]
-                        
-                        for stream in data.get("streams", []):
-                            if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
-                                embedded_meta["has_embedded_cover"] = True
-                                break
-                    except Exception as e:
-                        if logger: logger(f"Failed to read tags for {filename}: {e}")
-
-                # Try to match against cloud library to avoid duplicates
-                matched_cloud_item = _find_matching_cloud_item(title, self.cloud_items)
-
-                entry = {
-                    "title": title,
-                    "format": format_clean,
-                    "path": filepath,
-                    "authors": authors,
-                    "owner": active_profile,
-                    "duration_min": embedded_meta.get("duration_min", 0),
-                    "chapters": extracted_chapters
-                }
-
-                if embedded_meta.get("series"):
-                    entry["series"] = embedded_meta["series"]
-                if embedded_meta.get("narrator"):
-                    entry["narrator"] = embedded_meta["narrator"]
-                if embedded_meta.get("year"):
-                    entry["year"] = embedded_meta["year"]
-
-                if matched_cloud_item:
-                    # Use the cloud item's title and ASIN so the library view dedupes correctly
-                    entry["title"] = matched_cloud_item.get("title", title)
-                    entry["asin"] = matched_cloud_item.get("asin", "")
-                    
-                    # Pull richer authors from cloud if available
-                    raw_authors = matched_cloud_item.get("authors", [])
-                    if raw_authors:
-                        entry["authors"] = ", ".join([
-                            a.get("name", "") for a in raw_authors if isinstance(a, dict)
-                        ])
-                    
-                    if logger:
-                        logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
-                        
-                else:
-                    # Always attempt to extract a cover for unmatched local files
-                    import hashlib
-                    from core.utils.process_runner import ProcessRunner
-                    
-                    fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
-                    cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
-                    
-                    extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
-                    
-                    if not extraction_succeeded:
-                        try:
-                            # Use -vframes 1 instead of -vcodec copy so PNGs are safely converted to JPGs
-                            extract_cmd = [
-                                "ffmpeg", "-y", "-i", filepath,
-                                "-an", "-vframes", "1", cover_output
-                            ]
-                            result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
-                            
-                            if result.returncode == 0 and os.path.exists(cover_output) and os.path.getsize(cover_output) > 0:
-                                extraction_succeeded = True
-                                if logger: logger(f"Extracted embedded cover for {title}")
-                        except Exception as e:
-                            if logger: logger(f"Cover extraction failed for {title}: {e}")
-                    
-                    if extraction_succeeded:
-                        entry["asin"] = fake_asin
-
                 self.local_library[filepath] = entry
                 added_count += 1
                 
@@ -767,121 +763,18 @@ class LibraryManager:
             for filepath in file_paths:
                 if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                     break
-                if not os.path.exists(filepath):
-                    continue
-                
-                # Skip files already in library
-                if filepath in self.local_library:
-                    continue
+                if not os.path.exists(filepath): continue
+                if filepath in self.local_library: continue
                 
                 ext = os.path.splitext(filepath)[1].lower()
-                if ext not in valid_exts:
-                    continue
+                if ext not in valid_exts: continue
                 
                 filename = os.path.basename(filepath)
-                title = filename
-                authors = "Unknown Author"
-                format_clean = ext.replace(".", "").upper()
-                embedded_meta = {}
-                extracted_chapters = []
-
                 if on_status_cb:
                     update_status(f"Importing: {filename}")
 
-                # Scrape tags if it's an M4B or MP3
-                if format_clean in ["M4B", "MP3"]:
-                    try:
-                        data = converter.get_metadata_and_chapters(filepath)
-                        tags = data.get("format", {}).get("tags", {})
-                        extracted_chapters = data.get("chapters", [])
-
-                        if "title" in tags: title = tags["title"]
-                        if "artist" in tags: authors = tags["artist"]
-                        elif "album_artist" in tags: authors = tags["album_artist"]
-                        
-                        embedded_meta = {
-                            "album": tags.get("album", ""),
-                            "year": tags.get("date", "") or tags.get("year", ""),
-                            "comment": tags.get("comment", ""),
-                            "narrator": tags.get("composer", ""),
-                            "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60),
-                            "chapters": extracted_chapters
-                        }
-                        
-                        if "series" in tags:
-                            embedded_meta["series"] = tags["series"]
-                        elif "show" in tags:
-                            embedded_meta["series"] = tags["show"]
-                        
-                        for stream in data.get("streams", []):
-                            if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
-                                embedded_meta["has_embedded_cover"] = True
-                                break
-                                
-                    except Exception as e:
-                        if logger: logger(f"Failed to read tags for {filename}: {e}")
-
-                matched_cloud_item = _find_matching_cloud_item(title, self.cloud_items)
-
-                entry = {
-                    "title": title,
-                    "format": format_clean,
-                    "path": filepath,
-                    "authors": authors,
-                    "owner": active_profile,
-                    "duration_min": embedded_meta.get("duration_min", 0),
-                }
-
-                if embedded_meta.get("series"):
-                    entry["series"] = embedded_meta["series"]
-                if embedded_meta.get("narrator"):
-                    entry["narrator"] = embedded_meta["narrator"]
-                if embedded_meta.get("year"):
-                    entry["year"] = embedded_meta["year"]
-
-                if matched_cloud_item:
-                    # Use the cloud item's title and ASIN so the library view dedupes correctly
-                    entry["title"] = matched_cloud_item.get("title", title)
-                    entry["asin"] = matched_cloud_item.get("asin", "")
-                    
-                    # Pull richer authors from cloud if available
-                    raw_authors = matched_cloud_item.get("authors", [])
-                    if raw_authors:
-                        entry["authors"] = ", ".join([
-                            a.get("name", "") for a in raw_authors if isinstance(a, dict)
-                        ])
-                    
-                    if logger:
-                        logger(f"Matched '{title}' to cloud library: {entry['title']} ({entry['asin']})")
-
-                        
-                else:
-                    # Always attempt to extract a cover for unmatched local files
-                    import hashlib
-                    from core.utils.process_runner import ProcessRunner
-                    fake_asin = "LOCAL_" + hashlib.md5(filepath.encode()).hexdigest()[:10]
-                    cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
-                    
-                    extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
-                    
-                    if not extraction_succeeded:
-                        try:
-                            # Use -vframes 1 instead of -vcodec copy so PNGs are safely converted to JPGs
-                            extract_cmd = [
-                                "ffmpeg", "-y", "-i", filepath,
-                                "-an", "-vframes", "1", cover_output
-                            ]
-                            result = ProcessRunner.run_blocking(extract_cmd, capture_output=True)
-                            
-                            if result.returncode == 0 and os.path.exists(cover_output) and os.path.getsize(cover_output) > 0:
-                                extraction_succeeded = True
-                                if logger: logger(f"Extracted embedded cover for {title}")
-                        except Exception as e:
-                            if logger: logger(f"Cover extraction failed for {title}: {e}")
-                    
-                    if extraction_succeeded:
-                        entry["asin"] = fake_asin
-
+                entry = self._process_single_file_for_import(filepath, active_profile, converter, logger)
+                
                 self.local_library[filepath] = entry
                 added_count += 1
             
