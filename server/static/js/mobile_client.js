@@ -23,6 +23,20 @@ let sleepTargetTime = null;
 let currentProfile = "Main";
 let rawLibraryData = {};
 
+// ==========================================
+// SECURITY UTILITIES
+// ==========================================
+function escapeHtml(unsafe) {
+    if (unsafe == null) return "";
+    return String(unsafe)
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+}
+
+
 async function initializeApp() {
     try {
         const profRes = await fetch(`/api/profiles`);
@@ -37,7 +51,7 @@ async function initializeApp() {
         if (profSelect) {
             profSelect.innerHTML = '';
             profiles.forEach(p => { 
-                profSelect.innerHTML += `<option value="${p}" ${p===currentProfile?'selected':''}>${p}</option>`; 
+                profSelect.innerHTML += `<option value="${escapeHtml(p)}" ${p===currentProfile?'selected':''}>${escapeHtml(p)}</option>`; 
             });
         }
     } catch (e) { 
@@ -141,8 +155,8 @@ function renderGrid() {
         card.innerHTML = `
             ${badge}
             ${coverHtml}
-            <p class="book-title">${titleStr}</p>
-            <p class="book-author">${authorStr}</p>
+            <p class="book-title">${escapeHtml(titleStr)}</p>
+            <p class="book-author">${escapeHtml(authorStr)}</p>
             ${timePill}
             <div class="card-actions" style="margin-top: 10px; text-align: center;">${actionButton}</div>
             ${cardProgressBar}
@@ -416,7 +430,7 @@ function openChapterMenu() {
     currentChapters.forEach((ch, idx) => {
         const div = document.createElement('div');
         div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
-        div.innerHTML = `<span>${ch.title}</span> <span>${formatTime(ch.start)}</span>`;
+        div.innerHTML = `<span>${escapeHtml(ch.title)}</span> <span>${formatTime(ch.start)}</span>`;
         div.onclick = () => { audio.currentTime = ch.start; if(audio.paused) togglePlay(); closeModals(); };
         list.appendChild(div);
     });
@@ -682,8 +696,8 @@ window.loadBookmarks = async function() {
         data.bookmarks.forEach((bm, idx) => {
             const row = document.createElement('div');
             row.className = 'profile-row'; 
-            // Quick text escaping to prevent HTML injection errors
-            const safeNote = bm.note ? bm.note.replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'Bookmark';
+            
+            const safeNote = escapeHtml(bm.note || 'Bookmark');
             
             row.innerHTML = `
                 <div class="profile-row-info" style="cursor: pointer;" onclick="playBookmark(${bm.time})">

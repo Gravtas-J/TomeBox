@@ -222,7 +222,7 @@ class MetadataManager:
                         images = product.get("product_images", {})
                         image_url = images.get("500") or images.get("252")
                         if image_url:
-                            img_data = requests.get(image_url).content
+                            img_data = requests.get(image_url, timeout=10).content
                             with open(cover_path, "wb") as f:
                                 f.write(img_data)
 
@@ -284,7 +284,7 @@ class MetadataManager:
                     self.on_error("Failed to fetch and apply metadata. Check connection.")
 
         threading.Thread(target=worker, daemon=True).start()
-        
+
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""
         import requests
@@ -313,34 +313,6 @@ class MetadataManager:
                 self.logger(f"Google Books API error: {e}")
             
         return None, None
-    def fetch_from_google_books(self, title):
-            """Fetches basic metadata and cover URL from Google Books API."""
-            import requests
-            try:
-                query = requests.utils.quote(title)
-                url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults=1"
-                resp = requests.get(url, timeout=5)
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    items = data.get("items", [])
-                    if items:
-                        volume_info = items[0].get("volumeInfo", {})
-                        authors = ", ".join(volume_info.get("authors", ["Unknown Author"]))
-                        
-                        image_links = volume_info.get("imageLinks", {})
-                        cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-                        
-                        if cover_url:
-                            # Google Books often returns http. Force https to prevent redirect failures.
-                            cover_url = cover_url.replace("http:", "https:")
-                        
-                        return authors, cover_url
-            except Exception as e:
-                if hasattr(self, 'logger'): 
-                    self.logger(f"Google Books API error: {e}")
-                
-            return None, None
     
     def fetch_display_metadata(self, filepath):
         """Fetches the cover art and author info for the side panel."""
@@ -389,7 +361,7 @@ class MetadataManager:
                     image_url = images.get("500") or images.get("252")
                     
                     if image_url:
-                        img_data = requests.get(image_url).content
+                        img_data = requests.get(image_url, timeout=10).content
                         dl_path = os.path.join(self.covers_dir, f"{asin}.jpg")
                         with open(dl_path, "wb") as f:
                             f.write(img_data)

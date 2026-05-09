@@ -191,7 +191,8 @@ class AAXManagerApp:
         self.chapters = []
         self.current_chapter_idx = 0
         self.player_process = None
-
+        self.failed_tasks = []
+        
         self.debug_mode = tk.BooleanVar(value=False)
         self.dl_progress_var = tk.DoubleVar()
         self.dl_status_var = tk.StringVar(value="Idle")

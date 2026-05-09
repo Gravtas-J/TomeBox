@@ -197,23 +197,30 @@ def create_server_app(tomebox):
         enriched_lib = {}
         shelves_db = tomebox.settings.get("shelves_db", {})
         
-        master_metadata = {}
-        data_dir = os.path.join(tomebox.base_dir, "data")
-        
-        if os.path.exists(data_dir):
-            for f in os.listdir(data_dir):
-                if f.startswith("cloud_") and f.endswith(".json") or f == "cloud_cache.json":
-                    try:
-                        with open(os.path.join(data_dir, f), "r") as file:
-                            for item in json.load(file):
-                                if item.get("asin"): master_metadata[item["asin"]] = item
-                                if item.get("title"): master_metadata[item["title"]] = item
-                    except json.JSONDecodeError as e: 
-                        print(f"[ERROR] Corrupted cloud cache file {f}: {e}")
-                    except OSError as e:
-                        print(f"[ERROR] File access error on {f}: {e}")
+        if not hasattr(tomebox, '_web_master_metadata'):
+            master_metadata = {}
+            data_dir = os.path.join(tomebox.base_dir, "data")
+            
+            if os.path.exists(data_dir):
+                for f in os.listdir(data_dir):
+                    if (f.startswith("cloud_") and f.endswith(".json")) or f == "cloud_cache.json":
+                        try:
+                            with open(os.path.join(data_dir, f), "r") as file:
+                                for item in json.load(file):
+                                    if item.get("asin"): master_metadata[item["asin"]] = item
+                                    if item.get("title"): master_metadata[item["title"]] = item
+                        except Exception: 
+                            pass
+            tomebox._web_master_metadata = master_metadata
+        else:
+            master_metadata = tomebox._web_master_metadata
 
+        # Overlay live cloud_items to handle dynamic updates without busting the cache
         for item in getattr(tomebox.library_manager, 'cloud_items', []):
+            if item.get("asin"): master_metadata[item["asin"]] = item
+            if item.get("title"): master_metadata[item["title"]] = item
+
+        for path, data in tomebox.library_manager.local_library.items():
             if item.get("asin"): master_metadata[item["asin"]] = item
             if item.get("title"): master_metadata[item["title"]] = item
 
@@ -394,6 +401,13 @@ def create_server_app(tomebox):
         """)
     @api.get("/api/chapters")
     def get_chapters(path: str):
+        if not path or path not in tomebox.library_manager.local_library:
+            raise HTTPException(status_code=403, detail="Forbidden: File is not registered in the local library.")
+        
+        local_data = tomebox.library_manager.local_library.get(path, {})
+        if "chapters" in local_data and local_data["chapters"]:
+            return local_data["chapters"]
+        
         if not path or not os.path.exists(path): return []
         try:
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
@@ -418,6 +432,8 @@ def create_server_app(tomebox):
 
     @api.get("/api/stream")
     def stream_audio(path: str, request: Request):
+        if not path or path not in tomebox.library_manager.local_library:
+            raise HTTPException(status_code=403, detail="Forbidden: File is not registered in the local library.")
         mime_type = "audio/mpeg" if path.lower().endswith(".mp3") else "audio/mp4"
         if not path or not os.path.exists(path):
             raise HTTPException(status_code=404, detail="Audio file not found.")
@@ -833,8 +849,13 @@ def create_server_app(tomebox):
         asin = data.get("asin")
         path = data.get("path")
         
-        if not asin or not path or not os.path.exists(path):
-            raise HTTPException(status_code=400, detail="Invalid ASIN or Path")
+        # --- SECURITY FIX: Prevent Path Injection ---
+        if not path or path not in tomebox.library_manager.local_library:
+            raise HTTPException(status_code=403, detail="Forbidden: Target file is not registered in the local library.")
+        # --------------------------------------------
+        
+        if not asin or not os.path.exists(path):
+            raise HTTPException(status_code=400, detail="Invalid ASIN or Path missing from disk.")
             
         matched_cloud_item = None
         for item in getattr(tomebox.library_manager, 'cloud_items', []):
@@ -849,23 +870,28 @@ def create_server_app(tomebox):
         format_clean = ext.replace(".", "").upper()
         active_profile = tomebox.settings.get("active_profile", "Main")
         
-        # Build library entry inheriting cloud metadata
-        entry = {
+        # Fetch the existing entry so we don't accidentally wipe out bookmarks and progress!
+        entry = tomebox.library_manager.local_library.get(path, {})
+        
+        # Update it with the new Audible metadata
+        entry.update({
             "title": matched_cloud_item.get("title", os.path.basename(path)),
             "format": format_clean,
             "path": path,
-            "authors": "Unknown Author",
             "owner": active_profile,
             "asin": asin,
             "duration_min": matched_cloud_item.get("runtime_length_min", 0)
-        }
+        })
         
         raw_authors = matched_cloud_item.get("authors", [])
         if raw_authors:
             entry["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+        elif "authors" not in entry:
+            entry["authors"] = "Unknown Author"
             
         tomebox.library_manager.local_library[path] = entry
         tomebox.db.save_local_db(tomebox.library_manager.local_library)
+        
         return {"status": "success"}
 
     @api.post("/api/library/search")

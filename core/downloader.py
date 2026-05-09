@@ -27,7 +27,7 @@ class AudiobookDownloader:
         req = urllib.request.Request(download_url, headers=headers)
 
         try:
-            with urllib.request.urlopen(req) as response, open(temp_filepath, 'wb') as out_file:
+            with urllib.request.urlopen(req, timeout=15) as response, open(temp_filepath, 'wb') as out_file:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 last_ui_percent = -1
