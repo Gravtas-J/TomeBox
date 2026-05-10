@@ -1,925 +1,766 @@
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/static/sw.js').catch(err => {
-            console.error('ServiceWorker registration failed: ', err);
-        });
-    });
-}
-
-// Support BOTH Desktop and Mobile element IDs
-const audio = document.getElementById('audio-player') || document.getElementById('main-audio');
-const playBtn = document.getElementById('btn-play-pause') || document.getElementById('play-pause-btn');
-const progressFill = document.getElementById('seek-progress') || document.getElementById('progress-fill');
-const playerBar = document.getElementById('player-bar');
-const speedBtn = document.getElementById('btn-speed') || document.getElementById('speed-btn');
-
-let allBooks = []; 
-let currentPath = null;
-let currentChapters = [];
-let sleepMode = null; 
-let sleepTimeout = null;
-let sleepTargetTime = null;
-
-let currentProfile = "Main";
-let rawLibraryData = {};
-
 // ==========================================
-// SECURITY UTILITIES
+// TOMEBOX CORE CLIENT
 // ==========================================
-function escapeHtml(unsafe) {
-    if (unsafe == null) return "";
-    return String(unsafe)
-         .replace(/&/g, "&amp;")
-         .replace(/</g, "&lt;")
-         .replace(/>/g, "&gt;")
-         .replace(/"/g, "&quot;")
-         .replace(/'/g, "&#039;");
-}
 
+class TomeBoxClient {
+    constructor() {
+        this.state = {
+            allBooks: [],
+            currentPath: null,
+            currentAsin: null,
+            currentChapters: [],
+            currentProfile: "Main",
+            rawLibraryData: {},
+            speeds: [1.0, 1.25, 1.5, 1.75, 2.0],
+            speedIndex: 0,
+            activeChapterIndex: 0,
+            sleep: { mode: null, timeout: null, targetTime: null },
+            pairingViewLoaded: false
+        };
 
-async function initializeApp() {
-    try {
-        const profRes = await fetch(`/api/profiles`);
-        const profiles = await profRes.json();
+        this.dom = {
+            audio: document.getElementById('audio-player') || document.getElementById('main-audio'),
+            playBtn: document.getElementById('btn-play-pause') || document.getElementById('play-pause-btn'),
+            progressFill: document.getElementById('seek-progress') || document.getElementById('progress-fill'),
+            playerBar: document.getElementById('player-bar'),
+            speedBtn: document.getElementById('btn-speed') || document.getElementById('speed-btn'),
+            sidebar: document.getElementById('mobile-sidebar'),
+            overlay: document.getElementById('sidebar-overlay'),
+            grid: document.getElementById('library-grid'),
+            profSelect: document.getElementById('profile-selector'),
+            searchBox: document.getElementById('search-box'),
+            shelfFilter: document.getElementById('shelf-filter'),
+            sortFilter: document.getElementById('sort-filter')
+        };
+
+        this.init();
+    }
+
+    async init() {
+        this.registerServiceWorker();
+        this.bindEvents();
+        this.bindAudioEvents();
+        this.handleRouting();
+
+        await this.loadProfiles();
+        await this.loadLibrary();
+        await this.cueLastPlayedBook();
         
-        // Set the current profile FIRST
-        currentProfile = profiles[0] || "Main";
-        
-        const profSelect = document.getElementById('profile-selector');
-        
-        // SAFETY CHECK: Only update the HTML if the element actually exists
-        if (profSelect) {
-            profSelect.innerHTML = '';
-            profiles.forEach(p => { 
-                profSelect.innerHTML += `<option value="${escapeHtml(p)}" ${p===currentProfile?'selected':''}>${escapeHtml(p)}</option>`; 
+        setInterval(() => this.backgroundSync(), 10000);
+    }
+
+    registerServiceWorker() {
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/sw.js').catch(err => console.error('SW failed: ', err));
             });
         }
-    } catch (e) { 
-        console.error("Profile fetch failed", e); 
     }
-    
-    await loadLibrary();
-    await cueLastPlayedBook();
-}
 
-async function loadLibrary() {
-    try {
-        // FIXED: Backtick syntax was broken here
-        const response = await fetch(`/api/library`);
-        rawLibraryData = await response.json();
-        window.currentLibraryData = rawLibraryData;
-        renderGrid();
-    } catch (e) { console.error("Failed to load library", e); }
-    if (window.updateLibraryCountDisplay) window.updateLibraryCountDisplay();
-}
+    bindEvents() {
+        window.addEventListener('hashchange', () => this.handleRouting());
 
-function renderGrid() {
-    const grid = document.getElementById('library-grid');
-    const shelfFilter = document.getElementById('shelf-filter');
-    
-    grid.innerHTML = '';
-    allBooks = [];
-    let uniqueShelves = new Set();
-
-    for (const [path, data] of Object.entries(rawLibraryData)) {
-        // Skip non-audio local files but always include cloud-only items
-        // Skip non-audio local files but always include cloud-only items
-        const isCloudOnly = data.download_status === 'cloud_only';
-
-        // NEW: Allow raw AAX/AAXC files to be displayed so we can convert them!
-        const validFormats = ['M4B', 'MP3', 'AAXC', 'AAX'];
-        if (!isCloudOnly && !validFormats.includes(data.format)) continue;
-
-        let authorStr = data.authors || 'Unknown Author';
-        const titleStr = data.title || "Unknown Title";
-        const asin = data.asin || "Unknown";
-
-        
-        const safeAsin = escapeHtml(asin);
-        const urlAsin = encodeURIComponent(asin);
-        
-        const bookShelves = data.shelves || [];
-        bookShelves.forEach(s => uniqueShelves.add(s));
-        
-        let resumePos = 0;
-        if (data.progress && data.progress[currentProfile] !== undefined) {
-            resumePos = data.progress[currentProfile];
-        } else if (data.last_position) {
-            resumePos = data.last_position;
-        }
-        
-        let timePill = "";
-        if (resumePos > 60) {
-            const hrs = Math.floor(resumePos / 3600);
-            const mins = Math.floor((resumePos % 3600) / 60);
-            timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
-        }
-
-        const coverHtml = asin !== "Unknown" 
-            ? `<img src="/api/cover/${urlAsin}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
-            : `<div class="cover-placeholder">📖</div>`;
-
-        const badge = isCloudOnly
-            ? '<div class="status-badge cloud-only">Cloud</div>'
-            : '<div class="status-badge downloaded">Downloaded</div>';
-
-        const card = document.createElement('div');
-        card.className = 'book-card';
-        
-        const actionButton = isCloudOnly 
-            ? `<button class="action-btn-primary btn-small" onclick="if(window.queueSingleDownload) window.queueSingleDownload('${safeAsin}'); event.stopPropagation();">⬇️ Download</button>`
-            : ``; 
-            
-        const cardProgressBar = `
-            <div class="card-progress-track">
-                <div id="progress-bar-${safeAsin}" class="card-progress-fill"></div>
-                <div id="progress-text-${safeAsin}" class="card-progress-text"></div>
-            </div>
-        `;
-
-        // Handle click events (Download vs Play)
-        card.onclick = () => {
-            if (isCloudOnly) {
-                if (window.queueSingleDownload) {
-                    window.queueSingleDownload(asin);
-                } else {
-                    console.log(`Cloud-only book clicked: ${titleStr} (Downloads not supported on this view)`);
-                }
-            } else {
-                startPlayback(path, titleStr, authorStr, resumePos, safeAsin);
-            }
+        const bindClick = (id, handler) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('click', (e) => handler.call(this, e));
         };
+
+        bindClick('btn-sidebar-toggle', this.toggleSidebar);
+        bindClick('sidebar-overlay', this.toggleSidebar);
+        bindClick('btn-search-toggle', this.toggleSearch);
+        bindClick('btn-play-pause', this.togglePlay);
+        bindClick('btn-speed', this.changeSpeed);
+        bindClick('btn-sleep', this.openSleepMenu);
+        bindClick('btn-chapters', this.openChapterMenu);
+        bindClick('btn-bookmarks', this.openBookmarksModal);
+        bindClick('btn-player-toggle', this.togglePlayerBar);
+        bindClick('btn-seek-back', () => this.seekRelative(-15));
+        bindClick('btn-seek-forward', () => this.seekRelative(15));
+        bindClick('btn-prev-chap', () => this.skipChapter(-1));
+        bindClick('btn-next-chap', () => this.skipChapter(1));
         
-        // Attach the right-click context menu if we are on Desktop
-        if (typeof attachContextMenu === 'function') {
-            attachContextMenu(card, data);
-        }
-        
-        card.innerHTML = `
-            ${badge}
-            ${coverHtml}
-            <p class="book-title">${escapeHtml(titleStr)}</p>
-            <p class="book-author">${escapeHtml(authorStr)}</p>
-            ${timePill}
-            <div class="card-actions" style="margin-top: 10px; text-align: center;">${actionButton}</div>
-            ${cardProgressBar}
-        `;
-        grid.appendChild(card);
-        
-        let seriesStr = "";
-        if (data.series) {
-            if (Array.isArray(data.series)) {
-                seriesStr = data.series.map(s => s.title || s).join(', ');
-            } else {
-                seriesStr = data.series;
-            }
-        }
-
-        allBooks.push({ 
-            path: path, 
-            element: card, 
-            searchString: `${titleStr} ${authorStr} ${seriesStr}`.toLowerCase(), 
-            shelves: bookShelves,
-            // NEW: Data needed for sorting
-            title: titleStr.toLowerCase(),
-            author: authorStr.toLowerCase(),
-            series: seriesStr.toLowerCase(),
-            status: isCloudOnly ? 'cloud' : 'downloaded'
-        });
-    }
-    
-    // Populate the shelf filter dropdown
-    if (shelfFilter) {
-        const currentValue = shelfFilter.value;
-        shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
-        for (const shelf of [...uniqueShelves].sort()) {
-            const option = document.createElement('option');
-            option.value = shelf;
-            option.textContent = shelf;
-            shelfFilter.appendChild(option);
-        }
-        if ([...uniqueShelves].includes(currentValue)) {
-            shelfFilter.value = currentValue;
-        }
-    }
-    filterLibrary();
-}
-
-async function cueLastPlayedBook() {
-    try {
-        const res = await fetch(`/api/last_played/${currentProfile}`);
-        const data = await res.json();
-        if (data.path && rawLibraryData[data.path]) {
-            const book = rawLibraryData[data.path];
-            let authorStr = book.authors || 'Unknown Author';
-            const titleStr = book.title || "Unknown Title";
-            const asin = book.asin || "Unknown";
-            
-            let resumePos = 0;
-            if (book.progress && book.progress[currentProfile] !== undefined) {
-                resumePos = book.progress[currentProfile];
-            } else if (book.last_position) {
-                resumePos = book.last_position;
-            }
-            
-            currentPath = data.path;
-            currentAsin = asin;
-            
-            // SAFE FALLBACKS: Works on both desktop and mobile UI
-            const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
-            if (titleEl) titleEl.innerText = titleStr;
-            
-            const authorEl = document.getElementById('player-author') || document.getElementById('now-playing-author');
-            if (authorEl) authorEl.innerText = authorStr;
-            
-            const coverImg = document.getElementById('player-cover');
-            if (coverImg) {
-                if (asin && asin !== "Unknown") {
-                    coverImg.src = `/api/cover/${asin}`;
-                    coverImg.style.display = 'block';
-                } else {
-                    coverImg.style.display = 'none';
-                }
-            }
-            
-            audio.src = `/api/stream?path=${encodeURIComponent(data.path)}`;
-            audio.playbackRate = currentSpeed; 
-            
-            audio.onloadedmetadata = () => {
-                audio.currentTime = resumePos;
-            };
-            
-            if (playBtn) playBtn.innerText = '▶';
-            if (playerBar) playerBar.classList.add('active');
-            setSleepOff(); 
-
-            try {
-                const chapRes = await fetch(`/api/chapters?path=${encodeURIComponent(data.path)}`);
-                currentChapters = await chapRes.json();
-            } catch(e) { currentChapters = []; }
-
-            if ('mediaSession' in navigator) {
-                const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
-                navigator.mediaSession.metadata = new MediaMetadata({ title: titleStr, artist: authorStr, album: 'TomeBox', artwork: artworkUrl });
-                navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
-                navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
-                navigator.mediaSession.setActionHandler('previoustrack', () => skipChapter(-1));
-                navigator.mediaSession.setActionHandler('nexttrack', () => skipChapter(1));
-            }
-        }
-    } catch (e) { console.error("Failed to cue last played", e); }
-}
-async function changeProfile() {
-    currentProfile = document.getElementById('profile-selector').value;
-    await loadLibrary(); 
-    
-    audio.pause();
-    playBtn.innerText = '▶';
-    currentPath = null;
-    audio.src = '';
-    playerBar.classList.remove('active');
-    
-    await cueLastPlayedBook();
-}
-
-function filterLibrary() {
-    const query = document.getElementById('search-box').value.toLowerCase();
-    const selectedShelf = document.getElementById('shelf-filter').value;
-    const sortMethod = document.getElementById('sort-filter') ? document.getElementById('sort-filter').value : 'title_asc';
-    
-    let visibleBooks = [];
-
-    // 1. Filter: Hide or Show the cards based on search and shelf
-    allBooks.forEach(book => {
-        const matchesSearch = book.searchString.includes(query);
-        const matchesShelf = selectedShelf === 'all' || book.shelves.includes(selectedShelf);
-        
-        if (matchesSearch && matchesShelf) {
-            book.element.style.display = 'flex';
-            visibleBooks.push(book);
-        } else {
-            book.element.style.display = 'none';
-        }
-    });
-
-    // 2. Sort: Order the visible array based on the dropdown selection
-    visibleBooks.sort((a, b) => {
-        switch (sortMethod) {
-            case 'title_asc':
-                return a.title.localeCompare(b.title);
-            case 'title_desc':
-                return b.title.localeCompare(a.title);
-            case 'author_asc':
-                // Sort by author, then fall back to title if author is the same
-                return a.author.localeCompare(b.author) || a.title.localeCompare(b.title);
-            case 'series_asc':
-                // Group books without a series at the bottom
-                if (a.series && !b.series) return -1;
-                if (!a.series && b.series) return 1;
-                // Sort by series name, then by title (which handles Book 1, Book 2 etc.)
-                return a.series.localeCompare(b.series) || a.title.localeCompare(b.title);
-            case 'status':
-                // Put downloaded (local) books first, then cloud, then alphabetize
-                if (a.status !== b.status) {
-                    return a.status === 'downloaded' ? -1 : 1;
-                }
-                return a.title.localeCompare(b.title);
-            default:
-                return 0;
-        }
-    });
-
-    // 3. Render: Re-append elements to the grid container
-    // (Appending an existing DOM node moves it to the bottom, effectively reordering the grid)
-    const grid = document.getElementById('library-grid');
-    if (grid) {
-        visibleBooks.forEach(book => {
-            grid.appendChild(book.element);
-        });
-    }
-}
-
-async function startPlayback(filePath, title, author, fallbackPosition, asin) {
-    saveProgressToServer(); 
-    
-    let latestPosition = fallbackPosition;
-    if (rawLibraryData[filePath]) {
-        if (rawLibraryData[filePath].progress && rawLibraryData[filePath].progress[currentProfile] !== undefined) {
-            latestPosition = rawLibraryData[filePath].progress[currentProfile];
-        } else if (rawLibraryData[filePath].last_position) {
-            latestPosition = rawLibraryData[filePath].last_position;
-        }
-    }
-
-    currentPath = filePath;
-    currentAsin = asin;
-    
-    // SAFE FALLBACKS: Works on both desktop and mobile UI
-    const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
-    if (titleEl) titleEl.innerText = title;
-    
-    const authorEl = document.getElementById('player-author') || document.getElementById('now-playing-author');
-    if (authorEl) authorEl.innerText = author;
-    
-    const coverImg = document.getElementById('player-cover');
-    if (coverImg) {
-        if (asin && asin !== "Unknown") {
-            coverImg.src = `/api/cover/${asin}`;
-            coverImg.style.display = 'block';
-        } else {
-            coverImg.style.display = 'none';
-        }
-    }
-
-    // AWAIT CHAPTERS FIRST: Prevent race condition before audio plays
-    try {
-        const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
-        currentChapters = await res.json();
-    } catch(e) { 
-        currentChapters = []; 
-    }
-    
-    // Set fallback title if the file genuinely has no chapters
-    if (!currentChapters || currentChapters.length === 0) {
-        const chapTitleEl = document.getElementById('player-chapter-title');
-        if (chapTitleEl) chapTitleEl.textContent = title;
-    }
-    
-    audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
-    audio.playbackRate = currentSpeed; 
-    
-    audio.onloadedmetadata = () => {
-        audio.currentTime = latestPosition;
-    };
-    
-    audio.play().then(() => {
-        if (playBtn) playBtn.innerText = '⏸';
-        if (playerBar) playerBar.classList.add('active');
-    }).catch(err => console.error("Audio play failed:", err));
-    
-    setSleepOff(); 
-
-    if ('mediaSession' in navigator) {
-        const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
-        navigator.mediaSession.metadata = new MediaMetadata({ title: title, artist: author, album: 'TomeBox', artwork: artworkUrl });
-        navigator.mediaSession.setActionHandler('seekbackward', () => skipAudio(-15));
-        navigator.mediaSession.setActionHandler('seekforward', () => skipAudio(15));
-        navigator.mediaSession.setActionHandler('previoustrack', () => skipChapter(-1));
-        navigator.mediaSession.setActionHandler('nexttrack', () => skipChapter(1));
-    }
-}
-
-function closeModals(e) { document.getElementById('sleep-modal').style.display = 'none'; document.getElementById('chapter-modal').style.display = 'none'; }
-function openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
-
-function formatTime(sec) {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    if (h > 0) return `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-    return `${m}:${s.toString().padStart(2,'0')}`;
-}
-
-function openChapterMenu() {
-    if (!currentChapters.length) return alert("No chapters found for this audiobook.");
-    const list = document.getElementById('chapter-list');
-    list.innerHTML = '';
-    const now = audio.currentTime;
-    
-    let activeIdx = currentChapters.findIndex(c => c.start > now) - 1;
-    if (activeIdx < 0 && now >= currentChapters[0].start) activeIdx = currentChapters.length - 1;
-    if (activeIdx === -2) activeIdx = currentChapters.length - 1;
-
-    currentChapters.forEach((ch, idx) => {
-        const div = document.createElement('div');
-        div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
-        div.innerHTML = `<span>${escapeHtml(ch.title)}</span> <span>${formatTime(ch.start)}</span>`;
-        div.onclick = () => { audio.currentTime = ch.start; if(audio.paused) togglePlay(); closeModals(); };
-        list.appendChild(div);
-    });
-    document.getElementById('chapter-modal').style.display = 'flex';
-}
-
-function setSleepTimer(mins) {
-    clearTimeout(sleepTimeout);
-    sleepMode = 'time';
-    sleepTargetTime = null;
-    const ms = mins * 60000;
-    sleepTimeout = setTimeout(() => { audio.pause(); playBtn.innerText = '▶'; setSleepOff(); }, ms);
-    document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
-    closeModals();
-}
-
-function setCustomSleepChapter() {
-    const inputElem = document.getElementById('custom-chapter-input');
-    let count = parseInt(inputElem.value, 10);
-    if (isNaN(count) || count < 1) { count = 1; inputElem.value = 1; }
-    setSleepChapter(count);
-}
-
-function setSleepChapter(chapterCount) {
-    clearTimeout(sleepTimeout);
-    if (!currentChapters.length) { alert("No chapter data available for this book."); return; }
-    
-    sleepMode = 'chapter';
-    const now = audio.currentTime;
-    let currentIdx = currentChapters.findIndex(c => c.start > now) - 1;
-    if (currentIdx < 0 && now >= currentChapters[0].start) currentIdx = currentChapters.length - 1;
-    if (currentIdx === -2) currentIdx = 0; 
-
-    let targetIdx = currentIdx + chapterCount;
-    if (targetIdx < currentChapters.length) { sleepTargetTime = currentChapters[targetIdx].start; } 
-    else { sleepTargetTime = audio.duration; }
-
-    document.getElementById('sleep-btn-ui').style.color = 'var(--accent)';
-    closeModals();
-}
-
-function setSleepOff() {
-    clearTimeout(sleepTimeout);
-    sleepMode = null;
-    sleepTargetTime = null;
-    document.getElementById('sleep-btn-ui').style.color = '#aaa';
-    closeModals();
-}
-
-function skipChapter(direction) {
-    if (!currentChapters.length) { skipAudio(direction * 180); return; }
-    const now = audio.currentTime;
-    if (direction === 1) { 
-        const nextCh = currentChapters.find(c => c.start > now + 2);
-        if (nextCh) audio.currentTime = nextCh.start;
-    } else { 
-        const prevCh = [...currentChapters].reverse().find(c => c.start < now - 3);
-        if (prevCh) audio.currentTime = prevCh.start;
-        else audio.currentTime = 0;
-    }
-}
-
-setInterval(() => {
-    if (!audio.paused && currentPath) {
-        const pos = audio.currentTime;
-        
-        if (rawLibraryData[currentPath]) {
-            if (!rawLibraryData[currentPath].progress) rawLibraryData[currentPath].progress = {};
-            rawLibraryData[currentPath].progress[currentProfile] = pos;
-        }
-
-        // FIXED: Added token to the progress sync
-        fetch(`/api/progress`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, position: pos, profile: currentProfile })
-        }).catch(() => {});
-    }
-}, 10000);
-
-function togglePlay() {
-    if (!audio.src) return;
-    if (audio.paused) { audio.play(); playBtn.innerText = '⏸'; } 
-    else { audio.pause(); playBtn.innerText = '▶'; }
-}
-
-function skipAudio(seconds) {
-    if (audio.src && audio.duration) {
-        audio.currentTime = Math.min(Math.max(audio.currentTime + seconds, 0), audio.duration);
-    }
-}
-
-const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
-let speedIndex = 0;
-let currentSpeed = 1.0;
-
-function changeSpeed() {
-    speedIndex = (speedIndex + 1) % speeds.length;
-    currentSpeed = speeds[speedIndex];
-    audio.playbackRate = currentSpeed;
-    speedBtn.innerText = currentSpeed.toFixed(1) + 'x';
-}
-
-// ==========================================
-// PLAYBACK & CHAPTER TRACKING
-// ==========================================
-let activeChapterIndex = 0; 
-
-audio.addEventListener('timeupdate', () => {
-    if (!audio.duration) return;
-    
-    const currentTime = audio.currentTime;
-    let chStart = 0;
-    let chEnd = audio.duration;
-    
-    // Fallback to the main book title if the file has no chapters
-    const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
-    let chTitle = titleEl ? titleEl.innerText : "Playing";
-
-    // 1. Find which chapter we are currently in
-    if (typeof currentChapters !== 'undefined' && currentChapters && currentChapters.length > 0) {
-        let activeIdx = 0;
-        for (let i = 0; i < currentChapters.length; i++) {
-            if (currentTime >= currentChapters[i].start) {
-                activeIdx = i;
-            } else {
-                break;
-            }
-        }
-        
-        activeChapterIndex = activeIdx;
-        const currentCh = currentChapters[activeIdx];
-        chStart = currentCh.start;
-        chTitle = currentCh.title;
-        
-        if (activeIdx + 1 < currentChapters.length) {
-            chEnd = currentChapters[activeIdx + 1].start;
-        }
-    }
-
-    // 2. Calculate relative times
-    const chapterDuration = chEnd - chStart;
-    const timeIntoChapter = currentTime - chStart;
-    
-    let progressPercent = 0;
-    if (chapterDuration > 0) {
-        progressPercent = (timeIntoChapter / chapterDuration) * 100;
-    }
-
-    // 3. Update the UI securely (with Dual ID fallbacks for the progress bar)
-    const progressEl = document.getElementById('seek-progress') || document.getElementById('progress-fill');
-    if (progressEl) progressEl.style.width = `${progressPercent}%`;
-    
-    const chapterTitleEl = document.getElementById('player-chapter-title');
-    if (chapterTitleEl) chapterTitleEl.textContent = chTitle;
-    
-    const timeEl = document.getElementById('player-time');
-    if (timeEl) timeEl.textContent = `${formatTime(timeIntoChapter)} / ${formatTime(chapterDuration)}`;
-    
-    // 4. Handle Sleep Timer safely
-    if (typeof sleepMode !== 'undefined' && sleepMode === 'chapter' && sleepTargetTime !== null) {
-        if (audio.currentTime >= sleepTargetTime - 1) {
-            audio.pause();
-            if (playBtn) playBtn.innerText = '▶';
-            if (sleepTargetTime < audio.duration) { audio.currentTime = sleepTargetTime; }
-            if (typeof setSleepOff === 'function') setSleepOff();
-        }
-    }
-});
-
-audio.addEventListener('ended', () => { 
-    document.getElementById('btn-play-pause').innerText = '▶'; 
-    const progressEl = document.getElementById('seek-progress');
-    if (progressEl) progressEl.style.width = '0%'; 
-});
-
-window.seekAudio = function(e) {
-    if (!audio.duration) return;
-
-    const container = document.getElementById('seek-bar-container');
-    const clickX = e.clientX - container.getBoundingClientRect().left;
-    const width = container.clientWidth;
-    const clickPercent = Math.max(0, Math.min(1, clickX / width)); // Locks between 0 and 100%
-
-    let chStart = 0;
-    let chEnd = audio.duration;
-    
-    if (typeof currentChapters !== 'undefined' && currentChapters && currentChapters.length > 0) {
-        chStart = currentChapters[activeChapterIndex].start;
-        if (activeChapterIndex + 1 < currentChapters.length) {
-            chEnd = currentChapters[activeChapterIndex + 1].start;
-        }
-    }
-
-    const chapterDuration = chEnd - chStart;
-    audio.currentTime = chStart + (chapterDuration * clickPercent);
-};
-function saveProgressToServer() {
-    if (currentPath && audio.currentTime > 0) {
-        if (rawLibraryData[currentPath]) {
-            if (!rawLibraryData[currentPath].progress) rawLibraryData[currentPath].progress = {};
-            rawLibraryData[currentPath].progress[currentProfile] = audio.currentTime;
-        }
-
-        // FIXED: Added token to the progress sync
-        fetch(`/api/progress`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, position: audio.currentTime, profile: currentProfile }),
-            keepalive: true
-        }).catch(() => {});
-    }
-}
-
-audio.addEventListener('pause', saveProgressToServer);
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') saveProgressToServer();
-});
-
-window.addEventListener('beforeunload', saveProgressToServer);
-window.addEventListener('pagehide', saveProgressToServer);
-// ==========================================
-// BOOKMARKS SYSTEM
-// ==========================================
-
-window.openBookmarksModal = async function() {
-    document.getElementById('bookmarks-modal').style.display = 'flex';
-    await window.loadBookmarks();
-};
-
-window.closeBookmarksModal = function(e) { 
-    if (e && e.target.id !== 'bookmarks-modal') return;
-    document.getElementById('bookmarks-modal').style.display = 'none'; 
-};
-
-window.loadBookmarks = async function() {
-    const listEl = document.getElementById('bookmarks-list');
-    if (!currentPath) {
-        listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No active book playing.</p>';
-        return;
-    }
-
-    try {
-        // FIX 1: Added cache: 'no-store' so the browser is forced to get the fresh list!
-        const res = await fetch(`/api/library/bookmarks?path=${encodeURIComponent(currentPath)}`, {
-            cache: 'no-store' 
+        document.querySelectorAll('.modal-bg-close').forEach(modal => {
+            modal.addEventListener('click', (e) => { if (e.target === modal) this.closeAllModals(); });
         });
         
-        if (!res.ok) {
-            const err = await res.json();
-            listEl.innerHTML = `<p style="color: #ff6b6b; text-align: center;">Error: ${err.detail}</p>`;
-            return;
-        }
-        
-        const data = await res.json();
-        
-        if (!data.bookmarks || data.bookmarks.length === 0) {
-            listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No bookmarks yet.</p>';
-            return;
-        }
+        bindClick('btn-sidebar-close', this.toggleSidebar);
 
-        listEl.innerHTML = '';
-        data.bookmarks.forEach((bm, idx) => {
-            const row = document.createElement('div');
-            row.className = 'profile-row'; 
+        document.querySelectorAll('.sleep-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                if (e.target.dataset.mins) this.setSleepTimer(parseInt(e.target.dataset.mins));
+                if (e.target.dataset.chapter) this.setSleepChapter(parseInt(e.target.dataset.chapter));
+            });
+        });
+        bindClick('btn-custom-sleep', this.setCustomSleepChapter);
+        bindClick('btn-sleep-off', this.setSleepOff);
+        bindClick('btn-add-bookmark', this.addBookmark);
+
+        document.querySelectorAll('.modal-close').forEach(btn => {
+            btn.addEventListener('click', () => this.closeAllModals());
+        });
+
+        if (this.dom.profSelect) this.dom.profSelect.addEventListener('change', () => this.changeProfile());
+        if (this.dom.searchBox) this.dom.searchBox.addEventListener('input', () => this.filterLibrary());
+        if (this.dom.shelfFilter) this.dom.shelfFilter.addEventListener('change', () => this.filterLibrary());
+        if (this.dom.sortFilter) this.dom.sortFilter.addEventListener('change', () => this.filterLibrary());
+
+        const seekContainer = document.getElementById('seek-bar-container');
+        if (seekContainer) seekContainer.addEventListener('click', (e) => this.seekAudio(e));
+
+        // Game Bindings
+        document.querySelectorAll('.game-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                const gameId = e.currentTarget.dataset.game;
+                if (gameId) this.launchGame(gameId);
+            });
+        });
+        bindClick('btn-exit-game', () => this.exitGame());
+
+        window.addEventListener('beforeunload', () => this.saveProgressToServer());
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') this.saveProgressToServer();
+        });
+    }
+
+    async loadProfiles() {
+        try {
+            const profRes = await fetch(`/api/profiles`);
+            const profiles = await profRes.json();
+            this.state.currentProfile = profiles[0] || "Main";
             
-            const safeNote = escapeHtml(bm.note || 'Bookmark');
+            if (this.dom.profSelect) {
+                this.dom.profSelect.innerHTML = '';
+                profiles.forEach(p => { 
+                    this.dom.profSelect.innerHTML += `<option value="${this.escapeHtml(p)}" ${p === this.state.currentProfile ? 'selected' : ''}>${this.escapeHtml(p)}</option>`; 
+                });
+            }
+        } catch (e) { console.error("Profile fetch failed", e); }
+    }
+
+    async loadLibrary() {
+        try {
+            const response = await fetch(`/api/library`);
+            this.state.rawLibraryData = await response.json();
+            this.renderGrid();
+            document.dispatchEvent(new Event('tomebox:libraryLoaded'));
+        } catch (e) { console.error("Failed to load library", e); }
+    }
+
+    async changeProfile() {
+        this.state.currentProfile = this.dom.profSelect.value;
+        await this.loadLibrary(); 
+        
+        this.dom.audio.pause();
+        this.dom.playBtn.innerText = '▶';
+        this.state.currentPath = null;
+        this.dom.audio.src = '';
+        if (this.dom.playerBar) this.dom.playerBar.classList.remove('active');
+        
+        await this.cueLastPlayedBook();
+    }
+
+    renderGrid() {
+        if (!this.dom.grid) return;
+        this.dom.grid.innerHTML = '';
+        this.state.allBooks = [];
+        let uniqueShelves = new Set();
+        const validFormats = ['M4B', 'MP3', 'AAXC', 'AAX'];
+
+        for (const [path, data] of Object.entries(this.state.rawLibraryData)) {
+            const isCloudOnly = data.download_status === 'cloud_only';
+            if (!isCloudOnly && !validFormats.includes(data.format)) continue;
+
+            let authorStr = data.authors || 'Unknown Author';
+            const titleStr = data.title || "Unknown Title";
+            const asin = data.asin || "Unknown";
+            const safeAsin = this.escapeHtml(asin);
             
-            row.innerHTML = `
-                <div class="profile-row-info" style="cursor: pointer;" onclick="playBookmark(${bm.time})">
-                    <div class="profile-row-name">${safeNote}</div>
-                    <div class="profile-row-status">⏱️ ${formatTime(bm.time)}</div>
+            const bookShelves = data.shelves || [];
+            bookShelves.forEach(s => uniqueShelves.add(s));
+            
+            let resumePos = data.progress?.[this.state.currentProfile] || data.last_position || 0;
+            let timePill = "";
+            if (resumePos > 60) {
+                const hrs = Math.floor(resumePos / 3600);
+                const mins = Math.floor((resumePos % 3600) / 60);
+                timePill = hrs > 0 ? `<span class="progress-pill">${hrs}h ${mins}m</span>` : `<span class="progress-pill">${mins}m</span>`;
+            }
+
+            const coverHtml = asin !== "Unknown" 
+                ? `<img src="/api/cover/${encodeURIComponent(asin)}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
+                : `<div class="cover-placeholder">📖</div>`;
+
+            const badge = isCloudOnly ? '<div class="status-badge cloud-only">Cloud</div>' : '<div class="status-badge downloaded">Downloaded</div>';
+            const card = document.createElement('div');
+            card.className = 'book-card';
+            
+            card.innerHTML = `
+                ${badge}
+                ${coverHtml}
+                <p class="book-title">${this.escapeHtml(titleStr)}</p>
+                <p class="book-author">${this.escapeHtml(authorStr)}</p>
+                ${timePill}
+                <div class="card-actions" style="margin-top: 10px; text-align: center;"></div>
+                <div class="card-progress-track">
+                    <div id="progress-bar-${safeAsin}" class="card-progress-fill"></div>
                 </div>
-                <button class="action-btn-secondary action-btn-danger" onclick="deleteBookmark(${idx})">🗑️</button>
             `;
-            listEl.appendChild(row);
-        });
-    } catch (e) {
-        listEl.innerHTML = '<p style="color: #ff6b6b; text-align: center;">Failed to load bookmarks.</p>';
+
+            if (isCloudOnly) {
+                const btn = document.createElement('button');
+                btn.className = "action-btn-primary btn-small";
+                btn.innerText = "⬇️ Download";
+                btn.addEventListener('click', (e) => { e.stopPropagation(); if(window.queueSingleDownload) window.queueSingleDownload(asin); });
+                card.querySelector('.card-actions').appendChild(btn);
+                card.addEventListener('click', () => { if (window.queueSingleDownload) window.queueSingleDownload(asin); });
+            } else {
+                card.addEventListener('click', () => this.startPlayback(path, titleStr, authorStr, resumePos, safeAsin));
+            }
+            
+            this.dom.grid.appendChild(card);
+            this.state.allBooks.push({ 
+                path: path, element: card, searchString: `${titleStr} ${authorStr}`.toLowerCase(), 
+                shelves: bookShelves, title: titleStr.toLowerCase(), author: authorStr.toLowerCase(),
+                status: isCloudOnly ? 'cloud' : 'downloaded'
+            });
+        }
+        
+        if (this.dom.shelfFilter) {
+            const currentValue = this.dom.shelfFilter.value;
+            this.dom.shelfFilter.innerHTML = '<option value="all">All Shelves</option>';
+            for (const shelf of [...uniqueShelves].sort()) {
+                const option = document.createElement('option');
+                option.value = shelf;
+                option.textContent = shelf;
+                this.dom.shelfFilter.appendChild(option);
+            }
+            if ([...uniqueShelves].includes(currentValue)) this.dom.shelfFilter.value = currentValue;
+        }
+        this.filterLibrary();
     }
-};
 
-window.addBookmark = async function() {
-    // FIX 2: Explicitly check for undefined so bookmarking at 0:00 works
-    if (!currentPath || audio.currentTime === undefined) {
-        return alert("No book is currently playing.");
-    }
-
-    const time = audio.currentTime;
-    const note = prompt(`Add a note for this bookmark at ${formatTime(time)}:`, "Awesome moment");
-    
-    if (note === null) return; 
-
-    try {
-        const res = await fetch('/api/library/bookmarks', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, time: time, note: note.trim() })
+    filterLibrary() {
+        if (!this.dom.searchBox || !this.dom.grid) return;
+        const query = this.dom.searchBox.value.toLowerCase();
+        const selectedShelf = this.dom.shelfFilter ? this.dom.shelfFilter.value : 'all';
+        const sortMethod = this.dom.sortFilter ? this.dom.sortFilter.value : 'title_asc';
+        
+        let visibleBooks = [];
+        this.state.allBooks.forEach(book => {
+            const matchesSearch = book.searchString.includes(query);
+            const matchesShelf = selectedShelf === 'all' || book.shelves.includes(selectedShelf);
+            if (matchesSearch && matchesShelf) { book.element.style.display = 'flex'; visibleBooks.push(book); } 
+            else { book.element.style.display = 'none'; }
         });
 
-        // FIX 3: Actually show you an error popup if the backend rejects the save
-        if (res.ok) {
-            await window.loadBookmarks();
+        visibleBooks.sort((a, b) => {
+            switch (sortMethod) {
+                case 'title_asc': return a.title.localeCompare(b.title);
+                case 'title_desc': return b.title.localeCompare(a.title);
+                case 'author_asc': return a.author.localeCompare(b.author) || a.title.localeCompare(b.title);
+                case 'status': return a.status === 'downloaded' ? -1 : 1;
+                default: return 0;
+            }
+        });
+        visibleBooks.forEach(book => this.dom.grid.appendChild(book.element));
+    }
+
+    async startPlayback(filePath, title, author, fallbackPosition, asin) {
+        this.saveProgressToServer(); 
+        
+        let latestPos = fallbackPosition;
+        if (this.state.rawLibraryData[filePath]) {
+            latestPos = this.state.rawLibraryData[filePath].progress?.[this.state.currentProfile] || fallbackPosition;
+        }
+
+        this.state.currentPath = filePath;
+        this.state.currentAsin = asin;
+        
+        const titleEl = document.getElementById('player-title') || document.getElementById('now-playing-title');
+        if (titleEl) titleEl.innerText = title;
+        
+        const authorEl = document.getElementById('player-author') || document.getElementById('now-playing-author');
+        if (authorEl) authorEl.innerText = author;
+
+        try {
+            const res = await fetch(`/api/chapters?path=${encodeURIComponent(filePath)}`);
+            this.state.currentChapters = await res.json();
+        } catch(e) { this.state.currentChapters = []; }
+        
+        this.dom.audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
+        this.dom.audio.playbackRate = this.state.speeds[this.state.speedIndex];
+        
+        this.dom.audio.onloadedmetadata = () => { this.dom.audio.currentTime = latestPos; };
+        
+        this.dom.audio.play().then(() => {
+            if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
+            if (this.dom.playerBar) {
+                this.dom.playerBar.classList.remove('hidden');
+                document.querySelector('main').style.paddingBottom = 'calc(var(--player-height) + 20px)';
+            }
+        }).catch(err => console.error("Play failed:", err));
+        
+        this.setSleepOff(); 
+        this.setupMediaSession(title, author, asin);
+    }
+
+    async cueLastPlayedBook() {
+        try {
+            const res = await fetch(`/api/last_played/${this.state.currentProfile}`);
+            const data = await res.json();
+            if (data.path && this.state.rawLibraryData[data.path]) {
+                const book = this.state.rawLibraryData[data.path];
+                let resumePos = book.progress?.[this.state.currentProfile] || book.last_position || 0;
+                await this.startPlayback(data.path, book.title, book.authors, resumePos, book.asin);
+                this.dom.audio.pause();
+                if (this.dom.playBtn) this.dom.playBtn.innerText = '▶';
+            }
+        } catch (e) { console.error("Failed to cue", e); }
+    }
+
+    bindAudioEvents() {
+        this.dom.audio.addEventListener('timeupdate', () => this.handleTimeUpdate());
+        this.dom.audio.addEventListener('ended', () => { 
+            this.dom.playBtn.innerText = '▶'; 
+            if (this.dom.progressFill) this.dom.progressFill.style.width = '0%'; 
+        });
+        this.dom.audio.addEventListener('pause', () => this.saveProgressToServer());
+    }
+
+    handleTimeUpdate() {
+        if (!this.dom.audio.duration) return;
+        const currentTime = this.dom.audio.currentTime;
+        let chStart = 0; let chEnd = this.dom.audio.duration; let chTitle = document.getElementById('player-title')?.innerText || "Playing";
+
+        if (this.state.currentChapters.length > 0) {
+            let activeIdx = 0;
+            for (let i = 0; i < this.state.currentChapters.length; i++) {
+                if (currentTime >= this.state.currentChapters[i].start) activeIdx = i; else break;
+            }
+            this.state.activeChapterIndex = activeIdx;
+            const currentCh = this.state.currentChapters[activeIdx];
+            chStart = currentCh.start; chTitle = currentCh.title;
+            if (activeIdx + 1 < this.state.currentChapters.length) { chEnd = this.state.currentChapters[activeIdx + 1].start; }
+        }
+
+        const chapterDuration = chEnd - chStart;
+        const timeIntoChapter = currentTime - chStart;
+        const progressPercent = chapterDuration > 0 ? (timeIntoChapter / chapterDuration) * 100 : 0;
+
+        if (this.dom.progressFill) this.dom.progressFill.style.width = `${progressPercent}%`;
+        
+        const chapterTitleEl = document.getElementById('player-chapter-title');
+        if (chapterTitleEl) chapterTitleEl.textContent = chTitle;
+        
+        const timeEl = document.getElementById('player-time');
+        if (timeEl) timeEl.textContent = `${this.formatTime(timeIntoChapter)} / ${this.formatTime(chapterDuration)}`;
+        
+        if (this.state.sleep.mode === 'chapter' && this.state.sleep.targetTime !== null) {
+            if (this.dom.audio.currentTime >= this.state.sleep.targetTime - 1) {
+                this.dom.audio.pause();
+                this.dom.playBtn.innerText = '▶';
+                this.setSleepOff();
+            }
+        }
+    }
+
+    escapeHtml(unsafe) {
+        if (unsafe == null) return "";
+        return String(unsafe).replace(/[&<>"']/g, m => ({ '&': "&amp;", '<': "&lt;", '>': "&gt;", '"': "&quot;", "'": "&#039;" })[m]);
+    }
+
+    formatTime(sec) {
+        const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = Math.floor(sec % 60);
+        if (h > 0) return `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        return `${m}:${s.toString().padStart(2,'0')}`;
+    }
+
+    backgroundSync() { if (!this.dom.audio.paused && this.state.currentPath) this.saveProgressToServer(); }
+
+    saveProgressToServer() {
+        if (this.state.currentPath && this.dom.audio.currentTime > 0) {
+            if (this.state.rawLibraryData[this.state.currentPath]) {
+                if (!this.state.rawLibraryData[this.state.currentPath].progress) this.state.rawLibraryData[this.state.currentPath].progress = {};
+                this.state.rawLibraryData[this.state.currentPath].progress[this.state.currentProfile] = this.dom.audio.currentTime;
+            }
+            fetch(`/api/progress`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: this.state.currentPath, position: this.dom.audio.currentTime, profile: this.state.currentProfile }),
+                keepalive: true
+            }).catch(() => {});
+        }
+    }
+
+    setupMediaSession(title, author, asin) {
+        if ('mediaSession' in navigator) {
+            const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
+            navigator.mediaSession.metadata = new MediaMetadata({ title, artist: author, album: 'TomeBox', artwork: artworkUrl });
+            navigator.mediaSession.setActionHandler('seekbackward', () => { this.dom.audio.currentTime -= 15; });
+            navigator.mediaSession.setActionHandler('seekforward', () => { this.dom.audio.currentTime += 15; });
+        }
+    }
+
+    togglePlayerBar() {
+        if (!this.dom.playerBar) return;
+        const isHidden = this.dom.playerBar.classList.toggle('hidden');
+        const mainContainer = document.querySelector('main');
+        if (mainContainer) mainContainer.style.paddingBottom = isHidden ? '20px' : 'calc(var(--player-height) + 20px)';
+    }
+
+    togglePlay() {
+        if (!this.dom.audio.src) return;
+        if (this.dom.audio.paused) { this.dom.audio.play(); this.dom.playBtn.innerText = '⏸'; } 
+        else { this.dom.audio.pause(); this.dom.playBtn.innerText = '▶'; }
+    }
+
+    seekRelative(seconds) {
+        if (this.dom.audio.duration) {
+            this.dom.audio.currentTime = Math.max(0, Math.min(this.dom.audio.currentTime + seconds, this.dom.audio.duration));
+        }
+    }
+
+    skipChapter(direction) {
+        if (!this.state.currentChapters.length) { this.seekRelative(direction * 15); return; }
+        const now = this.dom.audio.currentTime;
+        if (direction === 1) { 
+            const nextCh = this.state.currentChapters.find(c => c.start > now + 2);
+            if (nextCh) this.dom.audio.currentTime = nextCh.start;
+        } else { 
+            const prevCh = [...this.state.currentChapters].reverse().find(c => c.start < now - 3);
+            if (prevCh) this.dom.audio.currentTime = prevCh.start;
+            else this.dom.audio.currentTime = 0; 
+        }
+    }
+
+    changeSpeed() {
+        this.state.speedIndex = (this.state.speedIndex + 1) % this.state.speeds.length;
+        const spd = this.state.speeds[this.state.speedIndex];
+        this.dom.audio.playbackRate = spd;
+        if (this.dom.speedBtn) this.dom.speedBtn.innerText = spd.toFixed(1) + 'x';
+    }
+
+    // --- GAME LOGIC ---
+    launchGame(gameId) {
+        document.getElementById('games-menu').style.display = 'none';
+        document.getElementById('active-game-container').style.display = 'block';
+
+        // 1. Explicitly close the search bar if it is open
+        const searchContainer = document.getElementById('search-container');
+        if (searchContainer) searchContainer.classList.remove('open');
+
+        // 2. Explicitly hide the player bar and adjust page padding
+        if (this.dom.playerBar) {
+            this.dom.playerBar.classList.add('hidden');
+            const mainContainer = document.querySelector('main');
+            if (mainContainer) mainContainer.style.paddingBottom = '20px';
+        }
+
+        if (window.activeGameEngine && typeof window.activeGameEngine.stop === 'function') {
+            window.activeGameEngine.stop();
+        }
+
+        console.log("Launching:", gameId);
+
+        // Direct Global References. Safe across loaded script files.
+        try {
+            if (gameId === 'particles') window.activeGameEngine = typeof BubblePopEngine !== 'undefined' ? BubblePopEngine : null;
+            else if (gameId === '2048') window.activeGameEngine = typeof MergeEngine !== 'undefined' ? MergeEngine : null;
+            else if (gameId === 'breakout') window.activeGameEngine = typeof BreakoutEngine !== 'undefined' ? BreakoutEngine : null;
+            else if (gameId === 'invaders') window.activeGameEngine = typeof SpaceInvadersEngine !== 'undefined' ? SpaceInvadersEngine : null;
+        } catch(e) {
+            console.error("Failed to map engine", e);
+            window.activeGameEngine = null;
+        }
+
+        if (window.activeGameEngine && typeof window.activeGameEngine.start === 'function') {
+            // Slight delay ensures the fixed container has fully drawn its 100vh bounds before the engine claims the canvas size
+            setTimeout(() => window.activeGameEngine.start(), 10);
         } else {
-            const err = await res.json();
-            alert(`Failed to save bookmark: ${err.detail}`);
+            console.error("Game engine not found or failed to start for:", gameId);
+            this.exitGame();
         }
-    } catch (e) {
-        alert(`Network error saving bookmark: ${e.message}`);
     }
-};
 
-window.deleteBookmark = async function(index) {
-    if (!confirm("Delete this bookmark?")) return;
-    try {
-        const res = await fetch('/api/library/bookmarks', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, index: index })
+    exitGame() {
+        if (window.activeGameEngine && typeof window.activeGameEngine.stop === 'function') {
+            window.activeGameEngine.stop();
+        }
+        window.activeGameEngine = null;
+        
+        const canvas = document.getElementById('game-canvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        document.getElementById('active-game-container').style.display = 'none';
+        document.getElementById('games-menu').style.display = 'grid'; 
+
+        // Restore Player Bar (Only if an audiobook is currently loaded)
+        if (this.state.currentPath && this.dom.playerBar) {
+            this.dom.playerBar.classList.remove('hidden');
+            const mainContainer = document.querySelector('main');
+            if (mainContainer) mainContainer.style.paddingBottom = 'calc(var(--player-height) + 20px)';
+        }
+    }
+
+    // --- MODAL LOGIC ---
+    openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
+    
+    openChapterMenu() {
+        if (!this.state.currentChapters.length) return alert("No chapters found for this audiobook.");
+        const list = document.getElementById('chapter-list');
+        list.innerHTML = '';
+        const now = this.dom.audio.currentTime;
+        
+        let activeIdx = this.state.currentChapters.findIndex(c => c.start > now) - 1;
+        if (activeIdx < 0 && now >= this.state.currentChapters[0].start) activeIdx = this.state.currentChapters.length - 1;
+        
+        this.state.currentChapters.forEach((ch, idx) => {
+            const div = document.createElement('div');
+            div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
+            div.innerHTML = `<span>${this.escapeHtml(ch.title)}</span> <span>${this.formatTime(ch.start)}</span>`;
+            div.addEventListener('click', () => { 
+                this.dom.audio.currentTime = ch.start; 
+                if(this.dom.audio.paused) this.togglePlay(); 
+                this.closeAllModals(); 
+            });
+            list.appendChild(div);
         });
-
-        if (res.ok) await window.loadBookmarks();
-    } catch (e) {
-        console.error("Failed to delete bookmark", e);
+        document.getElementById('chapter-modal').style.display = 'flex';
     }
-};
 
-window.playBookmark = function(time) {
-    audio.currentTime = time;
-    if (audio.paused) togglePlay();
-    window.closeBookmarksModal();
-};
-// ==========================================
-// MOBILE UI: NAVIGATION & ROUTING
-// ==========================================
-
-window.toggleSidebar = function() {
-    const sidebar = document.getElementById('mobile-sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-    
-    if (sidebar.classList.contains('open')) {
-        // Close
-        sidebar.classList.remove('open');
-        overlay.style.display = 'none';
-        document.body.style.overflow = ''; // Restore main page scrolling
-    } else {
-        // Open
-        sidebar.classList.add('open');
-        overlay.style.display = 'block';
-        document.body.style.overflow = 'hidden'; // Lock main page scrolling
+    setSleepTimer(mins) {
+        clearTimeout(this.state.sleep.timeout);
+        this.state.sleep.mode = 'time';
+        this.state.sleep.targetTime = null;
+        this.state.sleep.timeout = setTimeout(() => { 
+            this.dom.audio.pause(); 
+            if (this.dom.playBtn) this.dom.playBtn.innerText = '▶'; 
+            this.setSleepOff(); 
+        }, mins * 60000);
+        document.getElementById('btn-sleep').style.color = 'var(--accent)';
+        this.closeAllModals();
     }
-};
 
-window.togglePlayerBar = function() {
-    const playerBar = document.getElementById('player-bar');
-    const mainContainer = document.querySelector('main');
-    
-    if (playerBar.classList.contains('hidden')) {
-        // Show
-        playerBar.classList.remove('hidden');
-        mainContainer.style.paddingBottom = 'calc(var(--player-height) + 20px)';
-    } else {
-        // Hide
-        playerBar.classList.add('hidden');
-        mainContainer.style.paddingBottom = '20px';
+    setSleepChapter(chapterCount) {
+        clearTimeout(this.state.sleep.timeout);
+        if (!this.state.currentChapters.length) return;
+        
+        this.state.sleep.mode = 'chapter';
+        const now = this.dom.audio.currentTime;
+        let currentIdx = this.state.currentChapters.findIndex(c => c.start > now) - 1;
+        if (currentIdx < 0 && now >= this.state.currentChapters[0].start) currentIdx = this.state.currentChapters.length - 1;
+        
+        let targetIdx = currentIdx + chapterCount;
+        this.state.sleep.targetTime = (targetIdx < this.state.currentChapters.length) 
+            ? this.state.currentChapters[targetIdx].start 
+            : this.dom.audio.duration;
+
+        document.getElementById('btn-sleep').style.color = 'var(--accent)';
+        this.closeAllModals();
     }
-};
 
-window.handleRouting = function() {
-    if (document.body.classList.contains('desktop')) return;
-    const hash = window.location.hash || '#/library';
-    const views = [document.getElementById('view-library'), document.getElementById('view-games'), document.getElementById('view-pairing')];
-    const navItems = document.querySelectorAll('.sidebar .nav-item');
-    
-    // Hide all views and reset nav highlights
-    views.forEach(v => { if(v) v.style.display = 'none'; });
-    navItems.forEach(n => n.classList.remove('active'));
+    setCustomSleepChapter() {
+        const inputElem = document.getElementById('custom-chapter-input');
+        let count = parseInt(inputElem.value, 10);
+        if (isNaN(count) || count < 1) { count = 1; inputElem.value = 1; }
+        this.setSleepChapter(count);
+    }
 
-    if (hash === '#/games') {
-        const gv = document.getElementById('view-games');
-        if (gv) gv.style.display = 'block';
-        const nav = document.querySelector('.nav-item[data-view="games"]');
-        if (nav) nav.classList.add('active');
-        
-        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.start();
-        
-    } else if (hash === '#/pairing') {
-        const pv = document.getElementById('view-pairing');
-        if (pv) pv.style.display = 'block';
-        const nav = document.querySelector('.nav-item[data-view="pairing"]');
-        if (nav) nav.classList.add('active');
-        
-        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.stop();
-        
-        loadPairingView(); // Trigger the QR fetch
+    setSleepOff() {
+        clearTimeout(this.state.sleep.timeout);
+        this.state.sleep = { mode: null, timeout: null, targetTime: null };
+        if (document.getElementById('btn-sleep')) document.getElementById('btn-sleep').style.color = '#aaa';
+        this.closeAllModals();
+    }
 
-    } else {
-        // Default to Library
-        const lv = document.getElementById('view-library');
-        if (lv) lv.style.display = 'block';
-        const nav = document.querySelector('.nav-item[data-view="library"]');
-        if (nav) nav.classList.add('active');
+    // --- BOOKMARKS LOGIC ---
+    async openBookmarksModal() {
+        document.getElementById('bookmarks-modal').style.display = 'flex';
+        await this.loadBookmarks();
+    }
+
+    async loadBookmarks() {
+        const listEl = document.getElementById('bookmarks-list');
+        if (!this.state.currentPath) {
+            listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No active book playing.</p>';
+            return;
+        }
+        try {
+            const res = await fetch(`/api/library/bookmarks?path=${encodeURIComponent(this.state.currentPath)}`, { cache: 'no-store' });
+            if (!res.ok) throw new Error("Failed to fetch");
+            const data = await res.json();
+            
+            if (!data.bookmarks || data.bookmarks.length === 0) {
+                listEl.innerHTML = '<p style="color: #aaa; text-align: center;">No bookmarks yet.</p>';
+                return;
+            }
+            listEl.innerHTML = '';
+            data.bookmarks.forEach((bm, idx) => {
+                const row = document.createElement('div');
+                row.className = 'profile-row'; 
+                row.innerHTML = `
+                    <div class="profile-row-info" style="cursor: pointer;">
+                        <div class="profile-row-name">${this.escapeHtml(bm.note || 'Bookmark')}</div>
+                        <div class="profile-row-status">⏱️ ${this.formatTime(bm.time)}</div>
+                    </div>
+                    <button class="action-btn-secondary action-btn-danger" data-idx="${idx}">🗑️</button>
+                `;
+                row.querySelector('.profile-row-info').addEventListener('click', () => {
+                    this.dom.audio.currentTime = bm.time;
+                    if (this.dom.audio.paused) this.togglePlay();
+                    this.closeAllModals();
+                });
+                row.querySelector('.action-btn-danger').addEventListener('click', () => this.deleteBookmark(idx));
+                listEl.appendChild(row);
+            });
+        } catch (e) { listEl.innerHTML = '<p style="color: #ff6b6b; text-align: center;">Failed to load bookmarks.</p>'; }
+    }
+
+    async addBookmark() {
+        if (!this.state.currentPath || this.dom.audio.currentTime === undefined) return alert("No book is currently playing.");
+        const time = this.dom.audio.currentTime;
+        const note = prompt(`Add a note for this bookmark at ${this.formatTime(time)}:`, "Awesome moment");
+        if (note === null) return; 
+        try {
+            const res = await fetch('/api/library/bookmarks', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: this.state.currentPath, time: time, note: note.trim() })
+            });
+            if (res.ok) await this.loadBookmarks();
+            else alert("Failed to save bookmark.");
+        } catch (e) { alert(`Network error: ${e.message}`); }
+    }
+
+    async deleteBookmark(index) {
+        if (!confirm("Delete this bookmark?")) return;
+        try {
+            const res = await fetch('/api/library/bookmarks', {
+                method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: this.state.currentPath, index: index })
+            });
+            if (res.ok) await this.loadBookmarks();
+        } catch (e) { console.error("Failed to delete bookmark", e); }
+    }
+
+    seekAudio(e) {
+        if (!this.dom.audio.duration) return;
+        const container = document.getElementById('seek-bar-container');
+        const clickPercent = Math.max(0, Math.min(1, (e.clientX - container.getBoundingClientRect().left) / container.clientWidth));
         
-        if (typeof BrainrotEngine !== 'undefined') BrainrotEngine.stop();
+        let chStart = 0, chEnd = this.dom.audio.duration;
+        if (this.state.currentChapters.length > 0) {
+            chStart = this.state.currentChapters[this.state.activeChapterIndex].start;
+            if (this.state.activeChapterIndex + 1 < this.state.currentChapters.length) {
+                chEnd = this.state.currentChapters[this.state.activeChapterIndex + 1].start;
+            }
+        }
+        this.dom.audio.currentTime = chStart + ((chEnd - chStart) * clickPercent);
+    }
+
+    toggleSidebar() {
+        if (!this.dom.sidebar) return;
+        const isOpen = this.dom.sidebar.classList.toggle('open');
+        this.dom.overlay.style.display = isOpen ? 'block' : 'none';
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+    }
+
+    toggleSearch() {
+        const searchContainer = document.getElementById('search-container');
+        if (!searchContainer) return;
+        const isOpen = searchContainer.classList.toggle('open');
+        if (isOpen) setTimeout(() => this.dom.searchBox.focus(), 300);
+        else this.dom.searchBox.blur();
+    }
+
+    closeAllModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
+    async loadPairingView() {
+        if (this.state.pairingViewLoaded) return;
+
+        const qrContainer = document.getElementById('qr-container');
+        const urlElement = document.getElementById('pairing-url');
         
-        if (typeof allBooks !== 'undefined' && allBooks.length === 0 && typeof loadLibrary === 'function') {
-            loadLibrary();
+        if (!qrContainer || !urlElement) return;
+
+        try {
+            // FIXED: Point to the actual endpoint defined in web_app.py
+            const res = await fetch('/api/pairing-info'); 
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            
+            const data = await res.json();
+            
+            // Extract the fully formed URL provided by the backend
+            const pairingUrl = data.pairing_url;
+            
+            if (!pairingUrl) {
+                throw new Error("Missing pairing_url in server response");
+            }
+            
+            urlElement.textContent = pairingUrl;
+            
+            // Dynamically load the QR library only when needed
+            await new Promise((resolve, reject) => {
+                if (window.QRCode) { resolve(); return; }
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+            
+            qrContainer.innerHTML = '';
+            new QRCode(qrContainer, {
+                text: pairingUrl,
+                width: 200,
+                height: 200,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.H
+            });
+            
+            // Tap to copy functionality
+            urlElement.addEventListener('click', () => {
+                navigator.clipboard.writeText(pairingUrl).then(() => {
+                    const original = pairingUrl;
+                    urlElement.textContent = 'Copied to clipboard!';
+                    setTimeout(() => urlElement.textContent = original, 1500);
+                });
+            });
+            
+            this.state.pairingViewLoaded = true;
+            
+        } catch (error) {
+            console.error('Failed to load pairing info:', error);
+            qrContainer.innerHTML = `<p style="color: #ff6b6b; text-align: center; margin: 0;">Failed to load pairing code.<br>Check console for details.</p>`;
+            urlElement.textContent = "Error loading URL";
         }
     }
-};
 
-// Listen for back/forward navigation
-window.addEventListener('hashchange', window.handleRouting);
+    handleRouting() {
+        if (document.body.classList.contains('desktop')) return;
+        const hash = window.location.hash || '#/library';
+        
+        document.querySelectorAll('.view-container').forEach(v => v.style.display = 'none');
+        document.querySelectorAll('.sidebar .nav-item').forEach(n => n.classList.remove('active'));
 
-// Trigger on initial page load
-window.addEventListener('DOMContentLoaded', () => {
-    window.handleRouting();
-    
-    // Android address bar fix (forces a tiny scroll to hide the UI bar)
-    setTimeout(() => { window.scrollTo(0, 1); }, 100);
+        const routeMap = { '#/games': 'games', '#/pairing': 'pairing' };
+        const viewId = routeMap[hash] || 'library';
+        
+        const activeView = document.getElementById(`view-${viewId}`);
+        const activeNav = document.querySelector(`.nav-item[data-view="${viewId}"]`);
+        
+        if (activeView) activeView.style.display = 'block';
+        if (activeNav) activeNav.classList.add('active');
+
+        // NEW: Trigger the QR code fetch when the Pairing view is opened
+        if (viewId === 'pairing') {
+            this.loadPairingView();
+        }
+    }
+}
+
+// Instantiate securely when the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    window.TomeBoxApp = new TomeBoxClient();
 });
-
-window.toggleSearch = function() {
-    const searchContainer = document.getElementById('search-container');
-    const isOpen = searchContainer.classList.toggle('open');
-    
-    // Auto-focus the search box when opened so the keyboard pops up immediately
-    if (isOpen) {
-        setTimeout(() => {
-            document.getElementById('search-box').focus();
-        }, 300); // Wait for the slide animation to finish
-    } else {
-        // Remove focus so the mobile keyboard hides
-        document.getElementById('search-box').blur();
-    }
-};
-
-initializeApp();
-
-
-// ==========================================
-// BRAINROT MODE: GAME MANAGER
-// ==========================================
-
-let activeGameEngine = null;
-
-window.launchGame = function(gameId) {
-    // 1. Swap UI
-    document.getElementById('games-menu').style.display = 'none';
-    document.getElementById('active-game-container').style.display = 'block';
-    
-    const canvas = document.getElementById('game-canvas');
-    
-    // 2. Route to the correct engine (We will build these next)
-    console.log("Launching:", gameId);
-    
-    if (gameId === 'particles') {
-        activeGameEngine = BubblePopEngine;
-        activeGameEngine.start();
-    } else if (gameId === '2048') {
-        activeGameEngine = MergeEngine;
-        activeGameEngine.start();
-    } else if (gameId === 'breakout') {
-        activeGameEngine = BreakoutEngine;
-        activeGameEngine.start();
-    } else if (gameId === 'invaders') {
-        activeGameEngine = SpaceInvadersEngine; // <-- NEW
-        activeGameEngine.start();
-    }
-};
-
-window.exitGame = function() {
-    // 1. Stop the active game loop
-    if (activeGameEngine && typeof activeGameEngine.stop === 'function') {
-        activeGameEngine.stop();
-    }
-    activeGameEngine = null;
-    
-    // 2. Clear the canvas visually
-    const canvas = document.getElementById('game-canvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-    
-    // 3. Swap UI back to menu
-    document.getElementById('active-game-container').style.display = 'none';
-    document.getElementById('games-menu').style.display = 'block';
-};

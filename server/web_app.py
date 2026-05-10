@@ -75,13 +75,12 @@ def create_server_app(tomebox):
 
     @api.get("/api/pairing-info")
     def get_pairing_info(request: Request):
-        """Returns pairing URL info as JSON for the desktop UI."""
+        """Generates a secure, one-time pairing OTP for new devices."""
         import socket
+        import time
+        import secrets
         
-        server_token = tomebox.db.load_settings().get("auth_token")
-        
-        # Find the host machine's primary LAN IP — not the request's Host header,
-        # which would be 'localhost' when called from the desktop UI itself
+        # Find the host machine's primary LAN IP
         local_ip = "127.0.0.1"
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -91,13 +90,23 @@ def create_server_app(tomebox):
         except Exception:
             pass
         
-        # Use the same port the request came in on
+        # --- NEW OTP GENERATION ---
+        # Generate a secure 8-character OTP
+        otp = secrets.token_hex(4)
+        
+        # Create the dictionary if it doesn't exist yet
+        if not hasattr(tomebox, '_active_otps'):
+            tomebox._active_otps = {}
+            
+        # Store OTP with a 10-minute expiration (600 seconds)
+        tomebox._active_otps[otp] = time.time() + 600 
+        
         port = request.url.port or 8000
-        pairing_url = f"http://{local_ip}:{port}/auth?token={server_token}"
+        pairing_url = f"http://{local_ip}:{port}/auth?otp={otp}"
         
         return {
             "pairing_url": pairing_url,
-            "token": server_token
+            "token": otp  # The JS still looks for 'token' or 'pairing_url'
         }
 
     @api.get("/api/profiles/active")

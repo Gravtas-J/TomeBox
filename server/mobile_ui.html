@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- Prevents auto-zooming on inputs and handles notched phones -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>TomeBox</title>
     <link rel="manifest" href="/static/manifest.json">
@@ -11,188 +10,188 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="stylesheet" href="/static/css/styles.css">
-    <!-- Prevents the blue flash when tapping on mobile -->
     <style> * { -webkit-tap-highlight-color: transparent; } </style>
 </head>
 <body>
-    <!-- Sidebar Overlay (Catches taps outside the menu) -->
-    <div id="sidebar-overlay" onclick="toggleSidebar()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:90; backdrop-filter: blur(2px);"></div>
+    <div id="sidebar-overlay" class="modal-bg-close" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:90; backdrop-filter: blur(2px);"></div>
 
-    <!-- Sidebar Navigation -->
     <nav id="mobile-sidebar" class="sidebar">
-        <div class="sidebar-header" style="padding: 20px; font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
-            <span>TomeBox</span>
-            <span onclick="toggleSidebar()" style="cursor: pointer; padding: 5px; font-size: 1.5rem;">✕</span>
+        <div class="sidebar-header">
+            <h2>TomeBox</h2>
+            <button class="close-btn" id="btn-sidebar-close">✕</button>
         </div>
-        <div class="sidebar-links" style="display: flex; flex-direction: column; padding: 10px 0;">
-            <a href="#/library" onclick="toggleSidebar()" class="nav-item active" data-view="library" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">📚 Library</a>
-            <a href="#/games" onclick="toggleSidebar()" class="nav-item" data-view="games" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">🎮 Games</a>
-            <a href="#/pairing" onclick="toggleSidebar()" class="nav-item" data-view="pairing" style="padding: 15px 20px; color: #fff; text-decoration: none; font-size: 1.1rem;">🔗 Pair Device</a>
-        </div>
+        <ul class="sidebar-nav">
+            <li class="nav-item active" data-view="library" onclick="window.location.hash='#/library'">📚 Library</li>
+            <li class="nav-item" data-view="games" onclick="window.location.hash='#/games'">👾 Brainrot Mode</li>
+            <li class="nav-item" data-view="pairing" onclick="window.location.hash='#/pairing'">🔗 Pair Device</li>
+        </ul>
     </nav>
 
-    <!-- Top Header -->
-    <header style="display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; padding: 12px 20px; background-color: var(--card); border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 50;">
-        <!-- Left: Menu Button -->
-        <button onclick="toggleSidebar()" style="background: none; border: none; color: white; font-size: 1.6rem; cursor: pointer; padding: 0; justify-self: start; line-height: 1;">
-            ☰
-        </button>
-        
-        <!-- Center: Title -->
-        <div style="font-weight: bold; font-size: 1.3rem; text-align: center; justify-self: center;">
-            TomeBox
-        </div>
-        
-        <!-- Right: Search & Player Toggles -->
-        <div style="justify-self: end; display: flex; gap: 15px;">
-            <button onclick="toggleSearch()" style="background: none; border: none; color: white; font-size: 1.3rem; cursor: pointer; padding: 0; line-height: 1;">
-                🔍
-            </button>
-            <button onclick="togglePlayerBar()" style="background: none; border: none; color: white; font-size: 1.4rem; cursor: pointer; padding: 0; line-height: 1;">
-                🎵
-            </button>
+    <header class="mobile-header">
+        <button class="icon-btn" id="btn-sidebar-toggle">☰</button>
+        <h1>TomeBox</h1>
+        <div style="display: flex; gap: 5px;">
+            <button class="icon-btn" id="btn-player-toggle" title="Toggle Player">🎵</button>
+            <button class="icon-btn" id="btn-search-toggle">🔍</button>
         </div>
     </header>
-    
-    <!-- Main Content Area -->
-    <main id="view-container">
-        <!-- View: Library -->
-        <section id="view-library" class="view active">
-            
-            <!-- Hideable Search Drawer -->
-            <div id="search-container" class="search-drawer">
-                <input type="text" id="search-box" placeholder="Search titles or authors..." onkeyup="filterLibrary()">
-                <div class="filter-row" style="margin-top: 10px; display: flex; gap: 10px;">
-                    <select id="shelf-filter" class="ui-select" onchange="filterLibrary()" style="flex: 1;">
-                        <option value="all">All Shelves</option>
-                    </select>
-                    <select id="profile-selector" class="ui-select" onchange="changeProfile()" style="flex: 1;"></select>
-                </div>
-            </div>
 
-            <!-- Grid -->
-            <div id="library-grid"></div>
-        </section>
-
-        <!-- View: Games (Brainrot Mode) -->
-        <section id="view-games" class="view" style="display: none; height: 100%; position: relative; overflow: hidden; background: var(--bg);">
-            
-            <!-- Game Selection Menu -->
-            <div id="games-menu" style="height: 100%; padding: 20px; overflow-y: auto;">
-                <h2 style="color: var(--accent); text-align: center; margin-bottom: 5px;">Brainrot Mode</h2>
-                <p style="color: #888; text-align: center; margin-bottom: 25px; font-size: 0.9rem;">Keep your hands busy while you listen.</p>
-                
-                <div class="games-grid">
-                    <div class="game-card" onclick="launchGame('particles')">
-                        <div class="game-icon">🫧</div>
-                        <h3>Bubble Pop</h3>
-                        <p>Touch physics toy</p>
-                    </div>
-                    
-                    <div class="game-card" onclick="launchGame('2048')">
-                        <div class="game-icon">🔢</div>
-                        <h3>Merge 2048</h3>
-                        <p>Swipe to combine</p>
-                    </div>
-                    
-                    <div class="game-card" onclick="launchGame('breakout')">
-                        <div class="game-icon">🧱</div>
-                        <h3>Brick Breaker</h3>
-                        <p>Classic paddle action</p>
-                    </div>
-                    <div class="game-card" onclick="launchGame('invaders')">
-                        <div class="game-icon">👾</div>
-                        <h3>Space Invaders</h3>
-                        <p>Slide & auto-fire</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Active Game Container (Hidden by default) -->
-            <div id="active-game-container" style="display: none; height: 100%; width: 100%; position: absolute; top: 0; left: 0; background: #000; z-index: 50;">
-                <!-- Exit Button -->
-                <button onclick="exitGame()" style="position: absolute; top: 15px; right: 15px; z-index: 100; background: rgba(255,255,255,0.1); border: none; color: white; border-radius: 50%; width: 40px; height: 40px; font-size: 1.2rem; cursor: pointer; backdrop-filter: blur(4px);">✕</button>
-                
-                <!-- Master Canvas -->
-                <canvas id="game-canvas" style="width: 100%; height: 100%; display: block; touch-action: none;"></canvas>
-            </div>
-            
-        </section>
-        <section id="view-pairing" class="view" style="display: none; padding: 30px 20px; text-align: center;">
-            <h2 style="color: var(--accent); margin-bottom: 10px; margin-top: 0;">Pair Device</h2>
-            <p style="color: #888; font-size: 0.95rem; margin-bottom: 30px;">Scan this QR code with another device to link it to your TomeBox library.</p>
-            
-            <div id="qr-container" style="background: white; padding: 20px; border-radius: 8px; display: inline-block; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);"></div>
-            
-            <div>
-                <p style="color: #888; font-size: 0.9rem; margin-bottom: 8px;">Or copy this URL:</p>
-                <code id="pairing-url" style="display: block; background: #2a2a2a; padding: 15px; border-radius: 6px; word-break: break-all; font-family: monospace; font-size: 0.85em; cursor: pointer; border: 1px solid #444;">Loading...</code>
-            </div>
-        </section>
-    </main>
-
-    <!-- Persistent Player Bar -->
-    <div id="player-bar">
-        <div id="progress-container" onclick="seekAudio(event)">
-            <div id="progress-fill"></div>
+    <div id="search-container" class="search-container">
+        <input type="text" id="search-box" placeholder="Search by title, author, or series...">
+        <div class="filter-row">
+            <select id="shelf-filter" class="filter-dropdown">
+                <option value="all">All Shelves</option>
+            </select>
+            <select id="sort-filter" class="filter-dropdown">
+                <option value="title_asc">Title (A-Z)</option>
+                <option value="title_desc">Title (Z-A)</option>
+                <option value="author_asc">Author</option>
+                <option value="series_asc">Series</option>
+                <option value="status">Status (Local First)</option>
+            </select>
         </div>
-        
-        <div class="player-top-row">
-            <div class="player-info">
-                <p id="now-playing-title">Select a book</p>
-                <p id="now-playing-author">...</p>
-            </div>
-        </div>
-
-        <div class="player-secondary-row">
-            <button class="speed-btn" id="speed-btn" onclick="toggleSpeed()">1.0x</button>
-            <div class="side-tools">
-                <button class="tool-btn" id="sleep-btn-ui" onclick="openSleepMenu()">🌙</button>
-                <button class="tool-btn" onclick="openChapterMenu()">📑</button>
-            </div>
-        </div>
-
-        <div class="player-main-row">
-            <button class="chapter-btn" onclick="skipChapter(-1)">⏮</button>
-            <button class="skip-btn" onclick="skipAudio(-15)">↺</button>
-            <button class="play-btn" id="play-pause-btn" onclick="togglePlay()">▶</button>
-            <button class="skip-btn" onclick="skipAudio(15)">↻</button>
-            <button class="chapter-btn" onclick="skipChapter(1)">⏭</button>
-        </div>
-        
-        <audio id="main-audio"></audio>
     </div>
 
-    <!-- Modals (Sleep/Chapter) -->
-    <div class="modal-overlay" id="sleep-modal" onclick="closeModals(event)">
-        <div class="modal-content" onclick="event.stopPropagation()">
+    <main>
+        <div id="view-library" class="view-container">
+            <div class="profile-header">
+                <select id="profile-selector" class="profile-dropdown"></select>
+            </div>
+            <div id="library-grid" class="library-grid"></div>
+        </div>
+
+        <div id="view-games" class="view-container" style="display:none;">
+            <div class="profile-header">
+                <h2>Brainrot Mode</h2>
+                <p style="color:#aaa; font-size:12px; margin-top:5px;">Listen and occupy your hands.</p>
+            </div>
+            
+            <div id="games-menu" class="games-grid" style="margin-top: 20px;">
+                <button class="game-card" data-game="particles">
+                    <div class="game-icon">🫧</div>
+                    <div class="game-title">Bubble Pop</div>
+                </button>
+                <button class="game-card" data-game="2048">
+                    <div class="game-icon">🔢</div>
+                    <div class="game-title">Merge 2048</div>
+                </button>
+                <button class="game-card" data-game="breakout">
+                    <div class="game-icon">🧱</div>
+                    <div class="game-title">Brick Breaker</div>
+                </button>
+                <button class="game-card" data-game="invaders">
+                    <div class="game-icon">👾</div>
+                    <div class="game-title">Space Invaders</div>
+                </button>
+            </div>
+
+            <div id="active-game-container" style="display:none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 40; background: #121212;">
+                <button class="action-btn-secondary" id="btn-exit-game" style="position:absolute; top: 25px; left: 15px; z-index: 50; background: rgba(0,0,0,0.8); border: 1px solid #555; padding: 10px 15px; border-radius: 8px;">🔙 Exit</button>
+                <div class="game-canvas-wrapper" style="width: 100%; height: 100%; overflow: hidden;">
+                    <canvas id="game-canvas" style="width: 100%; height: 100%; touch-action: none; display: block;"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div id="view-pairing" class="view-container" style="display:none;">
+            <div class="profile-header">
+                <h2>Pair Desktop UI</h2>
+                <p style="color:#aaa; font-size:12px; margin-top:5px;">Scan this code with a tablet or computer on the same WiFi network.</p>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; margin-top: 30px;">
+                <div id="qr-container" style="background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+                    </div>
+                <div id="pairing-url" style="color: #bb86fc; font-family: monospace; font-size: 14px; background: #1e1e1e; padding: 10px 15px; border-radius: 5px; text-align: center; word-break: break-all; cursor: pointer;">
+                    Loading...
+                </div>
+                <p style="color:#aaa; font-size:12px; margin-top:15px; text-align: center;">Tap the URL to copy</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="player-bar" class="player-bar">
+        <div id="seek-bar-container" class="seek-bar">
+            <div id="seek-progress" class="seek-progress"></div>
+        </div>
+        
+        <div class="player-content">
+            <div class="player-info">
+                <h3 id="player-title">No Book Selected</h3>
+                <p id="player-author" style="color: #aaa; font-size: 13px; margin: 2px 0;">Select a book from the library</p>
+                <div style="display:flex; justify-content:center; gap:10px; font-size:10px; color:#888;">
+                    <!-- <span id="player-chapter-title" style="color: #bb86fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;"></span> -->
+                    <span id="player-time">0:00 / 0:00</span>
+                </div>
+            </div>
+
+            <div class="player-middle-row">
+                <div class="tools-side tools-left">
+                    <button class="icon-btn" id="btn-speed">1.0x</button>
+                    <button class="icon-btn tool-btn" id="btn-sleep" title="Sleep Timer">🌙</button>
+                </div>
+
+                <!-- <img id="player-cover" class="player-cover" src="" style="display:none;" /> -->
+
+                <div class="tools-side tools-right">
+                    <button class="icon-btn tool-btn" id="btn-chapters" title="Chapters Menu">📑</button>
+                    <button class="icon-btn tool-btn" id="btn-bookmarks" title="Bookmarks Menu">🔖</button>
+                </div>
+            </div>
+
+            <div class="player-controls">
+                <button class="icon-btn skip-btn" id="btn-prev-chap" title="Previous Chapter">⏮</button>
+                <button class="icon-btn skip-btn" id="btn-seek-back" title="Rewind 15s">⟲</button>
+                <button class="icon-btn play-btn" id="btn-play-pause">▶</button>
+                <button class="icon-btn skip-btn" id="btn-seek-forward" title="Skip 15s">⟳</button>
+                <button class="icon-btn skip-btn" id="btn-next-chap" title="Next Chapter">⏭</button>
+            </div>
+        </div>
+        <audio id="audio-player" preload="metadata"></audio>
+    </div>
+
+    <div class="modal-overlay modal-bg-close" id="bookmarks-modal">
+        <div class="modal-content">
             <div class="modal-header">
-                <span>Sleep Timer</span>
-                <button class="close-btn" onclick="closeModals()">✕</button>
+                <span>Bookmarks</span>
+                <button class="close-btn modal-close">✕</button>
             </div>
             <div class="modal-body">
-                <div class="list-item" onclick="setSleepTimer(15)">15 Minutes</div>
-                <div class="list-item" onclick="setSleepTimer(30)">30 Minutes</div>
-                <div class="list-item" onclick="setSleepTimer(60)">60 Minutes</div>
-                <div class="list-item" onclick="setSleepChapter(1)">End of Current Chapter</div>
+                <button class="action-btn-primary" id="btn-add-bookmark" style="width: 100%; margin-bottom: 15px;">+ Add Bookmark</button>
+                <div id="bookmarks-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay modal-bg-close" id="sleep-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>Sleep Timer</span>
+                <button class="close-btn modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="list-item sleep-option" data-mins="15">15 Minutes</div>
+                <div class="list-item sleep-option" data-mins="30">30 Minutes</div>
+                <div class="list-item sleep-option" data-mins="45">45 Minutes</div>
+                <div class="list-item sleep-option" data-mins="60">60 Minutes</div>
+                <div class="list-item sleep-option" data-chapter="1">End of Current Chapter</div>
                 <div class="list-item custom-sleep-row">
                     <div class="sleep-input-group">
                         <span>After</span>
                         <input type="number" id="custom-chapter-input" class="sleep-input" min="1" max="99" value="2">
                         <span>Chapters</span>
                     </div>
-                    <button class="sleep-set-btn" onclick="setCustomSleepChapter()">Set</button>
+                    <button class="sleep-set-btn" id="btn-custom-sleep">Set</button>
                 </div>
-                <div class="list-item" onclick="setSleepOff()" style="color: #ff6b6b;">Turn Off Timer</div>
+                <div class="list-item" id="btn-sleep-off" style="color: #ff6b6b;">Turn Off Timer</div>
             </div>
         </div>
     </div>
 
-    <div class="modal-overlay" id="chapter-modal" onclick="closeModals(event)">
-        <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-overlay modal-bg-close" id="chapter-modal">
+        <div class="modal-content">
             <div class="modal-header">
                 <span>Chapters</span>
-                <button class="close-btn" onclick="closeModals()">✕</button>
+                <button class="close-btn modal-close">✕</button>
             </div>
             <div class="modal-body" id="chapter-list"></div>
         </div>

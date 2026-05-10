@@ -1,9 +1,13 @@
 :root { 
-    --player-height: 145px;
+    --player-height: 165px; /* Increased from 145px to fit the new row */
     --bg: #121212; 
     --card: #1e1e1e; 
     --text: #e0e0e0; 
     --accent: #bb86fc; 
+}
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
 }
 
 body { 
@@ -15,126 +19,94 @@ body {
     padding-bottom: 150px; 
 }
 
-header { 
+/* ==========================================
+   HEADER & NAVIGATION
+========================================== */
+header.mobile-header { 
     background-color: var(--card); 
-    padding: 10px 20px;
+    padding: 12px 20px;
     text-align: center; 
-    font-size: clamp(1rem, 2.5vw, 1.2rem);
-    font-weight: bold; 
     border-bottom: 1px solid #333; 
     position: sticky; 
     top: 0; 
     z-index: 10; 
     display: flex; 
-    flex-direction: 
-    column; gap: 10px; 
+    flex-direction: row; 
+    justify-content: space-between;
+    align-items: center; 
 }
 
-.header-controls {
-    flex-direction: row; /* Switch to row */
+header.mobile-header h1 {
+    margin: 0;
+    font-size: clamp(1.2rem, 3vw, 1.5rem);
+    font-weight: bold;
+    position: absolute; 
+    left: 50%;          
+    transform: translateX(-50%); 
+    color: #bb86fc;
+}
+
+.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 1.5rem;
+    padding: 5px;
+    cursor: pointer;
+    display: flex;
     align-items: center;
-    gap: 15px;
+    justify-content: center;
 }
 
-@media (max-width: 600px) {
-    .header-controls {
-        flex-direction: column;
-        gap: 8px;
-    }
+/* ==========================================
+   SEARCH DRAWER
+========================================== */
+.search-container {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding: 0 15px;
+    background-color: var(--card);
+    transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
+    border-bottom: 1px solid transparent;
 }
-#search-box { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 1rem; outline: none; box-sizing: border-box; }
+
+.search-container.open {
+    max-height: 150px;
+    opacity: 1;
+    padding: 15px;
+    border-bottom: 1px solid #333;
+}
+
+#search-box { 
+    width: 100%; 
+    padding: 10px; 
+    border-radius: 8px; 
+    border: 1px solid #444; 
+    background-color: #222; 
+    color: white; 
+    font-size: 1rem; 
+    outline: none; 
+    margin-bottom: 10px;
+}
+#search-box:focus { border-color: var(--accent); }
 
 .filter-row { display: flex; gap: 10px; width: 100%; }
-.ui-select { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background-color: #222; color: white; font-size: 0.9rem; outline: none; }
-#search-box:focus, .ui-select:focus { border-color: var(--accent); }
-
-#library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px; }
-.book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; }
-.book-card:active { transform: scale(0.98); }
-.cover-image { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; margin-bottom: 10px; background-color: #333; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
-.cover-placeholder { width: 100%; aspect-ratio: 1; background-color: #333; border-radius: 4px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #555; }
-.book-title { font-weight: bold; font-size: 0.9rem; margin: 0 0 5px 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
-.progress-pill { font-size: 0.7rem; color: var(--accent); background: #333; padding: 2px 6px; border-radius: 10px; margin-top: 5px; display: inline-block; }
-
-#player-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background-color: var(--card);
-    border-top: 1px solid #333;
-    /* Fixed max-height to prevent it from blowing up on tall screens */
-    max-height: 150px; 
-    padding: 4px 1px; 
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between; 
-    z-index: 20;
-    box-shadow: 0 -4px 10px rgba(0,0,0,0.5);
+.filter-dropdown { 
+    flex: 1; 
+    padding: 10px; 
+    border-radius: 8px; 
+    border: 1px solid #444; 
+    background-color: #222; 
+    color: white; 
+    font-size: 0.9rem; 
+    outline: none; 
 }
+.filter-dropdown:focus { border-color: var(--accent); }
 
-#player-bar.active { transform: translateY(0); }
-
-.player-top-row { 
-    display: flex; 
-    justify-content: center; 
-    align-items: center; 
-    width: 100%; 
-    margin-bottom: 5px; 
-}
-
-.player-info { 
-    width: 100%; 
-    overflow: hidden; 
-    text-align: center; 
-}
-
-#now-playing-title { 
-    font-weight: bold; 
-    font-size: clamp(0.8rem, 2vw, 1rem);
-    margin: 0; 
-    white-space: nowrap; 
-    overflow: hidden; 
-    text-overflow: ellipsis; 
-}
-
-#now-playing-author { font-size: 0.8rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.player-secondary-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 5px; }
-.player-main-row { display: flex; justify-content: center; align-items: center; gap: 25px; width: 100%; margin-top: 10px; }
-
-.side-tools { display: flex; gap: 15px; justify-content: flex-end; }
-
-button { background: none; border: none; color: var(--text); cursor: pointer; padding: 5px; outline: none; display: flex; align-items: center; justify-content: center; }
-.play-btn { color: var(--accent); font-size: 2.8rem; width: 50px; height: 50px; }
-.skip-btn { font-size: 1.6rem; color: #ccc; }
-.chapter-btn { font-size: 1.4rem; color: #888; }
-.speed-btn { font-size: 1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 4px; padding: 5px 12px; }
-.tool-btn { font-size: 1.4rem; color: #aaa; transition: color 0.2s; }
-
-#progress-container { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
-#progress-fill { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; }
-
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
-.modal-content { background: var(--card); width: 90%; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #444; }
-.modal-header { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2rem; }
-.modal-body { overflow-y: auto; flex-grow: 1; }
-.close-btn { color: #aaa; font-size: 1.5rem; }
-.list-item { padding: 15px; border-bottom: 1px solid #333; color: #ccc; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
-.list-item:active { background-color: #2a2a2a; }
-.list-item.active { color: var(--accent); font-weight: bold; }
-.custom-sleep-row { cursor: default; }
-.custom-sleep-row:active { background-color: transparent; }
-.sleep-input-group { display: flex; align-items: center; gap: 10px; }
-.sleep-input { width: 50px; background: #222; color: white; border: 1px solid #444; border-radius: 6px; padding: 5px; text-align: center; font-size: 1rem; outline: none; }
-.sleep-input:focus { border-color: var(--accent); }
-.sleep-set-btn { background: var(--accent); color: var(--bg); font-weight: bold; border-radius: 6px; padding: 5px 15px; font-size: 0.9rem; }
-
-/* */
-
-
-/* Sidebar Animation */
+/* ==========================================
+   SIDEBAR MENU
+========================================== */
 .sidebar {
     position: fixed;
     left: 0;
@@ -148,123 +120,221 @@ button { background: none; border: none; color: var(--text); cursor: pointer; pa
     will-change: transform;
     border-right: 1px solid #333;
     box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
 }
 
 .sidebar.open {
     transform: translateX(0);
 }
 
-/* Sidebar Active State */
-.sidebar .nav-item {
-    transition: background 0.2s ease;
+.sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    border-bottom: 1px solid #333;
 }
+.sidebar-header h2 { margin: 0; color: var(--accent); font-size: 1.4rem; }
+
+.sidebar-nav {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    flex-grow: 1;
+}
+
+.sidebar .nav-item {
+    padding: 15px 20px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    border-bottom: 1px solid #222;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
 .sidebar .nav-item.active {
     background-color: rgba(187, 134, 252, 0.1);
-    border-left: 3px solid var(--accent);
-    color: var(--accent) !important;
+    border-left: 4px solid var(--accent);
+    color: var(--accent);
+    font-weight: bold;
 }
 
-/* Player Bar Animation */
-#player-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: var(--player-height);
-    background-color: var(--card);
-    border-top: 1px solid #333;
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 4px 1px;
-    transform: translateY(0);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    will-change: transform;
-}
-
-#player-bar.hidden {
-    transform: translateY(100%);
-}
-
-/* Main Content Area */
+/* ==========================================
+   MAIN CONTENT & LIBRARY GRID
+========================================== */
 main {
-    /* Accounts for the ~60px header */
     height: calc(100vh - 60px); 
     overflow-y: auto;
-    /* Smooth momentum scrolling for iOS */
     -webkit-overflow-scrolling: touch; 
-    /* Padding so the player bar doesn't cover the bottom items */
     padding-bottom: calc(var(--player-height) + 20px);
     transition: padding-bottom 0.3s ease;
 }
 
+.profile-header { padding: 15px; text-align: center; }
+.profile-dropdown { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: var(--card); color: white; font-size: 1rem; outline: none; }
 
-.search-drawer {
-    max-height: 0;
-    opacity: 0;
-    overflow: hidden;
-    padding: 0 15px;
+#library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px; }
+.book-card { background-color: var(--card); border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; align-items: center; text-align: center; border: 1px solid transparent; }
+.book-card:active { transform: scale(0.98); border-color: var(--accent); }
+
+.cover-image { 
+    width: 100%; aspect-ratio: 1; 
+    object-fit: cover; 
+    border-radius: 4px; 
+    margin-bottom: 10px; 
+    background-color: #333; 
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+.cover-placeholder { 
+    width: 100%; aspect-ratio: 1; 
+    background-color: #333; 
+    border-radius: 4px; 
+    margin-bottom: 10px; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 2rem; color: #555; }
+
+.book-title { font-weight: bold; font-size: 0.9rem; margin: 0 0 5px 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book-author { font-size: 0.8rem; color: #aaa; margin: 0; }
+.progress-pill { font-size: 0.7rem; color: var(--accent); background: #333; padding: 2px 6px; border-radius: 10px; margin-top: 5px; display: inline-block; }
+
+/* ==========================================
+   BUTTONS
+========================================== */
+button { background: none; border: none; color: var(--text); cursor: pointer; outline: none; }
+.action-btn-primary { background: var(--accent); color: var(--bg); font-weight: bold; border-radius: 6px; padding: 8px 15px; border: none; cursor: pointer; }
+.action-btn-secondary { background: transparent; color: var(--text); border: 1px solid #555; border-radius: 6px; padding: 8px 15px; cursor: pointer; }
+.btn-small { font-size: 0.8rem; padding: 6px 10px; }
+
+/* ==========================================
+   PLAYER BAR
+========================================== */
+#player-bar {
+    position: sticky;
+    bottom: -5px; 
+    left: 0;
+    right: 0;
     background-color: var(--card);
-    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
-    border-bottom: 1px solid transparent;
-}
-
-.search-drawer.open {
-    max-height: 150px;
-    opacity: 1;
-    padding: 15px;
-    border-bottom: 1px solid #333;
-}
-
-/* --- Brainrot Mode Menu --- */
-.games-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 15px;
-    padding-bottom: 20px;
-}
-
-.game-card {
-    background-color: var(--card);
-    border-radius: 12px;
-    padding: 20px 15px;
-    text-align: center;
-    cursor: pointer;
-    border: 1px solid #333;
-    transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    border-top: 1px solid #333;
+    
+    height: calc(var(--player-height) + 2px); 
+    padding-bottom: 2px; 
+    
+    z-index: 20;
+    box-shadow: 0 -4px 10px rgba(0,0,0,0.5);
+    transform: translateY(0);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
     display: flex;
     flex-direction: column;
+}
+
+#player-bar.hidden { transform: translateY(100%); }
+
+.player-content { 
+    padding: 1px 15px; 
+    display: flex; 
+    flex-direction: column; 
+    align-items: center; 
+    justify-content: space-between;
+    height: 100%;
+    gap: 10px;
+    bottom: -5px; 
+}
+
+.player-info { 
+    width: 100%; 
+    text-align: center; 
+}
+
+#player-title { font-weight: bold; font-size: 1.1rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Middle Row: Symmetrical Cover & Tools */
+.player-middle-row {
+    display: flex;
+    flex-direction: row;
     align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 450px; /* Prevents tools from drifting too far on tablets */
+    padding: 0 10px;
 }
 
-.game-card:active {
-    transform: scale(0.95);
-    border-color: var(--accent);
-    background-color: rgba(187, 134, 252, 0.05);
-}
-
-.game-icon {
-    font-size: 2.5rem;
-    margin-bottom: 15px;
-    background: #2a2a2a;
-    width: 65px;
-    height: 65px;
+.tools-side {
     display: flex;
     align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    box-shadow: inset 0 4px 10px rgba(0,0,0,0.5);
+    gap: 12px;
+    flex: 1;
 }
 
-.game-card h3 {
-    margin: 0 0 5px 0;
-    color: var(--text);
-    font-size: 1.05rem;
+.tools-left {
+    justify-content: left;
+    padding-right: 15px;
 }
 
-.game-card p {
-    margin: 0;
-    color: #888;
-    font-size: 0.8rem;
+.tools-right {
+    justify-content: right;
+    padding-left: 15px;
 }
+
+.player-cover { 
+    width: 100px; 
+    height: 100px; 
+    border-radius: 8px; 
+    object-fit: cover; 
+    flex-shrink: 0;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+}
+
+/* Bottom Row: Playback Controls Layout */
+.player-controls { 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    width: 100%; 
+    gap: 20px; 
+    margin-bottom: 5px;
+}
+
+/* Button Sizing */
+.play-btn { color: var(--accent); font-size: 3rem; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; }
+.skip-btn { font-size: 1.8rem; color: #bb86fc; padding: 2px; }
+.tool-btn { font-size: 1.5rem; color: #888; padding: 2px; }
+#btn-speed { font-size: 1.1rem; font-weight: bold; color: var(--accent); background: #333; border-radius: 6px; padding: 6px 10px; }
+
+.seek-bar { position: absolute; top: -2px; left: 0; right: 0; height: 6px; background-color: #444; cursor: pointer; }
+.seek-progress { height: 100%; background-color: var(--accent); width: 0%; pointer-events: none; transition: width 0.1s linear; }
+
+/* ==========================================
+   MODALS
+========================================== */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+.modal-content { background: var(--card); width: 90%; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #444; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.modal-header { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2rem; }
+.modal-body { overflow-y: auto; flex-grow: 1; }
+.close-btn { color: #aaa; font-size: 1.5rem; background: transparent; }
+
+.list-item { padding: 15px; border-bottom: 1px solid #333; color: #ccc; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; cursor: pointer; }
+.list-item:active { background-color: #2a2a2a; }
+.list-item.active { color: var(--accent); font-weight: bold; }
+
+.profile-row { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #333; }
+.profile-row-name { font-weight: bold; color: var(--text); margin-bottom: 5px; }
+.profile-row-status { font-size: 0.85rem; color: #888; }
+
+.custom-sleep-row { cursor: default; }
+.custom-sleep-row:active { background-color: transparent; }
+.sleep-input-group { display: flex; align-items: center; gap: 10px; }
+.sleep-input { width: 50px; background: #222; color: white; border: 1px solid #444; border-radius: 6px; padding: 5px; text-align: center; font-size: 1rem; outline: none; }
+.sleep-input:focus { border-color: var(--accent); }
+.sleep-set-btn { background: var(--accent); color: var(--bg); font-weight: bold; border-radius: 6px; padding: 6px 15px; font-size: 0.9rem; }
+
+/* ==========================================
+   BRAINROT MODE
+========================================== */
+.games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding-bottom: 20px; }
+.game-card { background-color: var(--card); border-radius: 12px; padding: 20px 15px; text-align: center; cursor: pointer; border: 1px solid #333; transition: transform 0.1s ease, border-color 0.1s ease; display: flex; flex-direction: column; align-items: center; }
+.game-card:active { transform: scale(0.95); border-color: var(--accent); background-color: rgba(187, 134, 252, 0.05); }
+
+.game-icon { font-size: 2.5rem; margin-bottom: 15px; background: #2a2a2a; width: 65px; height: 65px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: inset 0 4px 10px rgba(0,0,0,0.5); }
+.game-title { margin: 0; color: var(--text); font-weight: bold; font-size: 1.05rem; }
