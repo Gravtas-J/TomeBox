@@ -20,7 +20,7 @@ class DownloadManager:
         self.queue = []
         self.active_flags = {}  # Tracks {asin: cancel_boolean}
         self.is_processing = False
-        self.queue_lock = threading.Lock()
+        self.queue_lock = threading.RLock()
         self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
 
     def queue_download(self, asin, title, save_dir, post_action=None):
