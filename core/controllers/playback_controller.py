@@ -4,15 +4,16 @@ import threading
 from core.player import AudioPlayer
 
 class PlaybackController:
-    def __init__(self, logger, on_tick_cb, on_chapter_end_cb, on_error_cb):
+    def __init__(self, logger, on_tick_cb, on_chapter_end_cb, on_error_cb, player_factory=None):
         self.logger = logger
         
         # Callbacks to update the UI
         self.on_tick_cb = on_tick_cb
         self.on_chapter_end_cb = on_chapter_end_cb
         
-        # Core Audio Player
-        self.player = AudioPlayer(
+        # Core Audio Player injection
+        player_cls = player_factory or AudioPlayer
+        self.player = player_cls(
             logger=self.logger,
             on_complete_cb=self._handle_player_complete,
             on_error_cb=on_error_cb
@@ -141,8 +142,10 @@ class PlaybackController:
         # If currently playing, we must restart the FFplay process at the new time
         was_playing = self.is_playing
         if was_playing:
-            self.pause()
+            self.player.stop()
+            self.is_playing = False
             self.is_paused = False
+            self._monitor_active = False
             return "RESTART_PLAYBACK" # Signal UI to call play() again with current flags
             
         return "SUCCESS"
