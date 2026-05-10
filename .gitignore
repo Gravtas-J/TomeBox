@@ -15,7 +15,6 @@ start_tomebox.vbs
 /unit_tests
 *.exe
 migrate_to_sqlite.py
-/tests
 /old
 *.md
 /logs
@@ -25,3 +24,4 @@ migrate_to_sqlite.py
 *.coverage
 tomebox_installer.iss
 filelist.txt
+*.old

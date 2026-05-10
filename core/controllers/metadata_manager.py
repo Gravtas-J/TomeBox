@@ -8,7 +8,7 @@ try:
 except ImportError:
     pass
 from core.utils.process_runner import ProcessRunner
-from core.utils.formatting import format_series_list
+from core.utils.text import format_series_list
 class MetadataManager:
     def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool):
         self.api = api_client

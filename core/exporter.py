@@ -1,6 +1,6 @@
 import csv
 import html
-from core.utils.formatting import format_series_list
+from core.utils.text import format_series_list
 class LibraryExporter:
     @staticmethod
     def _sanitize_csv(value):
