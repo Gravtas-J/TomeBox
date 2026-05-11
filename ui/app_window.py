@@ -2020,21 +2020,50 @@ class AAXManagerApp:
         
         self.sleep_timer_tick()
 
-    def _on_grid_scroll(self, event):
-        if self.current_view_mode != "grid":
-            return
+    def _on_global_scroll(self, event):
+        """A universal scroll handler that intelligently scrolls whatever canvas the mouse is hovering over."""
+        widget = event.widget
+        
+        # Safeguard for older OS/Tkinter versions that pass widget paths as strings
+        if isinstance(widget, str):
+            try:
+                widget = self.root.nametowidget(widget)
+            except Exception:
+                return
 
-        if str(self.grid_canvas) not in str(event.widget):
+        target_canvas = None
+        current = widget
+        
+        # Walk up the widget hierarchy to find a scrollable Canvas
+        while current:
+            # Do NOT hijack scrolling if hovering over native scrollable widgets
+            if isinstance(current, (ttk.Treeview, tk.Text, tk.Listbox)):
+                return
+                
+            if isinstance(current, tk.Canvas):
+                # Ensure we only scroll the main library grid if it is the actively visible view
+                if hasattr(self, 'grid_canvas') and current == self.grid_canvas:
+                    if self.current_view_mode != "grid":
+                        return 
+                target_canvas = current
+                break
+            
+            try:
+                current = current.master
+            except AttributeError:
+                break
+
+        if not target_canvas:
             return
 
         num = getattr(event, 'num', 0)
         delta = getattr(event, 'delta', 0)
 
+        # Standardized directional math for Windows (-120/+120) and macOS (-1/+1)
         if num == 4 or delta > 0:
-            self.grid_canvas.yview_scroll(-1, "units")
-        # Scroll Down
+            target_canvas.yview_scroll(-1, "units")
         elif num == 5 or delta < 0:
-            self.grid_canvas.yview_scroll(1, "units")
+            target_canvas.yview_scroll(1, "units")
 
     def master_play(self, event=None):
         if self.current_view_mode == "list":

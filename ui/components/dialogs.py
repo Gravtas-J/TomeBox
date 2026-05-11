@@ -592,30 +592,6 @@ def open_match_to_audible_window(app, filepath):
     scrollbar = ttk.Scrollbar(results_outer, orient="vertical", command=canvas.yview)
     inner_frame = tk.Frame(canvas, bg=bg_color)
 
-    def _on_mousewheel(event):
-        if hasattr(event, 'delta') and event.delta != 0:
-            direction = -1 if event.delta > 0 else 1
-            canvas.yview_scroll(direction, "units")
-        elif hasattr(event, 'num'):
-            if event.num == 4:
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                canvas.yview_scroll(1, "units")
-
-    def _bind_mouse(event=None):
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        canvas.bind_all("<Button-4>", _on_mousewheel) 
-        canvas.bind_all("<Button-5>", _on_mousewheel) 
-
-    def _unbind_mouse(event=None):
-        canvas.unbind_all("<MouseWheel>")
-        canvas.unbind_all("<Button-4>")
-        canvas.unbind_all("<Button-5>")
-
-    # Only hijack the scroll wheel when the mouse is hovering over the results
-    results_outer.bind("<Enter>", _bind_mouse)
-    results_outer.bind("<Leave>", _unbind_mouse)
-
     inner_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas_win = canvas.create_window((0, 0), window=inner_frame, anchor="nw")
     canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
