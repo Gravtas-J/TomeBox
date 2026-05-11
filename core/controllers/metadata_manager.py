@@ -102,12 +102,13 @@ class MetadataManager:
             # 1. Try Audible (if logged in)
             if getattr(self, 'api', None) and self.api.auth:
                 try:
-                    # Reroute to use the api_client so we catch the new structured errors
                     raw_products = self.api.search_catalog(query, num_results=5)
+                    seen_asins = set()
                     for p in raw_products:
                         # ASIN Parsing Update: Check 'asin', fallback to 'id' if storefront structure changed
                         asin = p.get("asin") or p.get("id")
-                        if asin:
+                        if asin and asin not in seen_asins:
+                            seen_asins.add(asin)
                             p["asin"] = asin
                             p["source"] = "Audible"
                             products.append(p)

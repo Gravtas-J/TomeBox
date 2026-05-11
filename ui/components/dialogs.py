@@ -657,8 +657,13 @@ def open_match_to_audible_window(app, filepath):
             row_frame.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
             # Image Placeholder
-            img_lbl = tk.Label(row_frame, text="Loading...", width=128, height=128, bg="#dddddd")
-            img_lbl.pack(side=tk.LEFT, padx=(0, 10))
+            img_container = tk.Frame(row_frame, width=128, height=128, bg="#dddddd")
+            img_container.pack_propagate(False)
+            img_container.pack(side=tk.LEFT, padx=(0, 10))
+            img_container.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
+
+            img_lbl = tk.Label(img_container, text="Loading...", bg="#dddddd")
+            img_lbl.pack(expand=True, fill="both")
             img_lbl.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
             # Metadata Info
@@ -674,7 +679,6 @@ def open_match_to_audible_window(app, filepath):
             a_lbl.pack(fill="x")
             a_lbl.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
-            
             tk.Label(info_frame, text=f"Source: {source} | ASIN: {asin}", font=("Segoe UI", 8, "italic"), fg=fg_color, bg=bg_color, anchor="w").pack(fill="x")
 
             # 3. Dynamic Thumbnail Fetching
@@ -684,25 +688,27 @@ def open_match_to_audible_window(app, filepath):
                 img_url = images.get("115") or images.get("252") or images.get("500")
 
             if img_url:
-                def load_img(url, lbl):
+                def load_img(url, lbl, current_asin):
                     try:
-                        # Force HTTPS to prevent strict local network blockages
                         if url.startswith("http:"): url = url.replace("http:", "https:")
                         res = requests.get(url, timeout=5)
                         if res.status_code == 200:
                             img = Image.open(io.BytesIO(res.content))
                             img.thumbnail((128, 128)) 
                             photo = ImageTk.PhotoImage(img)
-                            app.scraper_image_cache[url] = photo
+                            app.scraper_image_cache[f"{current_asin}_{url}"] = photo
                             app.root.after(0, lambda: lbl.config(image=photo, text="", bg=bg_color))
                     except Exception as e:
                         app.root.after(0, lambda: lbl.config(text="No Cover"))
 
-                threading.Thread(target=load_img, args=(img_url, img_lbl), daemon=True).start()
+                threading.Thread(target=load_img, args=(img_url, img_lbl, asin), daemon=True).start()
             else:
                 img_lbl.config(text="No Cover")
 
     def do_search():
+        if str(search_btn['state']) == tk.DISABLED:
+            return
+
         t = title_var.get().strip()
         a = author_var.get().strip()
         query = f"{t} {a}".strip()
@@ -712,14 +718,17 @@ def open_match_to_audible_window(app, filepath):
             return
 
         status_var.set("Searching...")
+        search_btn.config(state=tk.DISABLED)
         win.update_idletasks()
 
         def capture_results(filepath=None, products=None, **kwargs):
+            app.root.after(0, lambda: search_btn.config(state=tk.NORMAL))
             app.root.after(0, lambda: populate_results(products))
             app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
 
         def capture_error(error_msg=None, **kwargs):
+            app.root.after(0, lambda: search_btn.config(state=tk.NORMAL))
             app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
             app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
