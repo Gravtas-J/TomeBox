@@ -286,6 +286,7 @@ def open_sleep_menu(app):
 
     def on_focus_out(event):
         if app.sleep_menu_popup.focus_get() is None or not str(app.sleep_menu_popup.focus_get()).startswith(str(app.sleep_menu_popup)):
+            app.sleep_menu_popup.withdraw()
             app.sleep_menu_popup.destroy()
             
     app.sleep_menu_popup.bind("<FocusOut>", on_focus_out)
@@ -399,7 +400,7 @@ def show_achievement_toast(app, title, desc):
     y = app.root.winfo_screenheight() - h - 60
     toast.geometry(f"+{x}+{y}")
     
-    app.root.after(5000, toast.destroy)
+    app.root.after(5000, lambda: (toast.withdraw(), toast.destroy()))
 
 def open_pairing_window(app):
     import socket
@@ -852,6 +853,7 @@ def open_cover_modal(app, asin, title, explicit_path=None):
             if getattr(app, "_active_cover_modal", None) is modal:
                 app._active_cover_modal = None
             try:
+                modal.withdraw()
                 modal.destroy()
             except tk.TclError:
                 pass
