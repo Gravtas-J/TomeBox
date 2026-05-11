@@ -256,6 +256,7 @@ class MetadataManager:
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
                 # 4. Embed into file using FFmpeg
+                # 4. Embed into file using FFmpeg
                 if filepath.endswith(('.m4b', '.mp3')):
                     temp_out = filepath + ".tmp.m4b"
                     
@@ -265,11 +266,14 @@ class MetadataManager:
                     
                     # Only map new cover if we applied a new cover and it exists
                     if fields_to_apply.get("cover", True) and os.path.exists(cover_path):
-                        cmd.extend(["-i", cover_path, "-map", "0", "-map", "1", "-c", "copy", "-disposition:v", "attached_pic"])
+                        # Map audio from file 0 (0:a), map cover from file 1 (1:v)
+                        cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c", "copy", "-disposition:v", "attached_pic"])
                     else:
-                        cmd.extend(["-map", "0", "-c", "copy"])
+                        # Map audio from file 0, and cover from file 0 if it has one (0:v?)
+                        cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
                         
                     cmd.extend([
+                        "-map_chapters", "0", # Explicitly retain chapter markers
                         "-metadata", f"title={title}",
                         "-metadata", f"artist={authors}"
                     ])
@@ -279,9 +283,26 @@ class MetadataManager:
                         
                     cmd.append(temp_out)
                     
-                    res = ProcessRunner.run_blocking(cmd)
-                    if res.returncode == 0 and os.path.exists(temp_out):
-                        os.replace(temp_out, filepath)
+                    try:
+                        res = ProcessRunner.run_blocking(cmd, capture_output=True)
+                        
+                        if res.returncode == 0 and os.path.exists(temp_out):
+                            try:
+                                os.replace(temp_out, filepath)
+                            except OSError as e:
+                                if hasattr(self, 'logger'): self.logger(f"Apply Metadata OS Error (File locked?): {e}")
+                                raise Exception(f"Could not save file. Ensure it is not actively playing.")
+                        else:
+                            err_msg = res.stderr if hasattr(res, 'stderr') and res.stderr else "Unknown FFmpeg Error"
+                            raise Exception(f"FFmpeg tagging failed with code {res.returncode}.\nDetails: {err_msg}")
+                            
+                    finally:
+                        # Guarantee the temp file is destroyed whether it succeeded, failed, or crashed
+                        if os.path.exists(temp_out):
+                            try:
+                                os.remove(temp_out)
+                            except OSError:
+                                pass
 
                 if hasattr(self, 'on_apply_complete') and self.on_apply_complete:
                     self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=title)
