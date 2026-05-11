@@ -49,35 +49,41 @@ def find_key_iv_in_voucher(d):
     return None, None
 
 class AudibleClient:
-    def __init__(self):
+    def __init__(self, logger=None):
         self.auth = None
-
+        self.logger = logger or print
     def _request_with_backoff(self, request_func, *args, max_retries=3, base_delay=2, **kwargs):
         """Executes an API call with exponential backoff for 429 errors."""
         for attempt in range(max_retries):
             try:
                 return request_func(*args, **kwargs)
-            except HTTPStatusError as e:
-                status = e.response.status_code
-                if status == 429:
-                    if attempt == max_retries - 1:
-                        raise RateLimitError("Audible API rate limit reached (HTTP 429).")
-                    time.sleep(base_delay * (2 ** attempt))
-                elif status in (403, 500, 502, 503, 504):
-                    raise APIUnavailableError(f"Audible API unavailable (HTTP {status}).")
-                else:
-                    raise e
             except Exception as e:
-                # Fallback for RequestError or non-HTTP errors
+                # Safely extract status code regardless of the HTTP library used
+                status_code = getattr(getattr(e, 'response', None), 'status_code', None)
                 err_str = str(e).lower()
-                if "429" in err_str or "too many requests" in err_str:
+                
+                # 1. Terminal Failure: 401 Unauthorized
+                if status_code == 401:
+                    if hasattr(self, 'logger') and self.logger and self.logger != print:
+                        self.logger("Terminal Error: 401 Unauthorized. Session expired.")
+                    raise APIUnavailableError("Session expired. Please log in again.") from e
+                
+                # 2. Recoverable Failure: 429 Too Many Requests
+                if status_code == 429 or "429" in err_str or "too many requests" in err_str:
                     if attempt == max_retries - 1:
                         raise RateLimitError("Audible API rate limit reached (HTTP 429).")
+                    
+                    if hasattr(self, 'logger') and self.logger and self.logger != print:
+                        self.logger(f"Rate limited. Retrying in {base_delay * (2 ** attempt)}s...")
                     time.sleep(base_delay * (2 ** attempt))
-                elif any(code in err_str for code in ["403", "500", "502", "503", "504"]):
-                    raise APIUnavailableError(f"Audible API unavailable: {e}")
-                else:
-                    raise e
+                    continue
+                
+                # 3. Terminal Failure: 500-level Server Errors
+                if status_code in (403, 500, 502, 503, 504) or any(code in err_str for code in ["403", "500", "502", "503", "504"]):
+                    raise APIUnavailableError(f"Audible API unavailable (HTTP {status_code or 'Error'}).") from e
+                
+                # 4. Unhandled Exceptions
+                raise e
 
     def is_authenticated(self):
         return self.auth is not None

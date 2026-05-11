@@ -5,7 +5,7 @@ from core.downloader import AudiobookDownloader
 from core.utils.wake import keep
 from core.utils.process_runner import ProcessRunner
 class DownloadManager:
-    def __init__(self, api_client, logger, library_manager, callbacks, thread_pool):
+    def __init__(self, api_client, logger, library_manager, callbacks, thread_pool, start_workers=True):
         self.thread_pool = thread_pool
         self.logger = logger
         self.library_manager = library_manager
@@ -23,10 +23,10 @@ class DownloadManager:
         self.queue_lock = threading.RLock()
         self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
 
+        self.start_workers = start_workers
+
     def queue_download(self, asin, title, save_dir, post_action=None):
-        """Adds a single item to the queue and starts the worker if idle."""
         with self.queue_lock:
-            # Prevent duplicate queuing
             if asin in self.active_flags and not self.active_flags[asin]:
                 return
                 
@@ -38,12 +38,12 @@ class DownloadManager:
             })
             self.active_flags[asin] = False
 
-            if not self.is_processing:
+            # Gate the thread submission
+            if not self.is_processing and self.start_workers:
                 self.is_processing = True
                 self.thread_pool.submit(self._process_queue_worker)
 
     def queue_batch(self, items, save_dir):
-        """Adds multiple items to the queue at once."""
         with self.queue_lock:
             for item in items:
                 asin = item.get("asin")
@@ -60,7 +60,7 @@ class DownloadManager:
                 })
                 self.active_flags[asin] = False
                 
-            if not self.is_processing:
+            if not self.is_processing and self.start_workers:
                 self.is_processing = True
                 self.thread_pool.submit(self._process_queue_worker)
 

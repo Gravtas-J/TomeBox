@@ -10,12 +10,13 @@ except ImportError:
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list
 class MetadataManager:
-    def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool):
+    def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool, start_workers=True):
         self.api = api_client
         self.library_manager = library_manager
         self.logger = logger
         self.covers_dir = covers_dir
         self.thread_pool = thread_pool
+        self.start_workers = start_workers  # Store the flag
         
         # Callbacks to update the UI
         self.on_search_complete = callbacks.get("on_search_complete")
@@ -132,8 +133,9 @@ class MetadataManager:
 
             if hasattr(self, 'on_search_complete') and self.on_search_complete:
                 self.on_search_complete(filepath, products)
-                
-        self.thread_pool.submit(worker, task_type="api")
+            pass
+        if self.start_workers:
+            self.thread_pool.submit(worker, task_type="api")
 
     def apply_scraped_metadata(self, filepath, selected_asin, fields_to_apply=None):
         """Fetches the final cover/details from the chosen source and embeds it additively."""
@@ -275,8 +277,9 @@ class MetadataManager:
                 if hasattr(self, 'logger'): self.logger(f"Apply Metadata Error: {e}")
                 if hasattr(self, 'on_error') and self.on_error:
                     self.on_error("Failed to fetch and apply metadata. Check connection.")
-
-        self.thread_pool.submit(worker, task_type="api")
+            pass
+        if self.start_workers:
+            self.thread_pool.submit(worker, task_type="api")
 
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""
@@ -409,8 +412,9 @@ class MetadataManager:
                     self.on_display_ready(filepath, cover_path, authors, "")
                 else:
                     self.on_display_ready(filepath, None, authors, "No Cover Art Found")
-
-        self.thread_pool.submit(worker, task_type="api")
+            pass
+        if self.start_workers:
+            self.thread_pool.submit(worker, task_type="api")
 
     def sync_missing_covers(self, on_complete_cb=None):
         """Background worker to download missing covers for cloud items."""

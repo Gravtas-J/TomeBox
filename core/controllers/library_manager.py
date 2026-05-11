@@ -14,7 +14,7 @@ from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list, normalize_title, find_matching_cloud_item
 
 class LibraryManager:
-    def __init__(self, db_manager, api_client, base_dir):
+    def __init__(self, db_manager, api_client, base_dir, start_workers=True):
         self.db = db_manager
         self.api = api_client
         self.base_dir = base_dir
@@ -22,7 +22,6 @@ class LibraryManager:
         self.cancel_requested = False
         self.current_status = ""
 
-        # Import Queue Setup
         self.import_queue = queue.Queue()
         self._is_importing = False
         self.on_queue_empty_cb = None
@@ -30,7 +29,9 @@ class LibraryManager:
         self.active_task_id = None
         self.canceled_tasks = set()
 
-        threading.Thread(target=self._import_worker_loop, daemon=True).start()
+        # Gate the background worker
+        if start_workers:
+            threading.Thread(target=self._import_worker_loop, daemon=True).start()
 
         # Core State
         self.local_library = {}
