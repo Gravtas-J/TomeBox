@@ -549,6 +549,7 @@ def open_match_to_audible_window(app, filepath):
 
     style = ttk.Style()
     bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    fg_color = style.lookup("TLabel", "foreground") or "#000000"
     win.configure(bg=bg_color)
 
     main_frame = ttk.Frame(win, padding=15)
@@ -664,15 +665,16 @@ def open_match_to_audible_window(app, filepath):
             info_frame.pack(side=tk.LEFT, fill="both", expand=True)
             info_frame.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
-            t_lbl = tk.Label(info_frame, text=title, font=("Segoe UI", 10, "bold"), bg=bg_color, anchor="w", justify="left", wraplength=450)
+            t_lbl = tk.Label(info_frame, text=title, font=("Segoe UI", 10, "bold"), bg=bg_color, fg=fg_color, anchor="w", justify="left", wraplength=450)
             t_lbl.pack(fill="x")
             t_lbl.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
-            a_lbl = tk.Label(info_frame, text=authors, font=("Segoe UI", 9), bg=bg_color, anchor="w")
+            a_lbl = tk.Label(info_frame, text=authors, font=("Segoe UI", 9), bg=bg_color, fg=fg_color, anchor="w")
             a_lbl.pack(fill="x")
             a_lbl.bind("<Button-1>", lambda e, a=asin, rf=row_frame: select_item(a, rf))
 
-            tk.Label(info_frame, text=f"Source: {source} | ASIN: {asin}", font=("Segoe UI", 8, "italic"), fg="#666666", bg=bg_color, anchor="w").pack(fill="x")
+            
+            tk.Label(info_frame, text=f"Source: {source} | ASIN: {asin}", font=("Segoe UI", 8, "italic"), fg=fg_color, bg=bg_color, anchor="w").pack(fill="x")
 
             # 3. Dynamic Thumbnail Fetching
             img_url = product.get("cover_url")
@@ -879,12 +881,12 @@ def open_device_management_window(app):
 
     app.device_win = tk.Toplevel(app.root)
     app.device_win.title("Manage Paired Devices")
-    # ---> FIX: Increased height from 350 to 400 to ensure buttons breathe
     app.device_win.geometry("500x400")
     app.device_win.transient(app.root)
 
     style = ttk.Style()
     bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    
     app.device_win.configure(bg=bg_color)
 
     main_frame = ttk.Frame(app.device_win, padding=10)
