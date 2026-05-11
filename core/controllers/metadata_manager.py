@@ -215,14 +215,24 @@ class MetadataManager:
                     if api_authors and fields_to_apply.get("author", True):
                         authors = api_authors
                         
-                    # --- IMPROVED SERIES PARSING ---
+                    
                     raw_series = product.get("series", [])
                     if raw_series and fields_to_apply.get("series", True):
-                        formatted = format_series_list(raw_series)
-                        if formatted:
-                            series = formatted
+                        series_parts = []
+                        for s in raw_series:
+                            s_title = s.get("title", "").strip()
+                            s_seq = str(s.get("sequence", "")).strip()
                             
-                    # --- IMPROVED DURATION PARSING ---
+                            if s_title:
+                                if s_seq and s_seq != "None":
+                                    series_parts.append(f"{s_title}, Book {s_seq}")
+                                else:
+                                    series_parts.append(s_title)
+                                    
+                        if series_parts:
+                            series = " / ".join(series_parts)
+                            
+                    
                     duration_min = product.get("runtime_length_min")
                     if duration_min:
                         local_data["duration_min"] = duration_min
@@ -256,7 +266,6 @@ class MetadataManager:
                 self.library_manager.local_library[filepath] = local_data
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-                # 4. Embed into file using FFmpeg
                 # 4. Embed into file using FFmpeg
                 if filepath.endswith(('.m4b', '.mp3')):
                     temp_out = filepath + ".tmp.m4b"
