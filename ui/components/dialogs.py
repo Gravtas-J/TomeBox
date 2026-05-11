@@ -735,22 +735,19 @@ def open_match_to_audible_window(app, filepath):
         status_var.set("Searching...")
         win.update_idletasks()
 
-        # Capture callbacks safely so we don't break the background manager
-        original_search_complete = app.metadata_manager.on_search_complete
-        original_error = app.metadata_manager.on_error
-
-        def capture_results(fp, products):
+        def capture_results(filepath=None, products=None, **kwargs):
             app.root.after(0, lambda: populate_results(products))
-            app.metadata_manager.on_search_complete = original_search_complete
-            app.metadata_manager.on_error = original_error
+            app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
 
-        def capture_error(msg):
-            app.root.after(0, lambda: status_var.set(f"Error: {msg}"))
-            app.metadata_manager.on_search_complete = original_search_complete
-            app.metadata_manager.on_error = original_error
+        def capture_error(error_msg=None, **kwargs):
+            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
+            app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
 
-        app.metadata_manager.on_search_complete = capture_results
-        app.metadata_manager.on_error = capture_error
+        app.metadata_manager.event_bus.subscribe("metadata.search_complete", capture_results)
+        app.metadata_manager.event_bus.subscribe("metadata.error", capture_error)
+        
         app.metadata_manager.search_catalog(filepath, query)
 
     def do_apply():
@@ -766,23 +763,21 @@ def open_match_to_audible_window(app, filepath):
         apply_btn.config(state=tk.DISABLED)
         win.update_idletasks()
 
-        original_apply = app.metadata_manager.on_apply_complete
-        original_error = app.metadata_manager.on_error
-
-        def on_done(fp, new_title):
+        def on_done(filepath=None, title=None, **kwargs):
             app.root.after(0, lambda: app.refresh_library_ui())
             app.root.after(0, win.destroy)
-            app.metadata_manager.on_apply_complete = original_apply
-            app.metadata_manager.on_error = original_error
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
-        def on_error(msg):
-            app.root.after(0, lambda: status_var.set(f"Error: {msg}"))
+        def on_error(error_msg=None, **kwargs):
+            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
             apply_btn.config(state=tk.NORMAL)
-            app.metadata_manager.on_apply_complete = original_apply
-            app.metadata_manager.on_error = original_error
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
-        app.metadata_manager.on_apply_complete = on_done
-        app.metadata_manager.on_error = on_error
+        app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
+        app.metadata_manager.event_bus.subscribe("metadata.error", on_error)
+        
         fields = {
             "title": apply_title_var.get(),
             "author": apply_author_var.get(),

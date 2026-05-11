@@ -9,8 +9,9 @@ except ImportError:
     pass
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list
+from core.events import default_bus
 class MetadataManager:
-    def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool, start_workers=True):
+    def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool, start_workers=True, event_bus=None):
         self.api = api_client
         self.library_manager = library_manager
         self.logger = logger
@@ -23,6 +24,18 @@ class MetadataManager:
         self.on_apply_complete = callbacks.get("on_apply_complete")
         self.on_display_ready = callbacks.get("on_display_ready")
         self.on_error = callbacks.get("on_error")
+
+        self.event_bus = event_bus or default_bus
+
+        callbacks = callbacks or {}
+        if callbacks.get("on_search_complete"):
+            self.event_bus.subscribe("metadata.search_complete", lambda **kw: callbacks["on_search_complete"](kw.get("filepath"), kw.get("products")))
+        if callbacks.get("on_apply_complete"):
+            self.event_bus.subscribe("metadata.apply_complete", lambda **kw: callbacks["on_apply_complete"](kw.get("filepath"), kw.get("title")))
+        if callbacks.get("on_display_ready"):
+            self.event_bus.subscribe("metadata.display_ready", lambda **kw: callbacks["on_display_ready"](kw.get("filepath"), kw.get("cover_path"), kw.get("authors"), kw.get("msg")))
+        if callbacks.get("on_error"):
+            self.event_bus.subscribe("metadata.error", lambda **kw: callbacks["on_error"](kw.get("error_msg")))
 
     def extract_embedded_cover(self, filepath, output_path):
         """Extracts embedded cover art from an audio file using FFmpeg."""
@@ -103,8 +116,8 @@ class MetadataManager:
                     err_type = type(e).__name__
                     if hasattr(self, 'logger'): self.logger(f"Audible search failed ({err_type}): {e}")
                     
-                    if "RateLimitError" in err_type and hasattr(self, 'on_error'):
-                        self.on_error("Audible API rate limit reached. Falling back to alternative sources.")
+                    if "RateLimitError" in err_type:
+                        self.event_bus.publish("metadata.error", error_msg="Audible API rate limit reached. Falling back to alternative sources.")
 
             # 2. Strict Fallback: Try Google Books if Audible failed or returned 0 results
             if audible_failed or not products:
@@ -132,7 +145,7 @@ class MetadataManager:
                     if hasattr(self, 'logger'): self.logger(f"Local tag extraction failed: {e}")
 
             if hasattr(self, 'on_search_complete') and self.on_search_complete:
-                self.on_search_complete(filepath, products)
+                self.event_bus.publish("metadata.search_complete", filepath=filepath, products=products)
             pass
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")
@@ -271,12 +284,11 @@ class MetadataManager:
                         os.replace(temp_out, filepath)
 
                 if hasattr(self, 'on_apply_complete') and self.on_apply_complete:
-                    self.on_apply_complete(filepath, title)
+                    self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=title)
 
             except Exception as e:
                 if hasattr(self, 'logger'): self.logger(f"Apply Metadata Error: {e}")
-                if hasattr(self, 'on_error') and self.on_error:
-                    self.on_error("Failed to fetch and apply metadata. Check connection.")
+                self.event_bus.publish("metadata.error", error_msg="Failed to fetch and apply metadata. Check connection.")
             pass
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")
@@ -407,11 +419,10 @@ class MetadataManager:
                         if hasattr(self, 'logger'): self.logger(f"Google Books cover download failed: {e}")
 
             # 5. Push to UI
-            if hasattr(self, 'on_display_ready') and self.on_display_ready:
-                if cover_path:
-                    self.on_display_ready(filepath, cover_path, authors, "")
-                else:
-                    self.on_display_ready(filepath, None, authors, "No Cover Art Found")
+            if cover_path:
+                self.event_bus.publish("metadata.display_ready", filepath=filepath, cover_path=cover_path, authors=authors, msg="")
+            else:
+                self.event_bus.publish("metadata.display_ready", filepath=filepath, cover_path=None, authors=authors, msg="No Cover Art Found")
             pass
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")

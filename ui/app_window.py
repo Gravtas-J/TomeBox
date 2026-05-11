@@ -514,10 +514,8 @@ class AAXManagerApp:
         """Called when the Audible search returns results."""
         def update():
             self.reset_ui_if_idle()
-            if not products:
-                messagebox.showinfo("No Results", "No matches found for that title.")
-                return
-            self.show_scrape_results(filepath, products)
+            # We no longer call a global UI method here because 
+            # the unified Match dialog in dialogs.py handles its own search results!
         self.root.after(0, update)
 
     def _on_scrape_apply_complete(self, filepath, title):

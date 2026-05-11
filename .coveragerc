@@ -3,4 +3,3 @@ source = core, api, server
 omit =
     tests/*
     conftest.py
-    server/web_app.py

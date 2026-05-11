@@ -3,9 +3,9 @@ import threading
 import traceback
 import shutil
 from core.utils.wake import keep
-
+from core.events import default_bus
 class ConversionManager:
-    def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb, thread_pool):
+    def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb, thread_pool, event_bus=None):
         self.thread_pool = thread_pool
         self.converter = converter
         self.library_manager = library_manager
@@ -19,6 +19,20 @@ class ConversionManager:
         self.on_complete = callbacks.get("on_complete")
         self.on_error = callbacks.get("on_error")
         self.on_refresh_required = callbacks.get("on_refresh_required")
+
+        self.event_bus = event_bus or default_bus
+
+        callbacks = callbacks or {}
+        if callbacks.get("on_status"):
+            self.event_bus.subscribe("conversion.status", lambda **kw: callbacks["on_status"](kw.get("status")))
+        if callbacks.get("on_progress"):
+            self.event_bus.subscribe("conversion.progress", lambda **kw: callbacks["on_progress"](kw.get("percent")))
+        if callbacks.get("on_complete"):
+            self.event_bus.subscribe("conversion.complete", lambda **kw: callbacks["on_complete"](kw.get("message")))
+        if callbacks.get("on_error"):
+            self.event_bus.subscribe("conversion.error", lambda **kw: callbacks["on_error"](kw.get("filepath"), kw.get("action"), kw.get("error_msg")))
+        if callbacks.get("on_refresh_required"):
+            self.event_bus.subscribe("conversion.refresh_required", lambda **kw: callbacks["on_refresh_required"]())
 
     def convert_single(self, input_path, output_path, chapters):
         def worker():
@@ -62,20 +76,15 @@ class ConversionManager:
                 
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
                 
-                if self.on_complete:
-                    self.on_complete("File converted and original deleted.")
-                if self.on_refresh_required:
-                    self.on_refresh_required()
+                self.event_bus.publish("conversion.complete", message="File converted and original deleted.")
+                self.event_bus.publish("conversion.refresh_required")
 
             except Exception as e:
                 self.logger(f"Conversion Error: {e}")
-                if self.on_error:
-                    self.on_error(input_path, "Convert", str(e))
+                self.event_bus.publish("conversion.error", filepath=input_path, action="Convert", error_msg=str(e))
             finally:
-                if self.on_status:
-                    self.on_status(f"Ready: {os.path.basename(input_path)}")
-                if self.on_progress:
-                    self.on_progress(0)
+                self.event_bus.publish("conversion.status", status=f"Ready: {os.path.basename(input_path)}")
+                self.event_bus.publish("conversion.progress", percent=0)
 
         self.thread_pool.submit(worker)
 
@@ -98,18 +107,14 @@ class ConversionManager:
                 )
                 
 
-                if self.on_complete:
-                    self.on_complete(f"Audiobook split into {len(chapters)} files.\n\nSaved to:\n{target_dir}\n\nOriginal file preserved.")
+                self.event_bus.publish("conversion.complete", message=f"Audiobook split into {len(chapters)} files.\n\nSaved to:\n{target_dir}\n\nOriginal file preserved.")
                 
             except Exception as e:
                 self.logger(f"Split Error: {e}")
-                if self.on_error:
-                    self.on_error(input_path, "Split", str(e))
+                self.event_bus.publish("conversion.error", filepath=input_path, action="Split", error_msg=str(e))
             finally:
-                if self.on_status:
-                    self.on_status(f"Ready: {os.path.basename(input_path)}")
-                if self.on_progress:
-                    self.on_progress(0)
+                self.event_bus.publish("conversion.status", status=f"Ready: {os.path.basename(input_path)}")
+                self.event_bus.publish("conversion.progress", percent=0)
 
         self.thread_pool.submit(worker)
 
@@ -127,8 +132,7 @@ class ConversionManager:
                         title = data.get("title", "Unknown")
                         asin = data.get("asin", "")
                         
-                        if self.on_status:
-                            self.on_status(f"Converting {idx}/{total}: {title}")
+                        self.event_bus.publish("conversion.status", status=f"Converting {idx}/{total}: {title}")
                         
                         base_name, _ = os.path.splitext(filepath)
                         out_path = f"{base_name}.m4b"
@@ -160,6 +164,7 @@ class ConversionManager:
                                 del self.library_manager.local_library[filepath]
                                 
                             self.library_manager.db.save_local_db(self.library_manager.local_library)
+                            self.event_bus.publish("conversion.refresh_required")
                             
                             if self.on_refresh_required:
                                 self.on_refresh_required()
@@ -167,18 +172,15 @@ class ConversionManager:
                         except Exception as e:
                             self.logger(f"Batch Convert Exception on {title}: {e}")
                             error_count += 1
-                            if self.on_error:
-                                self.on_error(filepath, "Batch Convert", str(e))
+                            self.event_bus.publish("conversion.error", filepath=filepath, action="Batch Convert", error_msg=str(e))
                             
             finally:
-                if self.on_status:
-                    self.on_status("Idle")
-                if self.on_progress:
-                    self.on_progress(0)
-                if self.on_complete:
-                    if error_count > 0:
-                        self.on_complete(f"Batch conversion finished with {error_count} error(s).\n\nCheck the Errors window for details.")
-                    else:
-                        self.on_complete("Batch conversion complete!")
+                self.event_bus.publish("conversion.status", status="Idle")
+                self.event_bus.publish("conversion.progress", percent=0)
+                
+                if error_count > 0:
+                    self.event_bus.publish("conversion.complete", message=f"Batch conversion finished with {error_count} error(s).\n\nCheck the Errors window for details.")
+                else:
+                    self.event_bus.publish("conversion.complete", message="Batch conversion complete!")
 
         self.thread_pool.submit(worker)
