@@ -14,7 +14,7 @@ TomeBox offers two installation paths depending on your needs.
 
 The fastest way to get started — no Python, no terminals, no setup.
 
-1. **Download** the latest `TomeBox-Windows.zip` from the [Releases page](https://github.com/yourusername/tomebox/releases).
+1. **Download** the latest `TomeBox-Windows.zip` from the [Releases page](https://github.com/Gravtas-J/tomebox/releases).
 2. **Extract** the entire folder anywhere you like (Documents, Desktop, Program Files — your choice).
 3. **Run** `TomeBox.exe` to launch the application.
 4. *(Optional)* Run `create_shortcut.bat` to add a desktop shortcut for quick access.
@@ -197,7 +197,7 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 
 **Windows SmartScreen blocks the EXE:** Click "More info" then "Run anyway". This happens with all unsigned indie software.
 
-**Found a bug?** Please report it on [GitHub Issues](https://github.com/yourusername/tomebox/issues) or in [r/TomeBox](https://www.reddit.com/r/TomeBox/).
+**Found a bug?** Please report it on [GitHub Issues](https://github.com/Gravtas-J/tomebox/issues) or in [r/TomeBox](https://www.reddit.com/r/TomeBox/).
 
 ## Roadmap
 
