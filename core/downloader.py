@@ -1,6 +1,9 @@
 import os
 import urllib.request
 
+
+class DownloadCanceledError(Exception):
+    pass
 class AudiobookDownloader:
     def __init__(self, api_client, logger):
         self.api = api_client
@@ -25,7 +28,6 @@ class AudiobookDownloader:
         # 3. Stream the file
         headers = {"User-Agent": "Audible/6.6.1 (iPhone; iOS 15.5; Scale/3.00)"}
         req = urllib.request.Request(download_url, headers=headers)
-
         try:
             with urllib.request.urlopen(req, timeout=15) as response, open(temp_filepath, 'wb') as out_file:
                 total_size = int(response.headers.get('content-length', 0))
@@ -36,7 +38,7 @@ class AudiobookDownloader:
                 while True:
                     # Check if the user hit the cancel button in the UI
                     if check_cancel_callback and check_cancel_callback():
-                        raise Exception("Download canceled by user.")
+                        raise DownloadCanceledError() # <--- Updated to the typed exception here
 
                     chunk = response.read(32768)
                     if not chunk: 

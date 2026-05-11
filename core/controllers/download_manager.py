@@ -4,6 +4,7 @@ import traceback
 from core.downloader import AudiobookDownloader
 from core.utils.wake import keep
 from core.utils.process_runner import ProcessRunner
+from core.downloader import DownloadCanceledError
 class DownloadManager:
     def __init__(self, api_client, logger, library_manager, callbacks, thread_pool, start_workers=True):
         self.thread_pool = thread_pool
@@ -112,13 +113,24 @@ class DownloadManager:
                         self.on_status_change(asin, "Starting...", is_global=False)
                     if self.on_progress:
                         self.on_progress(asin, 0, is_global=True)
-
                     try:
                         self._execute_download(asin, title, save_dir, post_action)
+                    except DownloadCanceledError:
+                        # Catch the intentional cancellation
+                        if self.on_status_change:
+                            self.on_status_change(asin, "Canceled", is_global=False)
+                        self.logger(f"Download for {asin} gracefully canceled.")
                     except Exception as e:
+                        # Catch actual network/disk failures
                         self.logger(f"Download failed for {title}: {e}")
                         if self.on_status_change:
                             self.on_status_change(asin, "Failed", is_global=False)
+                    # try:
+                    #     self._execute_download(asin, title, save_dir, post_action)
+                    # except Exception as e:
+                    #     self.logger(f"Download failed for {title}: {e}")
+                    #     if self.on_status_change:
+                    #         self.on_status_change(asin, "Failed", is_global=False)
 
         finally:
             self.is_processing = False
@@ -126,6 +138,8 @@ class DownloadManager:
             
             if self.on_batch_finish:
                 self.on_batch_finish()
+
+        
 
     def _execute_download(self, asin, title, save_dir, post_action):
         def progress_cb(percent_float):

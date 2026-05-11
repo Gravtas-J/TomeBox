@@ -77,3 +77,13 @@ def test_exception_logging():
     assert "Simulated thread crash" in log_msg
     
     pool.shutdown()
+
+def test_exception_logging_no_logger_fallback():
+    """Verifies a thread crash doesn't break the pool if no logger was provided."""
+    pool = AppThreadPool(max_workers=1, logger=None)
+    future = pool.submit(lambda: 1 / 0) # Force ZeroDivisionError
+    
+    import time
+    time.sleep(0.05) 
+    assert isinstance(future.exception(), ZeroDivisionError)
+    pool.shutdown()
