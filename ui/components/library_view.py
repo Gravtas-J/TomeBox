@@ -95,8 +95,8 @@ def setup_library_view(app, parent):
     
     app.search_var = tk.StringVar()
     app.search_var.trace_add("write", lambda *args: app.refresh_library_ui()) 
-    search_entry = ttk.Entry(filter_frame, textvariable=app.search_var, width=35)
-    search_entry.pack(side=tk.LEFT, padx=(0, 20))
+    app.search_entry = ttk.Entry(filter_frame, textvariable=app.search_var, width=35)
+    app.search_entry.pack(side=tk.LEFT, padx=(0, 20))
 
     ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
     

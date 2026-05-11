@@ -282,6 +282,12 @@ class AAXManagerApp:
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
+
+        def _focus_search():
+            self.search_entry.focus_force() 
+            self.search_entry.icursor(tk.END) 
+        self.root.after(200, _focus_search)
+
         self.setup_tray_icon()
         self.root.after(500, self.auto_load_auth)
         self.root.after(900000, self.run_background_sync)

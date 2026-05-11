@@ -79,7 +79,7 @@ def apply_theme(app, palette_name):
             
     repaint_combobox_dropdowns(app.root)
 
-    style.configure("TEntry", fieldbackground=colors["entry"], foreground=colors["fg"])
+    style.configure("TEntry", fieldbackground=colors["entry"], foreground=colors["fg"], insertcolor=colors["fg"])
     
     style.configure("Treeview", background=colors["entry"], foreground=colors["fg"], fieldbackground=colors["entry"], bordercolor=colors["border"])
     style.map("Treeview", background=[("selected", colors["select"])], foreground=[("selected", "#ffffff")])
