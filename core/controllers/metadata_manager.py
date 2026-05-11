@@ -324,6 +324,91 @@ class MetadataManager:
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")
 
+    def apply_manual_metadata(self, filepath, new_data, embed_to_file=False, new_cover_path=None):
+        """Applies manual user edits to the database, processes custom covers, and optionally embeds via FFmpeg."""
+        def worker():
+            import os
+            from core.utils.process_runner import ProcessRunner
+
+            local_data = self.library_manager.local_library.get(filepath, {})
+            old_asin = local_data.get("asin")
+            new_asin = new_data.get("asin")
+
+            dest_cover = os.path.join(self.covers_dir, f"{new_asin}.jpg")
+
+            if new_cover_path and os.path.exists(new_cover_path):
+                from PIL import Image
+                try:
+                    img = Image.open(new_cover_path)
+                    # Strip alpha channels/transparency before saving as JPEG
+                    if img.mode in ("RGBA", "P"): 
+                        img = img.convert("RGB")
+                    img.save(dest_cover, "JPEG")
+                except Exception as e:
+                    if hasattr(self, 'logger'): self.logger(f"Error saving custom cover: {e}")
+            
+            # Or safely rename the existing cover art file if only the ASIN changed
+            elif old_asin and new_asin and old_asin != new_asin:
+                old_cover = os.path.join(self.covers_dir, f"{old_asin}.jpg")
+                if os.path.exists(old_cover) and not os.path.exists(dest_cover):
+                    try: os.rename(old_cover, dest_cover)
+                    except OSError: pass
+
+            # Update DB Dictionary
+            local_data["title"] = new_data.get("title", "")
+            local_data["authors"] = new_data.get("authors", "")
+            local_data["series"] = new_data.get("series", "")
+            local_data["asin"] = new_asin
+
+            self.library_manager.local_library[filepath] = local_data
+            self.library_manager.db.save_local_db(self.library_manager.local_library)
+
+            # Optional FFmpeg Embed
+            if embed_to_file and filepath.endswith(('.m4b', '.mp3')):
+                temp_out = filepath + ".tmp.m4b"
+
+                cmd = ["ffmpeg", "-y", "-i", filepath]
+
+                if os.path.exists(dest_cover):
+                    cmd.extend(["-i", dest_cover, "-map", "0:a", "-map", "1:v", "-c", "copy", "-disposition:v", "attached_pic"])
+                else:
+                    cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
+
+                cmd.extend([
+                    "-map_chapters", "0",
+                    "-metadata", f"title={local_data['title']}",
+                    "-metadata", f"artist={local_data['authors']}"
+                ])
+
+                if local_data['series']:
+                    cmd.extend(["-metadata", f"show={local_data['series']}", "-metadata", f"series={local_data['series']}"])
+
+                cmd.append(temp_out)
+
+                try:
+                    res = ProcessRunner.run_blocking(cmd, capture_output=True)
+                    if res.returncode == 0 and os.path.exists(temp_out):
+                        try:
+                            os.replace(temp_out, filepath)
+                        except OSError as e:
+                            if hasattr(self, 'logger'): self.logger(f"Manual Apply OS Error: {e}")
+                            raise Exception("Could not save file. Ensure it is not actively playing.")
+                    else:
+                        err_msg = res.stderr if hasattr(res, 'stderr') and res.stderr else "Unknown Error"
+                        raise Exception(f"FFmpeg failed with code {res.returncode}.\nDetails: {err_msg}")
+                except Exception as e:
+                    if hasattr(self, 'logger'): self.logger(f"Manual Apply Error: {e}")
+                    self.event_bus.publish("metadata.error", error_msg=str(e))
+                finally:
+                    if os.path.exists(temp_out):
+                        try: os.remove(temp_out)
+                        except OSError: pass
+
+            self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=local_data['title'])
+
+        if self.start_workers:
+            self.thread_pool.submit(worker, task_type="api")
+
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""
         import requests

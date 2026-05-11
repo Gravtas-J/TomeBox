@@ -1007,6 +1007,9 @@ class AAXManagerApp:
         self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
         self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
         self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
+        self.context_menu.add_command(label="✏️ Edit Metadata", command=lambda: self.handle_action_on_selected("edit"))
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="🔗 Match Local File", command=lambda: self.handle_action_on_selected("match_local"))
 
     def show_context_menu(self, event):
         # If we are in the list view, select the item under the cursor first
@@ -1570,7 +1573,11 @@ class AAXManagerApp:
             if data["title"] == title:
                 local_path = path
                 break
-
+        
+        if action_type == "match_local":
+            self.match_local_file_to_cloud(title, asin)
+            return
+        
         if local_path:
             if not os.path.exists(local_path):
                 messagebox.showerror("File Missing", "The file was deleted or moved. Please remove it from the list and re-download.")
@@ -1578,6 +1585,10 @@ class AAXManagerApp:
                 
             if action_type == "scrape":
                 self.start_scrape_thread(local_path)
+                return
+            elif action_type == "edit":
+                from ui.components.dialogs import open_manual_metadata_window
+                open_manual_metadata_window(self, local_path)
                 return
                 
             self.load_specific_file(local_path)
@@ -1752,6 +1763,71 @@ class AAXManagerApp:
             self.logger.info(message)
         else:
             print(message)
+
+    def match_local_file_to_cloud(self, title, asin):
+        """Manually associates a local file on the hard drive with a Cloud-only item."""
+        filepath = filedialog.askopenfilename(
+            title=f"Select local file for: {title}",
+            filetypes=[("Audiobooks", "*.m4b *.mp3 *.aax *.aaxc")]
+        )
+        if not filepath:
+            return
+            
+        # 1. Grab the richest metadata available from the cloud cache
+        cloud_data = None
+        for item in self.library_manager.cloud_items:
+            if item.get("asin") == asin or item.get("title") == title:
+                cloud_data = item
+                break
+        
+        if not cloud_data:
+            cloud_data = {"title": title, "asin": asin}
+            
+        # 2. Parse Authors
+        raw_authors = cloud_data.get("authors", [])
+        authors_str = "Unknown Author"
+        if raw_authors:
+            authors_str = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+            
+        # 3. Parse Series
+        series_str = ""
+        raw_series = cloud_data.get("series", [])
+        if raw_series:
+            series_parts = []
+            for s in raw_series:
+                s_title = s.get("title", "").strip()
+                s_seq = str(s.get("sequence", "")).strip()
+                if s_title:
+                    if s_seq and s_seq != "None":
+                        series_parts.append(f"{s_title}, Book {s_seq}")
+                    else:
+                        series_parts.append(s_title)
+            if series_parts:
+                series_str = " / ".join(series_parts)
+
+        # 4. Map data to the file
+        local_data = self.library_manager.local_library.get(filepath, {})
+        local_data["title"] = cloud_data.get("title", title)
+        local_data["asin"] = asin
+        local_data["authors"] = authors_str
+        if series_str:
+            local_data["series"] = series_str
+            
+        local_data["format"] = os.path.splitext(filepath)[1].replace(".", "").upper()
+        local_data["path"] = filepath
+        
+        duration_min = cloud_data.get("runtime_length_min")
+        if duration_min:
+            local_data["duration_min"] = duration_min
+            
+        # 5. Save to database
+        self.library_manager.local_library[filepath] = local_data
+        self.library_manager.db.save_local_db(self.library_manager.local_library)
+        
+        # 6. Fetch the cover art and refresh UI
+        self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.refresh_library_ui))
+        self.refresh_library_ui()
+        messagebox.showinfo("Match Successful", f"Successfully linked '{title}' to:\n\n{filepath}")
 
     def auto_load_auth(self):
         self.logger.info("DEBUG: auto_load_auth fired from startup timer.")

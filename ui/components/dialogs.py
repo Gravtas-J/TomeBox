@@ -704,7 +704,7 @@ def open_match_to_audible_window(app, filepath):
                 threading.Thread(target=load_img, args=(img_url, img_lbl, asin), daemon=True).start()
             else:
                 img_lbl.config(text="No Cover")
-
+    
     def do_search():
         if str(search_btn['state']) == tk.DISABLED:
             return
@@ -782,6 +782,148 @@ def open_match_to_audible_window(app, filepath):
         win.after(100, do_search)
 
     win.focus_set()
+
+def open_manual_metadata_window(app, filepath):
+    import os
+    from tkinter import filedialog
+    from PIL import Image, ImageTk
+    
+    local_data = app.library_manager.local_library.get(filepath, {})
+    if not local_data: return
+
+    win = tk.Toplevel(app.root)
+    win.title("Edit Metadata")
+    win.geometry("580x420")
+    win.transient(app.root)
+    win.resizable(False, False)
+
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    win.configure(bg=bg_color)
+
+    main_frame = ttk.Frame(win, padding=20)
+    main_frame.pack(fill="both", expand=True)
+
+    ttk.Label(main_frame, text="Manual Edit", font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 15))
+
+    # Split layout: Image on left, Form on right
+    content_frame = ttk.Frame(main_frame)
+    content_frame.pack(fill="x", pady=(0, 15))
+
+    # --- Left Column: Cover Art ---
+    cover_frame = ttk.Frame(content_frame)
+    cover_frame.pack(side=tk.LEFT, padx=(0, 15), fill="y")
+
+    img_lbl = tk.Label(cover_frame, text="No Cover", width=20, height=8, bg="#dddddd")
+    img_lbl.pack(pady=(0, 10))
+
+    selected_cover_path = [None] 
+
+    def update_preview(img_path):
+        try:
+            img = Image.open(img_path)
+            img.thumbnail((125, 125))
+            photo = ImageTk.PhotoImage(img)
+            img_lbl.config(image=photo, text="", width=125, height=125)
+            img_lbl.image = photo 
+        except Exception:
+            pass
+
+    # Try to load existing cover on startup
+    existing_asin = local_data.get("asin")
+    if existing_asin:
+        existing_cover = os.path.join(app.covers_dir, f"{existing_asin}.jpg")
+        if os.path.exists(existing_cover):
+            update_preview(existing_cover)
+
+    def pick_cover():
+        path = filedialog.askopenfilename(
+            parent=win,
+            title="Select Cover Art",
+            filetypes=[("Image Files", "*.jpg *.jpeg *.png *.webp")]
+        )
+        if path:
+            selected_cover_path[0] = path
+            update_preview(path)
+
+    ttk.Button(cover_frame, text="Change Cover...", command=pick_cover).pack()
+
+    # --- Right Column: Text Form ---
+    form_frame = ttk.Frame(content_frame)
+    form_frame.pack(side=tk.LEFT, fill="both", expand=True)
+
+    ttk.Label(form_frame, text="Title:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+    title_var = tk.StringVar(value=local_data.get("title", ""))
+    ttk.Entry(form_frame, textvariable=title_var, width=38).grid(row=0, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Author:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+    author_var = tk.StringVar(value=local_data.get("authors", ""))
+    ttk.Entry(form_frame, textvariable=author_var, width=38).grid(row=1, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Series:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+    series_var = tk.StringVar(value=local_data.get("series", ""))
+    ttk.Entry(form_frame, textvariable=series_var, width=38).grid(row=2, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="ASIN:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+    asin_var = tk.StringVar(value=local_data.get("asin", ""))
+    ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(row=3, column=1, sticky="w", pady=5)
+
+    # --- Options ---
+    options_frame = ttk.Frame(main_frame)
+    options_frame.pack(fill="x", pady=5)
+    embed_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(options_frame, text="Embed tags into audio file (FFmpeg)", variable=embed_var).pack(side=tk.LEFT)
+
+    status_var = tk.StringVar(value="")
+    ttk.Label(main_frame, textvariable=status_var, font=("Segoe UI", 9)).pack(anchor="w", pady=5)
+
+    # --- Controls ---
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(fill="x", side=tk.BOTTOM)
+
+    def do_save():
+        status_var.set("Saving...")
+        save_btn.config(state=tk.DISABLED)
+        win.update_idletasks()
+
+        new_data = {
+            "title": title_var.get().strip(),
+            "authors": author_var.get().strip(),
+            "series": series_var.get().strip(),
+            "asin": asin_var.get().strip()
+        }
+
+        def on_done(filepath=None, title=None, **kwargs):
+            app.root.after(0, lambda: app.refresh_library_ui())
+            # Force the sidebar to fetch the newly updated display metadata
+            app.root.after(0, lambda: app.metadata_manager.fetch_display_metadata(filepath))
+            app.root.after(0, win.destroy)
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
+
+        def on_error(error_msg=None, **kwargs):
+            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
+            app.root.after(0, lambda: save_btn.config(state=tk.NORMAL))
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
+            app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
+
+        app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
+        app.metadata_manager.event_bus.subscribe("metadata.error", on_error)
+
+        # Pass the selected cover path to the backend
+        app.metadata_manager.apply_manual_metadata(
+            filepath, 
+            new_data, 
+            embed_to_file=embed_var.get(),
+            new_cover_path=selected_cover_path[0]
+        )
+
+    ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(5, 0))
+    save_btn = ttk.Button(btn_frame, text="Save", command=do_save)
+    save_btn.pack(side=tk.RIGHT)
+
+    win.focus_set()
+
 
 def open_cover_modal(app, asin, title, explicit_path=None):
     """Opens a high-resolution, clickable cover art modal."""
