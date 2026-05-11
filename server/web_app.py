@@ -72,7 +72,13 @@ def create_server_app(tomebox):
             )
         
         return await call_next(request)
-
+    
+    @api.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        """Serves the TomeBox icon to browsers automatically requesting it."""
+        icon_path = get_resource_path("ui", "tomebox.ico")
+        return FileResponse(icon_path)
+    
     @api.get("/api/pairing-info")
     def get_pairing_info(request: Request):
         """Generates a secure, one-time pairing OTP for new devices."""
