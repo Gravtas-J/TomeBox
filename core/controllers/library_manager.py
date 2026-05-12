@@ -95,8 +95,21 @@ class LibraryManager:
                 
     def load_state(self):
         """Bootstraps the library from the database and disk caches."""
+        import time
         self.local_library = self.db.load_local_db()
         
+        modified = False
+        for filepath, data in self.local_library.items():
+            if "date_added" not in data:
+                try:
+                    data["date_added"] = os.path.getctime(filepath)
+                except OSError:
+                    data["date_added"] = time.time()
+                modified = True
+
+        if modified:
+            self.db.save_local_db(self.local_library)
+            
         if os.path.exists(self.cloud_cache_path):
             try:
                 with open(self.cloud_cache_path, "r") as f:
@@ -136,6 +149,7 @@ class LibraryManager:
         return ""
 
     def get_view_data(self, search_query="", filter_type="All", shelf_filter="All Shelves"):
+        from datetime import datetime
         rows = []
         all_unique_shelves = set()
         settings = self.db.load_settings()
@@ -144,7 +158,6 @@ class LibraryManager:
         cloud_titles = set()
         search_query = search_query.lower()
 
-        # --- THE FIX: Create a reverse lookup keyed by Title instead of Path ---
         local_titles = {data["title"]: data for path, data in self.local_library.items()}
 
         # 1. Process Cloud Items
@@ -166,8 +179,11 @@ class LibraryManager:
             local_data = local_titles.get(title) 
             status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
             local_path = local_data['path'] if local_data else ""
+            
+            date_val = local_data.get("date_added", 0) if local_data else 0
+            date_str = datetime.fromtimestamp(date_val).strftime('%Y-%m-%d') if date_val > 0 else "N/A"
 
-            rows.append((title, authors, series_str, duration_str, asin, status, local_path))
+            rows.append((title, authors, series_str, duration_str, asin, status, local_path, date_str))
             all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 2. Process Local-Only Items
@@ -190,14 +206,18 @@ class LibraryManager:
 
                 if asin == "Unknown" and meta.get("asin"):
                     asin = meta.get("asin")
+                    
+                date_val = data.get("date_added", 0)
+                date_str = datetime.fromtimestamp(date_val).strftime('%Y-%m-%d') if date_val > 0 else "N/A"
 
-                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})", path))
+                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})", path, date_str))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
         # 3. Apply Filters
         filtered_rows = []
         for row in rows:
-            title, authors, series_str, duration_str, asin, status, row_path = row
+            # --- NEW: Updated Unpacking ---
+            title, authors, series_str, duration_str, asin, status, row_path, date_str = row
 
             if filter_type == "Downloaded" and "Downloaded" not in status: continue
             if filter_type == "Cloud Only" and status != "Cloud Only": continue
@@ -274,7 +294,8 @@ class LibraryManager:
                     "comment": tags.get("comment", ""),
                     "narrator": tags.get("composer", ""),
                     "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60),
-                    "chapters": extracted_chapters
+                    "chapters": extracted_chapters,
+                    "date_added": time.time()
                 }
                 
                 if "series" in tags:

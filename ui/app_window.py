@@ -1279,28 +1279,36 @@ class AAXManagerApp:
             self.current_view_mode = "grid"
             self.view_btn.config(text="List View")
             
-            # Hide list elements
+            if hasattr(self, 'cover_toggle'):
+                self.cover_toggle.pack(side=tk.RIGHT, padx=5)
+            if hasattr(self, 'sort_label'):
+                self.sort_label.pack(side=tk.LEFT, padx=(10, 5))
+                self.sort_combo.pack(side=tk.LEFT)
+            
             self.library_tree.grid_remove()
             self.h_scroll.grid_remove()
             
             if self.library_manager.cloud_items or self.library_manager.local_library:
                 self.grid_canvas.grid(row=0, column=0, sticky="nsew")
             
-            # Route vertical scrollbar to the grid
             self.v_scroll.config(command=self.grid_canvas.yview)
             self.grid_canvas.config(yscrollcommand=self.v_scroll.set)
         else:
             self.current_view_mode = "list"
             self.view_btn.config(text="Grid View")
             
-            # Hide grid elements
+            if hasattr(self, 'cover_toggle'):
+                self.cover_toggle.pack_forget()
+            if hasattr(self, 'sort_label'):
+                self.sort_label.pack_forget()
+                self.sort_combo.pack_forget()
+            
             self.grid_canvas.grid_remove()
             
             if self.library_manager.cloud_items or self.library_manager.local_library:
                 self.library_tree.grid(row=0, column=0, sticky="nsew")
                 self.h_scroll.grid(row=1, column=0, sticky="ew")
             
-            # Route vertical scrollbar back to the list
             self.v_scroll.config(command=self.library_tree.yview)
             self.library_tree.config(yscrollcommand=self.v_scroll.set)
             
@@ -1341,7 +1349,7 @@ class AAXManagerApp:
             self.grid_inner.columnconfigure(i, weight=1)
         
         for idx, row_data in enumerate(getattr(self, '_current_filtered_data', [])):
-            title, authors, series_str, duration_str, asin, status, row_path = row_data
+            title, authors, series_str, duration_str, asin, status, row_path, date_str = row_data
 
             outer_card = tk.Frame(self.grid_inner, bg=default_bg)
             outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
@@ -1469,6 +1477,27 @@ class AAXManagerApp:
             shelf_filter=current_shelf
         )
 
+        if hasattr(self, 'sort_var'):
+            sort_pref = self.sort_var.get()
+            
+            def get_sort_key(row):
+                title, authors, series_str, duration_str, asin, status, row_path, date_str = row
+                
+                if sort_pref == "Title (A-Z)":
+                    return title.lower()
+                elif sort_pref == "Author (A-Z)":
+                    return authors.lower()
+                else: # Date Added
+                    # Check local database for physical files
+                    if row_path and row_path in self.library_manager.local_library:
+                        return self.library_manager.local_library[row_path].get("date_added", 0)
+                    # Cloud-only items drop to the bottom of the "Newest" list
+                    return 0 
+                    
+            is_reverse = sort_pref == "Date Added (Newest)"
+            filtered_rows.sort(key=get_sort_key, reverse=is_reverse)
+
+
         self._current_filtered_data = filtered_rows
 
         # 3. Repopulate the shelf filter dropdown
@@ -1498,7 +1527,7 @@ class AAXManagerApp:
                 self.library_tree.tag_configure('error', foreground='#ff4444')   # Red for missing files
 
                 for row in filtered_rows:
-                    title, authors, series_str, duration_str, asin, status, row_path = row
+                    title, authors, series_str, duration_str, asin, status, row_path, date_str = row
                     
                     # Evaluate Health
                     tags = ()
@@ -1641,6 +1670,10 @@ class AAXManagerApp:
                     return h * 60 + m
                 except ValueError:
                     pass
+
+            if val == "N/A":
+                return "0000-00-00"
+                
             return val.lower()
 
         data.sort(key=sort_key, reverse=descending)

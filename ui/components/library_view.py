@@ -111,6 +111,20 @@ def setup_library_view(app, parent):
     app.shelf_combo.pack(side=tk.LEFT)
     app.shelf_combo.bind("<<ComboboxSelected>>", lambda e: app.refresh_library_ui())
 
+    app.sort_label = ttk.Label(filter_frame, text="Sort:")
+    app.sort_var = tk.StringVar(value=app.settings.get("sort_pref", "Date Added (Newest)"))
+    sort_options = ["Title (A-Z)", "Author (A-Z)", "Date Added (Newest)", "Date Added (Oldest)"]
+    
+    app.sort_combo = ttk.Combobox(filter_frame, textvariable=app.sort_var, values=sort_options, state="readonly", width=16)
+    
+    def on_sort_change(event):
+        app.settings["sort_pref"] = app.sort_var.get()
+        if hasattr(app, 'db'):
+            app.db.save_settings(app.settings)
+        app.refresh_library_ui()
+        
+    app.sort_combo.bind("<<ComboboxSelected>>", on_sort_change)
+
     app.view_btn = ttk.Button(filter_frame, text="Grid View", command=app.toggle_library_view)
     app.view_btn.pack(side=tk.RIGHT, padx=5)
 
@@ -138,8 +152,8 @@ def setup_library_view(app, parent):
 
     app.library_tree = ttk.Treeview(
         tree_frame, 
-        columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path"), 
-        displaycolumns=("Title", "Author", "Series", "Duration", "ASIN", "File Path", "Status"),
+        columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path", "Date Added"), 
+        displaycolumns=("Title", "Author", "Series", "Duration", "Date Added", "Status"),
         show="headings", 
         yscrollcommand=app.v_scroll.set,
         xscrollcommand=app.h_scroll.set
@@ -193,6 +207,7 @@ def setup_library_view(app, parent):
     app.library_tree.column("Duration", width=70, minwidth=70, stretch=tk.NO)
     app.library_tree.column("ASIN", width=90, minwidth=90, stretch=tk.NO)
     app.library_tree.column("File Path", width=350, minwidth=250, stretch=tk.NO)
+    app.library_tree.column("Date Added", width=100, minwidth=90, stretch=tk.NO)
     app.library_tree.column("Status", width=110, minwidth=100, stretch=tk.YES)
     
     
