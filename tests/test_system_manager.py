@@ -5,6 +5,7 @@ import pytest
 import subprocess
 from unittest.mock import MagicMock
 from core.controllers.system_manager import SystemManager
+from core.utils.process_runner import ProcessRunner
 
 @pytest.fixture
 def manager():
@@ -142,13 +143,7 @@ def test_firewall_rule_checks(manager, monkeypatch):
     mock_result_exists.stdout = "Rule Name: TomeBox" # Or whatever your checker looks for
     
     # 2. Intercept the system call (Adjust the import path to match whatever 
-    # SystemManager uses under the hood, e.g., subprocess.run or ProcessRunner)
-    
-    # IF using subprocess directly:
-    monkeypatch.setattr(subprocess, "run", MagicMock(return_value=mock_result_exists))
-    
-    # IF using your custom ProcessRunner:
-    # monkeypatch.setattr("core.controllers.system_manager.ProcessRunner.run_blocking", MagicMock(return_value=mock_result_exists))
+    monkeypatch.setattr("core.utils.process_runner.ProcessRunner.run_blocking", MagicMock(return_value=mock_result_exists))
     
     # 3. Assert the True path
     assert manager._is_firewall_rule_installed() is True
