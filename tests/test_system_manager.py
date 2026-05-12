@@ -136,7 +136,7 @@ def test_toggle_system_sleep(manager, monkeypatch):
 
 def test_firewall_rule_checks(manager, monkeypatch):
     """Verifies the firewall checker logic without querying the real host OS."""
-    
+    monkeypatch.setattr(os, "name", "nt")
     # 1. Create a fake subprocess result that pretends the rule exists
     mock_result_exists = MagicMock()
     mock_result_exists.returncode = 0
