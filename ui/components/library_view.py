@@ -227,6 +227,8 @@ def setup_library_view(app, parent):
     ttk.Button(local_btn_frame, text="Scrape Metadata", command=lambda: app.handle_action_on_selected("scrape")).pack(side=tk.LEFT, padx=5)
     # ttk.Button(local_btn_frame, text="Match to Audible", command=lambda: app.match_to_audible_prompt()).pack(side=tk.LEFT, padx=5)
     
+    ttk.Button(local_btn_frame, text="Library Folders", command=app.manage_library_folders_prompt).pack(side=tk.LEFT, padx=5)
+    
     dl_prog_frame = ttk.Frame(lib_frame)
     dl_prog_frame.pack(fill="x", padx=5)
     

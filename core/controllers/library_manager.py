@@ -46,6 +46,53 @@ class LibraryManager:
         self.is_rate_limited = False
         self.rate_limit_reset_time = 0.0
 
+    def run_background_library_scan(self, converter, active_profile, logger, thread_pool, on_refresh_cb=None):
+        """Silently scans all user-defined library folders for new audiobooks using the AppThreadPool."""
+        def worker():
+            import time
+            settings = self.db.load_settings()
+            folders = settings.get("library_folders", [])
+            
+            # Always include the default download directory as a watched folder
+            dl_dir = settings.get("download_folder")
+            if dl_dir and dl_dir not in folders:
+                folders.append(dl_dir)
+                
+            if not folders: 
+                return
+                
+            valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
+            new_files_to_import = []
+            
+            logger.info(f"Background scanner checking {len(folders)} library folders...")
+            
+            for folder in folders:
+                if not os.path.exists(folder): continue
+                for root_dir, _, files in os.walk(folder):
+                    for f in files:
+                        if f.lower().endswith(valid_exts):
+                            full_path = os.path.normpath(os.path.join(root_dir, f))
+                            # ONLY queue the file if it doesn't already exist in the database
+                            if full_path not in self.local_library:
+                                new_files_to_import.append(full_path)
+            
+            if new_files_to_import:
+                logger.info(f"Background scan found {len(new_files_to_import)} new files. Silently queuing import...")
+                
+                # Pass the new files directly to the existing import queue
+                self.import_files(
+                    file_paths=new_files_to_import, 
+                    converter=converter, 
+                    active_profile=active_profile,
+                    on_status_cb=None, # Keep it silent to avoid disrupting the UI
+                    on_complete_cb=lambda c, t: on_refresh_cb() if on_refresh_cb else None,
+                    logger=logger,
+                    task_id=f"auto_scan_{time.time()}"
+                )
+        
+        # Dispatch to the background thread pool
+        thread_pool.submit(worker)
+
     def trigger_rate_limit(self, cooldown_seconds=60):
         """Flags the manager as rate limited and sets the expiration timestamp."""
         self.is_rate_limited = True
@@ -298,10 +345,14 @@ class LibraryManager:
                     "date_added": time.time()
                 }
                 
-                if "series" in tags:
-                    embedded_meta["series"] = tags["series"]
-                elif "show" in tags:
-                    embedded_meta["series"] = tags["show"]
+                series_name = tags.get("series") or tags.get("show") or tags.get("album_sort")
+                series_part = tags.get("series-part") or tags.get("episode_id") or tags.get("movement")
+                
+                if series_name:
+                    if series_part:
+                        embedded_meta["series"] = f"{series_name}, Book {series_part}"
+                    else:
+                        embedded_meta["series"] = series_name
                 
                 for stream in data.get("streams", []):
                     if stream.get("codec_type") == "video" or stream.get("disposition", {}).get("attached_pic") == 1:
