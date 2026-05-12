@@ -1402,7 +1402,6 @@ class AAXManagerApp:
             card.bind("<Button-1>", on_card_click)
             card.bind("<Double-1>", on_card_double_click)
             img_label.bind("<Button-1>", on_card_click)
-            img_label.bind("<Button-1>", lambda e, a=asin, t=title: open_cover_modal(self, a, t), add="+")
             img_label.bind("<Double-1>", on_card_double_click)
             
             text_label.bind("<Button-1>", on_card_click)

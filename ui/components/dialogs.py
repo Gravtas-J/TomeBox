@@ -926,9 +926,11 @@ def open_manual_metadata_window(app, filepath):
 
 
 def open_cover_modal(app, asin, title, explicit_path=None):
-    """Opens a high-resolution, clickable cover art modal."""
+    """Opens a standardized, high-resolution, clickable cover art modal."""
     import os
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageTk, ImageOps
+    import tkinter as tk
+    from tkinter import ttk
 
     existing = getattr(app, "_active_cover_modal", None)
     if existing is not None:
@@ -956,17 +958,12 @@ def open_cover_modal(app, asin, title, explicit_path=None):
         return
 
     try:
-        img = Image.open(cover_path)
+        # Convert to RGB to ensure PIL's ImageOps.pad doesn't crash on strange color profiles
+        original_img = Image.open(cover_path).convert("RGB")
 
-        max_size = 800
-        w, h = img.size
-        if w > max_size or h > max_size:
-            ratio = min(max_size / w, max_size / h)
-            new_w, new_h = int(w * ratio), int(h * ratio)
-            resample_filter = getattr(Image, "Resampling", Image).LANCZOS
-            img = img.resize((new_w, new_h), resample_filter)
-
-        # Build modal hidden so we don't see a flicker
+        # Standardized Modal Size
+        max_size = 700 
+        
         modal = tk.Toplevel(app.root)
         modal.title(title)
         modal.withdraw()
@@ -974,49 +971,72 @@ def open_cover_modal(app, asin, title, explicit_path=None):
         style = ttk.Style()
         bg_color = style.lookup("TFrame", "background") or "#1e1e1e"
         modal.configure(bg=bg_color, highlightthickness=2, highlightbackground="#4a90e2")
-
-        photo = ImageTk.PhotoImage(img)
-        modal.image = photo  # prevent GC
-
-        # takefocus=0 keeps focus on the toplevel so clicking the image
-        # doesn't trigger FocusOut on the modal
-        lbl = tk.Label(modal, image=photo, bg=bg_color, bd=0,
-                       cursor="hand2", takefocus=0)
+        
+        lbl = tk.Label(modal, bg=bg_color, bd=0, cursor="hand2", takefocus=0)
         lbl.pack(fill="both", expand=True)
 
-        # Center before stripping decorations
-        modal.update_idletasks()
-        mw, mh = img.width, img.height
-        x = app.root.winfo_x() + (app.root.winfo_width() // 2) - (mw // 2)
-        y = app.root.winfo_y() + (app.root.winfo_height() // 2) - (mh // 2)
-        modal.geometry(f"{mw}x{mh}+{x}+{y}")
+        # --- Rendering & Toggle Logic ---
+        fill_var = tk.BooleanVar(value=app.settings.get("lightbox_fill", False))
 
-        modal.overrideredirect(True)
-        modal.deiconify()
-        modal.lift()
-        modal.attributes("-topmost", True)
-        modal.focus_force()
+        def render_image():
+            img = original_img.copy()
+            if fill_var.get():
+                # Enlarge to Fill (Center Crop)
+                img = ImageOps.fit(img, (max_size, max_size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            else:
+                # Fit Container (Letterbox with theme background color)
+                img = ImageOps.pad(img, (max_size, max_size), method=Image.Resampling.LANCZOS, color=bg_color)
+            
+            photo = ImageTk.PhotoImage(img)
+            lbl.config(image=photo)
+            lbl.image = photo 
+            
+            # Position and reveal the window only on the first render
+            if modal.state() == "withdrawn":
+                modal.update_idletasks()
+                x = app.root.winfo_x() + (app.root.winfo_width() // 2) - (max_size // 2)
+                y = app.root.winfo_y() + (app.root.winfo_height() // 2) - (max_size // 2)
+                modal.geometry(f"{max_size}x{max_size}+{x}+{y}")
+                modal.overrideredirect(True)
+                modal.deiconify()
+                modal.lift()
+                modal.attributes("-topmost", True)
+                modal.focus_force()
 
-        # Register as the active modal
+        render_image()
         app._active_cover_modal = modal
+
+        # --- Context Menu ---
+        menu = tk.Menu(modal, tearoff=0)
+        
+        def on_toggle():
+            app.settings["lightbox_fill"] = fill_var.get()
+            if hasattr(app, 'db'):
+                app.db.save_settings(app.settings)
+            render_image()
+            
+        menu.add_checkbutton(label="Enlarge to Fill", variable=fill_var, command=on_toggle)
+        
+        def show_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
 
         def dismiss(event=None):
             if getattr(app, "_active_cover_modal", None) is modal:
                 app._active_cover_modal = None
             try:
-                modal.withdraw()
+                modal.withdraw() # Retained your macOS Grey Box fix!
                 modal.destroy()
             except tk.TclError:
                 pass
 
-        # Dismiss bindings: click image, Escape, click outside (FocusOut), or WM close
+        # Bindings: Left-click dismisses, Right-click opens menu
         lbl.bind("<Button-1>", dismiss)
+        lbl.bind("<Button-3>", show_menu) 
         modal.bind("<Escape>", dismiss)
         modal.bind("<FocusOut>", dismiss)
         modal.protocol("WM_DELETE_WINDOW", dismiss)
 
     except Exception as e:
-        # Make sure we don't leave a stale singleton reference
         app._active_cover_modal = None
         import traceback
         traceback.print_exc()
