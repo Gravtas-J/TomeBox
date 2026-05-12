@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import pytest
+import subprocess
 from unittest.mock import MagicMock
 from core.controllers.system_manager import SystemManager
 
@@ -133,16 +134,31 @@ def test_toggle_system_sleep(manager, monkeypatch):
     mock_ctypes.windll.kernel32.SetThreadExecutionState.assert_called_with(2147483648)
 
 def test_firewall_rule_checks(manager, monkeypatch):
-    """Verifies subprocess parsing for the netsh firewall check."""
-    mock_run = MagicMock()
-    monkeypatch.setattr("subprocess.run", mock_run)
+    """Verifies the firewall checker logic without querying the real host OS."""
     
-    # Test True
-    mock_run.return_value.stdout = "Rule Name: TomeBox Web Server\nEnabled: Yes"
+    # 1. Create a fake subprocess result that pretends the rule exists
+    mock_result_exists = MagicMock()
+    mock_result_exists.returncode = 0
+    mock_result_exists.stdout = "Rule Name: TomeBox" # Or whatever your checker looks for
+    
+    # 2. Intercept the system call (Adjust the import path to match whatever 
+    # SystemManager uses under the hood, e.g., subprocess.run or ProcessRunner)
+    
+    # IF using subprocess directly:
+    monkeypatch.setattr(subprocess, "run", MagicMock(return_value=mock_result_exists))
+    
+    # IF using your custom ProcessRunner:
+    # monkeypatch.setattr("core.controllers.system_manager.ProcessRunner.run_blocking", MagicMock(return_value=mock_result_exists))
+    
+    # 3. Assert the True path
     assert manager._is_firewall_rule_installed() is True
     
-    # Test False
-    mock_run.return_value.stdout = "No rules match the specified criteria."
+    # 4. Assert the False path
+    mock_result_missing = MagicMock()
+    mock_result_missing.returncode = 1
+    mock_result_missing.stdout = "No rules match the specified criteria."
+    
+    monkeypatch.setattr(subprocess, "run", MagicMock(return_value=mock_result_missing))
     assert manager._is_firewall_rule_installed() is False
 
 def test_add_firewall_rule(manager, monkeypatch):
