@@ -253,11 +253,12 @@ class AudioConverter:
                 "-map", "0:a", 
                 "-map", "1:v", 
                 "-c:v", "mjpeg", 
-                "-disposition:v", "attached_pic"
+                "-disposition:v", "attached_pic",
+                "-map_chapters", "0"
             ])
         else:
             # Fallback: Convert audio only without crashing if cover is truly gone
-            cmd.extend(["-map", "0:a"])
+            cmd.extend(["-map", "0:a", "-map_chapters", "0"])
 
         cmd.extend([
             "-c:a", "copy",
@@ -365,18 +366,33 @@ class AudioConverter:
             base, ext = os.path.splitext(out_path)
             temp_out_path = f"{out_path}.tmp.m4b"
 
-            start = chapter.get("start_time", 0)
-            end = chapter.get("end_time", 0)
+            # Parse start and duration for fast input seeking
+            start = float(chapter.get("start_time", 0))
+            end = float(chapter.get("end_time", 0))
+            duration = end - start
 
             cmd = ["ffmpeg", "-y"]
+            
+            # --- FIXED: Fast Input Seeking (resets timestamps to 0:00) ---
+            cmd.extend(["-ss", str(start)])
             if drm_flags:
                 cmd.extend(drm_flags)
-            cmd.extend(["-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", temp_out_path])
+            cmd.extend(["-i", input_path])
+            cmd.extend(["-t", str(duration)])
+            
+            # --- FIXED: Explicitly map audio, cover art, and strip global chapters ---
+            cmd.extend([
+                "-c:a", "copy",
+                "-c:v", "copy",
+                "-map", "0:a",
+                "-map", "0:v?",
+                "-map_chapters", "-1",
+                temp_out_path
+            ])
             
             try:
                 self.current_process = ProcessRunner.run_async(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                # Active polling loop to ensure instant cancellation
                 while self.current_process.poll() is None:
                     if getattr(self, 'is_cancelled', False):
                         self.current_process.terminate()

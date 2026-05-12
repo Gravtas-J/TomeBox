@@ -215,8 +215,8 @@ def setup_library_view(app, parent):
     btn_frame.pack(fill="x", pady=2)
     ttk.Button(btn_frame, text="Refresh Cloud", command=app.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Download Selected", command=lambda: app.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Convert Selected", command=lambda: app.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Convert All", command=app.start_convert_all_thread).pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="Split into Chapters", command=lambda: app.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
+    # ttk.Button(btn_frame, text="Convert All", command=app.start_convert_all_thread).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Manage Shelves", command=app.manage_shelves_prompt).pack(side=tk.LEFT, padx=5)
 
     local_btn_frame = ttk.Frame(lib_frame)
@@ -228,7 +228,7 @@ def setup_library_view(app, parent):
     # ttk.Button(local_btn_frame, text="Match to Audible", command=lambda: app.match_to_audible_prompt()).pack(side=tk.LEFT, padx=5)
     
     ttk.Button(local_btn_frame, text="Library Folders", command=app.manage_library_folders_prompt).pack(side=tk.LEFT, padx=5)
-    
+
     dl_prog_frame = ttk.Frame(lib_frame)
     dl_prog_frame.pack(fill="x", padx=5)
     

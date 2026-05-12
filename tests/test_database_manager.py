@@ -71,3 +71,34 @@ def test_save_local_db_deletes_removed_paths(db, monkeypatch):
     assert "/fake/path2.m4b" in loaded_again
     assert "/fake/path3.mp3" in loaded_again
     assert "/fake/path1.m4b" not in loaded_again  # Successfully deleted
+
+def test_load_local_db_preserves_virtual_playlists(db, monkeypatch):
+    """Verifies the DB loader looks inside the playlist to verify files, rather than checking the virtual path."""
+    
+    # Simulate DB containing a virtual playlist
+    virtual_path = "/fake/MyBook_playlist"
+    real_mp3 = "/fake/track01.mp3"
+    
+    playlist_data = {
+        "title": "Virtual Book",
+        "is_playlist": True,
+        "chapters": [{"file_path": real_mp3}]
+    }
+    
+    db.save_local_db({virtual_path: playlist_data})
+    
+    # Mock the OS: The virtual path DOES NOT exist, but the real MP3 DOES.
+    def fake_exists(path):
+        # Allow the SQLite database file to exist
+        if path == db.db_path:
+            return True
+        # Allow the underlying playlist MP3 to exist
+        return path == real_mp3
+        
+    monkeypatch.setattr(os.path, "exists", fake_exists)
+    
+    loaded_library = db.load_local_db()
+    
+    # The loader should successfully parse the JSON, check the MP3, and keep the entry!
+    assert virtual_path in loaded_library
+    assert loaded_library[virtual_path]["title"] == "Virtual Book"

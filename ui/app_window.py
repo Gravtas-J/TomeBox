@@ -71,9 +71,11 @@ if os.path.exists(bundled_bin_dir):
     os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 class AAXManagerApp:
     @property
-    def file_path(self): return self.playback.file_path
+    def file_path(self): return getattr(self, '_active_book_path', "")
     @file_path.setter
-    def file_path(self, val): self.playback.file_path = val
+    def file_path(self, val): 
+        self._active_book_path = val
+        self.playback.file_path = val
 
     @property
     def chapters(self): return self.playback.chapters
@@ -349,12 +351,12 @@ class AAXManagerApp:
         self.root.after(0, update)
 
     def _on_import_status(self, task_id, msg):
-        self.root.after(0, lambda: self._on_dl_status(task_id, msg, is_global=False))
-        self.root.after(0, lambda: self.update_global_status(msg))
+        self.root.after(0, lambda tid=task_id, m=msg: self._on_dl_status(tid, m, is_global=False))
+        self.root.after(0, lambda m=msg: self.update_global_status(m))
 
     def _on_import_progress(self, task_id, pct):
-        self.root.after(0, lambda: self._on_dl_progress(task_id, pct, is_global=False))
-        self.root.after(0, lambda: self.update_global_progress(pct))
+        self.root.after(0, lambda tid=task_id, p=pct: self._on_dl_progress(tid, p, is_global=False))
+        self.root.after(0, lambda p=pct: self.update_global_progress(p))
 
     def remove_queue_ui_row(self, task_id):
         if task_id in self.queue_ui_elements:
@@ -665,14 +667,16 @@ class AAXManagerApp:
 
     def _on_import_complete(self, added_count, total_found=0):
         def update():
-            if added_count > 0:
+            try:
                 self.refresh_library_ui()
+            except Exception as e:
+                import traceback; traceback.print_exc()
+            if added_count > 0:
                 self.dl_status_var.set(f"Successfully imported {added_count} files.")
             elif total_found > 0:
                 self.dl_status_var.set("Files already in library.")
             else:
                 self.dl_status_var.set("No valid audiobooks found to import.")
-                
         self.root.after(0, update)
 
     def toggle_web_server(self):
@@ -746,53 +750,75 @@ class AAXManagerApp:
                 messagebox.showerror("Action Failed", "Failed to remove the firewall rule. You may have declined the admin prompt, or the rule did not exist.")
 
     def on_file_drop(self, event):
-        from tkinter import messagebox
+        """Handles drag-and-drop of files or folders into the main window."""
+        from core.utils.paths import parse_dnd_paths
+        import time
         import os
         
-        # 1. Parse the dropped string using our robust regex parser
         dropped_paths = parse_dnd_paths(event.data)
-
         if not dropped_paths:
-            self.dl_status_var.set("No valid paths found.")
             return
 
-        # NEW: Consent Warning for dragged folders
         has_folders = any(os.path.isdir(p) for p in dropped_paths)
+        import_mode = 'merge'
+        
         if has_folders:
-            if not messagebox.askyesno(
-                "Auto-Merge Warning",
-                "You are importing folders. If multiple audio files belonging to the same book are found, TomeBox will automatically merge them into a new .m4b file on your hard drive.\n\nDo you wish to proceed?"
-            ):
+            choice = messagebox.askyesnocancel(
+                "Import Method",
+                "You are importing folders containing multiple audio files.\n\n"
+                "Yes = Merge into a single .m4b file (Slower, requires disk space)\n"
+                "No = Play In-Place as a Playlist (Instant)\n"
+                "Cancel = Abort"
+            )
+            if choice is None:
                 self.dl_status_var.set("Import cancelled.")
                 return
+            import_mode = 'merge' if choice else 'playlist'
 
         self.dl_status_var.set("Processing dropped items...")
-        # 2. Route the paths to the correct importer
-        for path in dropped_paths:
-            is_folder = os.path.isdir(path)
-            task_id = f"import_{time.time()}_{os.path.basename(path)}"
-            self.system_manager.add_pending_import(self.db.data_dir, path, is_folder)
-            
-            self.toggle_queue_drawer(True)
-            self.add_queue_ui_row(task_id, f"Importing: {os.path.basename(path)}")
-            
-            if is_folder:
-                self.library_manager.import_folder(
-                    folder_path=path, converter=self.converter, active_profile=self.active_profile,
-                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
-                    logger=self.logger, on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
-                    task_id=task_id
-                )
-            elif os.path.isfile(path):
-                self.library_manager.import_files(
-                    file_paths=[path], converter=self.converter, active_profile=self.active_profile,
-                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
-                    logger=self.logger,
-                    task_id=task_id
-                )
 
+        for path in dropped_paths:
+            if not os.path.exists(path):
+                continue
+                
+            # Use a more resilient unique ID generator
+            task_id = f"import_{int(time.time() * 1000)}_{os.path.basename(path).replace(' ', '_')}"
+
+            if os.path.isdir(path):
+                self.system_manager.add_pending_import(self.db.data_dir, path, True)
+                
+                self.toggle_queue_drawer(True)
+                self.add_queue_ui_row(task_id, f"Importing: {os.path.basename(path)}")
+                self.root.update_idletasks() # <--- FORCE UI TO DRAW NOW
+                
+                self.library_manager.import_folder(
+                    folder_path=path, 
+                    converter=self.converter, 
+                    active_profile=self.active_profile,
+                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                    logger=self.logger, 
+                    on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+                    task_id=task_id,
+                    import_mode=import_mode
+                )
+            else:
+                ext = os.path.splitext(path)[1].lower()
+                if ext in [".aax", ".aaxc", ".m4b", ".mp3"]:
+                    self.system_manager.add_pending_import(self.db.data_dir, path, False)
+                    self.toggle_queue_drawer(True)
+                    self.add_queue_ui_row(task_id, f"Importing File: {os.path.basename(path)}")
+                    self.root.update_idletasks() # <--- FORCE UI TO DRAW NOW
+                    
+                    self.library_manager.import_files(
+                        file_paths=[path], 
+                        converter=self.converter, 
+                        active_profile=self.active_profile,
+                        on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
+                        on_complete_cb=lambda c, t, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                        logger=self.logger,
+                        task_id=task_id
+                    )
 
     def add_local_file(self):
         filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b *.mp3")])
@@ -801,11 +827,12 @@ class AAXManagerApp:
         import time
         import os
         
-        task_id = f"import_{time.time()}_{os.path.basename(filepath)}"
+        task_id = f"import_{int(time.time() * 1000)}_{os.path.basename(filepath).replace(' ', '_')}"
         self.system_manager.add_pending_import(self.db.data_dir, filepath, False)
         
         self.toggle_queue_drawer(True)
         self.add_queue_ui_row(task_id, f"Importing: {os.path.basename(filepath)}")
+        self.root.update_idletasks() # <--- FORCE UI TO DRAW NOW
         
         self.library_manager.import_files(
             file_paths=[filepath], converter=self.converter, active_profile=self.active_profile,
@@ -821,30 +848,60 @@ class AAXManagerApp:
         folder = filedialog.askdirectory(title="Select Folder Containing Audiobooks")
         if not folder:
             return
-        if not messagebox.askyesno(
-            "Auto-Merge Warning",
-            "TomeBox will now scan this folder.\n\nIf multiple audio files belonging to the same audiobook are found, they will be automatically merged into a new, single .m4b file on your hard drive.\n\nDo you wish to proceed?"
-        ):
+            
+        choice = messagebox.askyesnocancel(
+            "Import Method",
+            "TomeBox will now scan this folder.\n\n"
+            "Yes = Merge into a single .m4b file (Slower, requires disk space)\n"
+            "No = Play In-Place as a Playlist (Instant)\n"
+            "Cancel = Abort"
+        )
+        if choice is None:
             return
             
+        import_mode = 'merge' if choice else 'playlist'
+        
         import time
         import os
         
-        task_id = f"import_{time.time()}_{os.path.basename(folder)}"
+        task_id = f"import_{int(time.time() * 1000)}_{os.path.basename(folder).replace(' ', '_')}"
         self.system_manager.add_pending_import(self.db.data_dir, folder, True)
+        self.toggle_queue_drawer(True)
         
         self.toggle_queue_drawer(True)
         self.add_queue_ui_row(task_id, f"Importing Folder: {os.path.basename(folder)}")
         
-        self.library_manager.import_folder(
-            folder_path=folder, converter=self.converter, active_profile=self.active_profile,
-            on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-            on_complete_cb=lambda c, t=0, p=folder, tid=task_id: self._on_import_finished(p, c, t, tid),
-            logger=self.logger, 
-            on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
-            task_id=task_id
-        )
+        self.root.update_idletasks()
+        
+        try:
+            self.library_manager.import_folder(
+                folder_path=folder, 
+                converter=self.converter, 
+                active_profile=self.active_profile,
+                on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),  # parent header only
+                on_complete_cb=lambda c, t=0, p=folder, tid=task_id: self._on_import_finished(p, c, t, tid),
+                logger=self.logger, 
+                on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+                task_id=task_id,
+                import_mode=import_mode,
+                on_book_start_cb=self._on_book_start,
+                on_book_progress_cb=self._on_book_progress,
+                on_book_complete_cb=self._on_book_complete,
+            )
+        except Exception as e:
+            import traceback; traceback.print_exc()
+    def _on_book_start(self, sub_task_id, title):
+        self.root.after(0, lambda: self.add_queue_ui_row(sub_task_id, title))
 
+    def _on_book_progress(self, sub_task_id, pct):
+        self._on_dl_progress(sub_task_id, pct, is_global=False)
+
+    def _on_book_complete(self, sub_task_id, success):
+        status = "Complete" if success else "Failed"
+        self._on_dl_status(sub_task_id, status, is_global=False)
+        self._schedule_row_removal(sub_task_id)
+        if success:
+            self.root.after(0, self.refresh_library_ui)
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
         self.root.deiconify()
@@ -1208,6 +1265,7 @@ class AAXManagerApp:
     def save_playback_state(self):
         state = self.playback.get_current_state()
         if state:
+            state["file_path"] = self.file_path
             self.library_manager.save_playback_state(state, self.active_profile)
     
     def sync_playhead_from_remote(self, abs_position):
@@ -1362,7 +1420,7 @@ class AAXManagerApp:
             card.pack_propagate(False) 
             card.pack(padx=2, pady=2) 
             
-            is_missing_file = "Downloaded" in status and row_path and not os.path.exists(row_path)
+            is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
             is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
             
             if is_missing_file:
@@ -1535,7 +1593,7 @@ class AAXManagerApp:
                     
                     # Evaluate Health
                     tags = ()
-                    is_missing_file = "Downloaded" in status and row_path and not os.path.exists(row_path)
+                    is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
                     is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
 
                     if is_missing_file:
@@ -1586,9 +1644,11 @@ class AAXManagerApp:
         asin = item['values'][4]
 
         local_path = None
+        is_playlist = False
         for path, data in self.library_manager.local_library.items():
             if data["title"] == title:
                 local_path = path
+                is_playlist = data.get("is_playlist", False)
                 break
         
         if action_type == "match_local":
@@ -1596,7 +1656,8 @@ class AAXManagerApp:
             return
         
         if local_path:
-            if not os.path.exists(local_path):
+            # Bypass file check for virtual playlists
+            if not is_playlist and not os.path.exists(local_path):
                 messagebox.showerror("File Missing", "The file was deleted or moved. Please remove it from the list and re-download.")
                 return
                 
@@ -1606,6 +1667,12 @@ class AAXManagerApp:
             elif action_type == "edit":
                 from ui.components.dialogs import open_manual_metadata_window
                 open_manual_metadata_window(self, local_path)
+                return
+            elif action_type == "convert":
+                if is_playlist:
+                    messagebox.showinfo("Not Applicable", "Playlists are already split into individual files.")
+                    return
+                self.start_convert_thread(target_path=local_path)
                 return
                 
             self.load_specific_file(local_path)
@@ -2194,13 +2261,19 @@ class AAXManagerApp:
             messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")
             return
 
+        is_playlist = False
         local_path = None
         for path, data in self.library_manager.local_library.items():
             if data.get("title") == title:
                 local_path = path
+                is_playlist = data.get("is_playlist", False)
                 break
 
-        if not local_path or not os.path.exists(local_path):
+        if not local_path:
+            messagebox.showerror("File Error", "The audio file could not be found on your disk.")
+            return
+
+        if not is_playlist and not os.path.exists(local_path):
             messagebox.showerror("File Error", "The audio file could not be found on your disk.")
             return
 
@@ -2540,38 +2613,50 @@ class AAXManagerApp:
         except Exception as e:
             return False, str(e)
         
-    def start_convert_thread(self):
-        if not self.chapters:
-            messagebox.showinfo("No Chapters Found", "This file does not contain chapter markers. Defaulting to single file conversion.")
-            split_choice = False
-        else:
-            split_choice = messagebox.askyesnocancel(
-                "Conversion Options",
-                "Do you want to split this audiobook into individual chapters?\n\n"
-                "Yes = Split into multiple files (Export only)\n"
-                "No = Keep as a single .m4b file\n"
-                "Cancel = Abort"
-            )
-
-        if split_choice is None:
+    def start_convert_thread(self, target_path=None):
+        # Fallback for backwards compatibility
+        if not target_path:
+            target_path = self.file_path
+            
+        if not target_path:
             return
 
-        if split_choice:
-            output_dir = filedialog.askdirectory(title=f"Select Folder to Extract Chapters For: {os.path.basename(self.file_path)}")
-            if not output_dir: 
-                return
-            self.dl_status_var.set("Splitting into chapters... Please wait.")
-            self.conversion_manager.split_book(self.file_path, output_dir, self.chapters)
-        else:
-            output_file = filedialog.asksaveasfilename(
-                defaultextension=".m4b", 
-                filetypes=[("M4B Audiobook", "*.m4b")], 
-                initialfile=os.path.basename(self.file_path).replace(".aaxc", ".m4b").replace(".aax", ".m4b")
-            )
-            if not output_file: 
-                return
-            self.dl_status_var.set("Converting to .m4b... Please wait.")
-            self.conversion_manager.convert_single(self.file_path, output_file, self.chapters)
+        local_data = self.library_manager.local_library.get(target_path, {})
+        db_chapters = local_data.get("chapters", [])
+        
+        # Safely extract chapters on the fly if the DB doesn't have them yet
+        if not db_chapters:
+            self.dl_status_var.set(f"Extracting chapters: {os.path.basename(target_path)}")
+            self.root.update()
+            
+            db_chapters = self.extract_chapters(target_path)
+            
+            if db_chapters:
+                local_data["chapters"] = db_chapters
+                self.library_manager.local_library[target_path] = local_data
+                self.library_manager.db.save_local_db(self.library_manager.local_library)
+            
+            self.dl_status_var.set("Idle")
+
+        # Identify if the chapters are real or just the auto-generated dummy
+        has_real_chapters = False
+        if db_chapters:
+            if len(db_chapters) > 1:
+                has_real_chapters = True
+            elif len(db_chapters) == 1 and db_chapters[0].get("tags", {}).get("title") != "Full Audiobook":
+                has_real_chapters = True
+
+        if not has_real_chapters:
+            messagebox.showinfo("No Chapters Found", "This file does not contain chapter markers to split.")
+            return
+
+        # --- DIRECT TO SPLIT ---
+        output_dir = filedialog.askdirectory(title=f"Select Folder to Extract Chapters For: {os.path.basename(target_path)}")
+        if not output_dir: 
+            return
+            
+        self.dl_status_var.set("Splitting into chapters... Please wait.")
+        self.conversion_manager.split_book(target_path, output_dir, db_chapters)
 
     def start_convert_all_thread(self):
         to_convert = [path for path, data in self.library_manager.local_library.items() if data.get("format", "").upper() in ["AAX", "AAXC"]]
@@ -2612,7 +2697,19 @@ class AAXManagerApp:
         self.resume_playback()
 
     def resume_playback(self):
-        drm_flags = self.api_client.get_drm_flags(self.file_path, self.library_manager.local_library.get(self.file_path, {}), self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
+        local_data = self.library_manager.local_library.get(self.file_path, {})
+        is_playlist = local_data.get("is_playlist", False)
+        
+        if is_playlist and self.chapters:
+            chapter = self.chapters[self.current_chapter_idx]
+            physical_file = chapter.get("file_path", self.file_path)
+            self.playback.file_path = physical_file
+            self.playback.is_playlist = True
+        else:
+            self.playback.file_path = self.file_path
+            self.playback.is_playlist = False
+
+        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.playback.file_path.endswith((".aax", ".aaxc")) else None
         
         # Make sure the controller has the latest UI settings before playing
         self.playback.set_speed(float(self.playback_speed.get().replace("x", "")))

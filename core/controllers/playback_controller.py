@@ -28,6 +28,7 @@ class PlaybackController:
         self.playback_speed = 1.0
         self.volume = 100
         self.audio_device = "System Default"
+        self.is_playlist = False
         
         # Status Flags
         self.is_playing = False
@@ -63,9 +64,22 @@ class PlaybackController:
             return
 
         chapter = self.chapters[self.current_chapter_idx]
+        
         base_start = float(chapter.get("start_time", 0))
-        actual_start_time = base_start + self.current_play_time
+        base_end = float(chapter.get("end_time", 0))
+        self.chapter_duration = base_end - base_start
+        
+        # Playlist vs M4B Time Offset
+        if getattr(self, 'is_playlist', False):
+            actual_start_time = self.current_play_time
+        else:
+            actual_start_time = base_start + self.current_play_time
+            
         remaining_duration = self.chapter_duration - self.current_play_time
+        
+        # Failsafe: If duration math somehow hits 0, just play the whole file
+        if remaining_duration <= 0:
+            remaining_duration = 999999
         
         success = self.player.play(
             filepath=self.file_path,
@@ -235,7 +249,8 @@ class PlaybackController:
         for idx, ch in enumerate(self.chapters):
             start = float(ch.get("start_time", 0))
             end = float(ch.get("end_time", 0))
-            if start <= abs_position <= end:
+            
+            if start <= abs_position < end:
                 self.current_chapter_idx = idx
                 self.current_play_time = abs_position - start
                 self.chapter_duration = end - start

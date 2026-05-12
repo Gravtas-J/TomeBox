@@ -110,11 +110,20 @@ class DatabaseManager:
             cursor = self.conn.cursor()
             cursor.execute("SELECT path, data FROM library")
             for path, data_str in cursor.fetchall():
-                if os.path.exists(path):  # Clean up missing files on load
-                    try:
-                        library[path] = json.loads(data_str)
-                    except Exception:
-                        pass
+                try:
+                    data = json.loads(data_str)
+                    
+                    if data.get("is_playlist", False):
+                        # For playlists, check if the first actual audio file exists
+                        chapters = data.get("chapters", [])
+                        if chapters and os.path.exists(chapters[0].get("file_path", "")):
+                            library[path] = data
+                    elif os.path.exists(path):
+                        # Standard single-file check
+                        library[path] = data
+                        
+                except Exception:
+                    pass
         return library
 
     def save_local_db(self, library_dict):

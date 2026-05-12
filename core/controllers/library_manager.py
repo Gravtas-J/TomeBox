@@ -62,9 +62,17 @@ class LibraryManager:
                 return
                 
             valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
-            new_files_to_import = []
+            untracked_dirs = set()
             
             logger.info(f"Background scanner checking {len(folders)} library folders...")
+            
+            tracked_files = set()
+            for path, data in self.local_library.items():
+                if data.get("is_playlist"):
+                    for ch in data.get("chapters", []):
+                        tracked_files.add(ch.get("file_path"))
+                else:
+                    tracked_files.add(path)
             
             for folder in folders:
                 if not os.path.exists(folder): continue
@@ -72,23 +80,23 @@ class LibraryManager:
                     for f in files:
                         if f.lower().endswith(valid_exts):
                             full_path = os.path.normpath(os.path.join(root_dir, f))
-                            # ONLY queue the file if it doesn't already exist in the database
-                            if full_path not in self.local_library:
-                                new_files_to_import.append(full_path)
+                            if full_path not in tracked_files:
+                                untracked_dirs.add(root_dir)
             
-            if new_files_to_import:
-                logger.info(f"Background scan found {len(new_files_to_import)} new files. Silently queuing import...")
+            if untracked_dirs:
+                logger.info(f"Background scan found new files in {len(untracked_dirs)} directories. Queuing smart import...")
                 
-                # Pass the new files directly to the existing import queue
-                self.import_files(
-                    file_paths=new_files_to_import, 
-                    converter=converter, 
-                    active_profile=active_profile,
-                    on_status_cb=None, # Keep it silent to avoid disrupting the UI
-                    on_complete_cb=lambda c, t: on_refresh_cb() if on_refresh_cb else None,
-                    logger=logger,
-                    task_id=f"auto_scan_{time.time()}"
-                )
+                for directory in untracked_dirs:
+                    self.import_folder(
+                        folder_path=directory, 
+                        converter=converter, 
+                        active_profile=active_profile,
+                        on_status_cb=None, # Keep it silent to avoid disrupting the UI
+                        on_complete_cb=lambda c, t: on_refresh_cb() if on_refresh_cb else None,
+                        logger=logger,
+                        task_id=f"auto_scan_{time.time()}_{os.path.basename(directory)}",
+                        import_mode='playlist'  # Force playlist mode for split files!
+                    )
         
         # Dispatch to the background thread pool
         thread_pool.submit(worker)
@@ -533,8 +541,16 @@ class LibraryManager:
         while True:
             ui_needs_refresh = False
             
-            # 1. Check if any actual audio files were deleted from the hard drive
-            missing_paths = [path for path in list(self.local_library.keys()) if not os.path.exists(path)]
+            missing_paths = []
+            for path, data in list(self.local_library.items()):
+                if data.get("is_playlist", False):
+                    # For playlists, check if the first physical file still exists
+                    chapters = data.get("chapters", [])
+                    if chapters and not os.path.exists(chapters[0].get("file_path", "")):
+                        missing_paths.append(path)
+                elif not os.path.exists(path):
+                    # Standard single-file check
+                    missing_paths.append(path)
             
             if missing_paths:
                 for path in missing_paths:
@@ -564,7 +580,89 @@ class LibraryManager:
                 
             time.sleep(30)
 
-    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None, task_id=None):
+    def _build_playlist_entry(self, directory, files, album_name, active_profile, converter, logger):
+        """Builds a Virtual Timeline database entry for a sequence of audio files."""
+        import hashlib
+        import time
+
+        # 1. Extract meta from the first file to represent the whole book
+        first_file = files[0]
+        meta_data = converter.get_metadata_and_chapters(first_file)
+        tags = meta_data.get("format", {}).get("tags", {})
+
+        title = album_name
+        authors = tags.get("artist") or tags.get("album_artist", "Unknown Author")
+        series_name = tags.get("series") or tags.get("show") or tags.get("album_sort")
+        series_part = tags.get("series-part") or tags.get("episode_id") or tags.get("movement")
+        series = f"{series_name}, Book {series_part}" if series_name and series_part else (series_name or "")
+
+        # 2. Generate a unique virtual path and ASIN
+        virtual_path = os.path.join(directory, f"{''.join([c for c in album_name if c.isalnum()]).rstrip()}_playlist")
+        fake_asin = "LOCAL_" + hashlib.md5(virtual_path.encode()).hexdigest()[:10]
+
+        # 3. Hunt for Cover Art (Embedded first, then external folder images)
+        cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
+        if not os.path.exists(cover_output):
+            extract_cmd = ["ffmpeg", "-y", "-i", first_file, "-an", "-vframes", "1", cover_output]
+            ProcessRunner.run_blocking(extract_cmd, capture_output=True)
+
+            if not os.path.exists(cover_output) or os.path.getsize(cover_output) == 0:
+                valid_covers = ["cover.jpg", "cover.png", "folder.jpg", "folder.png", "art.jpg", "art.png"]
+                for c in valid_covers:
+                    test_path = os.path.join(directory, c)
+                    if os.path.exists(test_path):
+                        try:
+                            from PIL import Image
+                            img = Image.open(test_path).convert("RGB")
+                            img.save(cover_output, "JPEG")
+                            break
+                        except: pass
+
+        # 4. Build the Virtual Timeline (Chapters = Files)
+        chapters = []
+        current_time = 0.0
+
+        for idx, f in enumerate(files):
+            try:
+                dur = float(converter.get_metadata_and_chapters(f).get("format", {}).get("duration", 0))
+            except:
+                dur = 0
+
+            chapters.append({
+                "id": idx,
+                "start_time": str(current_time),
+                "end_time": str(current_time + dur),
+                "tags": {"title": os.path.basename(f)},
+                "file_path": f  # <--- THE MAGIC LINK FOR PLAYBACK
+            })
+            current_time += dur
+
+        entry = {
+            "title": title,
+            "format": "PLAYLIST",
+            "path": virtual_path,
+            "authors": authors,
+            "series": series,
+            "owner": active_profile,
+            "duration_min": int(current_time / 60),
+            "chapters": chapters,
+            "is_playlist": True,
+            "date_added": time.time(),
+            "asin": fake_asin
+        }
+
+        # Try matching to a cloud purchase for richer metadata
+        matched = find_matching_cloud_item(title, self.cloud_items)
+        if matched:
+            entry["title"] = matched.get("title", title)
+            entry["asin"] = matched.get("asin", fake_asin)
+            raw_authors = matched.get("authors", [])
+            if raw_authors:
+                entry["authors"] = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
+
+        return entry, virtual_path
+
+    def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None, task_id=None, import_mode='merge', on_book_start_cb=None, on_book_progress_cb=None, on_book_complete_cb=None):
         if self._is_importing or not self.import_queue.empty():
             self.current_status = f"Queued folder for import: {os.path.basename(folder_path)}"
             if on_status_cb: on_status_cb(self.current_status)
@@ -576,7 +674,7 @@ class LibraryManager:
             if task_id and task_id in self.canceled_tasks:
                 if on_complete_cb: on_complete_cb(0, 0)
                 return
-                
+            
             self.active_task_id = task_id
             import re
             
@@ -591,192 +689,226 @@ class LibraryManager:
             
             update_status("Scanning and grouping files...")
             
-            if on_status_cb: on_status_cb("Scanning and grouping files...")
-            
-            # Helper for natural sorting (1, 2, 10 instead of 1, 10, 2)
             def natural_sort_key(s):
                 return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
-
-            dir_to_files = {}
+            
             valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
             
-            # 1. Group all valid audio files by their parent directory
+            dir_to_files = {}
             for root_dir, dirs, files in os.walk(folder_path):
                 audio_files = [f for f in files if f.lower().endswith(valid_exts)]
                 if audio_files:
                     dir_to_files[root_dir] = audio_files
-
-            file_paths = []
+            
             file_metadata_cache = {}
-
-            # 2. Process groups and catch MP3/M4B blobs using Album metadata
+            
+            def advanced_sort_key(filepath):
+                tags = file_metadata_cache.get(filepath, {})
+                track_num = 999999
+                track_str = tags.get("track", "")
+                if track_str:
+                    try:
+                        track_num = int(str(track_str).split('/')[0])
+                    except ValueError:
+                        pass
+                return (track_num, natural_sort_key(os.path.basename(filepath)))
+            
+            # =============== PASS 1: DISCOVERY ===============
+            # Probe metadata, identify every "book", emit all start events UP FRONT.
+            discovered = []  # each: {'sub_task_id','title','kind','directory','group_files'}
+            book_counter = 0
+            
+            def make_sub_id(label):
+                nonlocal book_counter
+                book_counter += 1
+                safe = re.sub(r'[^A-Za-z0-9]+', '_', label)[:40]
+                return f"{task_id}__{book_counter}_{safe}"
+            
+            def record_book(title, kind, directory, group_files):
+                sub_id = make_sub_id(title)
+                discovered.append({
+                    'sub_task_id': sub_id, 'title': title, 'kind': kind,
+                    'directory': directory, 'group_files': group_files,
+                })
+                if on_book_start_cb:
+                    on_book_start_cb(sub_id, title)
+            
             for directory, files in dir_to_files.items():
+                if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                    break
+                
                 if len(files) == 1:
-                    file_paths.extend([os.path.join(directory, files[0])])
+                    fname = files[0]
+                    record_book(os.path.splitext(fname)[0], 'single', directory,
+                                [os.path.join(directory, fname)])
                     continue
                 
                 update_status(f"Analyzing parts in {os.path.basename(directory)}...")
-                if on_status_cb: on_status_cb(f"Analyzing parts in {os.path.basename(directory)}...")
                 
                 album_groups = {}
                 for f in files:
                     full_path = os.path.join(directory, f)
                     ext = f.lower().split('.')[-1]
-                    
-                    # Never merge AAX files
-                    if ext in ['aax', 'aaxc']:
+                    if ext in ('aax', 'aaxc'):
                         album_groups.setdefault("AAX_NO_MERGE", []).append(full_path)
                         continue
-                        
                     try:
-                        # Probe the file for its album tag
                         data = converter.get_metadata_and_chapters(full_path)
                         tags = data.get("format", {}).get("tags", {})
                         album = tags.get("album", os.path.basename(directory))
-                        
-                        file_metadata_cache[full_path] = tags # <--- Cache the tags
+                        file_metadata_cache[full_path] = tags
                     except Exception:
                         album = os.path.basename(directory)
-                        file_metadata_cache[full_path] = {} # <--- Empty cache on fail
-                        
+                        file_metadata_cache[full_path] = {}
                     album_groups.setdefault(album, []).append(full_path)
-                    
-                # Process each identified album group
+                
                 for album_name, group_files in album_groups.items():
-                    if self.cancel_requested or (task_id and task_id in self.canceled_tasks): 
-                        break
-
-                    if album_name == "AAX_NO_MERGE" or len(group_files) == 1:
-                        file_paths.extend(group_files)
+                    if album_name == "AAX_NO_MERGE":
+                        for aax in group_files:
+                            record_book(os.path.basename(aax), 'single', directory, [aax])
+                        continue
+                    if len(group_files) == 1:
+                        kind = 'single'
+                    elif import_mode == 'playlist':
+                        kind = 'playlist'
                     else:
-                        safe_album_name = "".join([c for c in album_name if c.isalnum() or c in [' ', '-', '_']]).rstrip()
-                        out_m4b = os.path.join(directory, f"{safe_album_name}.m4b")
-                        
-                        if out_m4b in group_files:
-                            update_status(f"Using existing merge: {safe_album_name}")
-                            if logger: logger(f"Skipping redundant merge. Master file {os.path.basename(out_m4b)} already exists.")
-                            file_paths.append(out_m4b)
-                            continue
-                            
-                        fallback_m4b = os.path.join(directory, f"{safe_album_name}_merged.m4b")
-                        if fallback_m4b in group_files:
-                            update_status(f"Using existing merge: {safe_album_name}")
-                            if logger: logger(f"Skipping redundant merge. Master file {os.path.basename(fallback_m4b)} already exists.")
-                            file_paths.append(fallback_m4b)
-                            continue
-                        
-                        if os.path.exists(out_m4b):
-                            out_m4b = fallback_m4b
-                            
-                        if not os.path.exists(out_m4b):
-                            update_status(f"Merging {len(group_files)} parts: {safe_album_name}...")
-                            
-                            def advanced_sort_key(filepath):
-                                tags = file_metadata_cache.get(filepath, {})
-                                track_num = 999999 # Push untracked files to the end
-                                
-                                track_str = tags.get("track", "")
-                                if track_str:
-                                    try:
-                                        # Handles formats like '1', '01', or '1/15'
-                                        track_num = int(str(track_str).split('/')[0])
-                                    except ValueError:
-                                        pass
-                                
-                                filename = os.path.basename(filepath)
-                                # Tuple sorts by track_num first, then natural filename if tracks tie
-                                return (track_num, natural_sort_key(filename))
-                                
-                            group_files.sort(key=advanced_sort_key)
-                            
-                            success = converter.concat_to_m4b(
-                                group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb
-                            )
-
-                            if success:
-                                file_paths.append(out_m4b)
-                            else:
-                                # AUTO-RECOVERY: Hunt for the orphaned prior merge file
-                                suspected_orphan = os.path.join(directory, f"{safe_album_name}.m4b")
-                                
-                                if suspected_orphan in group_files:
-                                    update_status(f"Corrupt part detected. Purging {os.path.basename(suspected_orphan)}...")
-                                    try:
-                                        os.remove(suspected_orphan)
-                                        group_files.remove(suspected_orphan)
-                                        if logger: logger(f"Purged offending file: {suspected_orphan}")
-                                        
-                                        # Revert the output name back to the clean version since we deleted the blocker
-                                        out_m4b = suspected_orphan
-                                        
-                                        # Restart the merge!
-                                        if len(group_files) > 1:
-                                            update_status(f"Restarting merge: {safe_album_name}...")
-                                            retry_success = converter.concat_to_m4b(
-                                                group_files, out_m4b, title=album_name, logger=logger, progress_cb=on_progress_cb
-                                            )
-                                            if retry_success:
-                                                file_paths.append(out_m4b)
-                                            else:
-                                                file_paths.extend(group_files)
-                                        else:
-                                            file_paths.extend(group_files)
-                                    except Exception as e:
-                                        if logger: logger(f"Failed to purge {suspected_orphan}: {e}")
-                                        file_paths.extend(group_files)
-                                else:
-                                    file_paths.extend(group_files)
-                        else:
-                            file_paths.append(out_m4b)
+                        kind = 'merge'
+                    record_book(album_name, kind, directory, group_files)
+            
             if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                 update_status("Import cancelled.")
                 if on_complete_cb: on_complete_cb(0, 0)
                 self.active_task_id = None
                 return
-
-            if not file_paths:
+            
+            if not discovered:
                 if logger: logger(f"No audio files found in {folder_path}")
                 if on_complete_cb: on_complete_cb(0, 0)
                 self.active_task_id = None
                 return
-            update_status(f"Found {len(file_paths)} formatted books. Importing...")
-            final_count = len(file_paths)
-            if on_status_cb: on_status_cb(f"Found {len(file_paths)} formatted books. Importing...")
-
-            valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
+            
+            # =============== PASS 2: EXECUTION ===============
+            update_status(f"Importing {len(discovered)} book(s)...")
             added_count = 0
             
-            for filepath in file_paths:
+            for book in discovered:
                 if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                     break
-                if not os.path.exists(filepath): continue
-                if filepath in self.local_library: continue
                 
-                ext = os.path.splitext(filepath)[1].lower()
-                if ext not in valid_exts: continue
+                sub_task_id = book['sub_task_id']
+                album_name = book['title']
+                directory = book['directory']
+                group_files = book['group_files']
+                kind = book['kind']
                 
-                filename = os.path.basename(filepath)
-                if on_status_cb:
-                    update_status(f"Importing: {filename}")
-
-                entry = self._process_single_file_for_import(filepath, active_profile, converter, logger)
+                book_success = False
+                try:
+                    if kind == 'playlist':
+                        update_status(f"Building playlist for {album_name}...")
+                        group_files.sort(key=advanced_sort_key)
+                        entry, v_path = self._build_playlist_entry(
+                            directory, group_files, album_name, active_profile, converter, logger
+                        )
+                        if v_path in self.local_library:
+                            existing = self.local_library[v_path]
+                            entry["progress"] = existing.get("progress", {})
+                            entry["bookmarks"] = existing.get("bookmarks", [])
+                            entry["last_position"] = existing.get("last_position", 0)
+                            entry["last_chapter"] = existing.get("last_chapter", 0)
+                            entry["date_added"] = existing.get("date_added", entry["date_added"])
+                        self.local_library[v_path] = entry
+                        added_count += 1
+                        book_success = True
+                    
+                    elif kind == 'single':
+                        for fp in group_files:
+                            if not os.path.exists(fp) or fp in self.local_library: continue
+                            if os.path.splitext(fp)[1].lower() not in valid_exts: continue
+                            update_status(f"Importing: {os.path.basename(fp)}")
+                            entry = self._process_single_file_for_import(fp, active_profile, converter, logger)
+                            self.local_library[fp] = entry
+                            added_count += 1
+                        book_success = True
+                    
+                    elif kind == 'merge':
+                        safe_album = "".join(c for c in album_name if c.isalnum() or c in [' ', '-', '_']).rstrip()
+                        out_m4b = os.path.join(directory, f"{safe_album}.m4b")
+                        fallback_m4b = os.path.join(directory, f"{safe_album}_merged.m4b")
+                        
+                        final_path = None
+                        if out_m4b in group_files:
+                            update_status(f"Using existing merge: {safe_album}")
+                            final_path = out_m4b
+                        elif fallback_m4b in group_files:
+                            update_status(f"Using existing merge: {safe_album}")
+                            final_path = fallback_m4b
+                        else:
+                            if os.path.exists(out_m4b):
+                                out_m4b = fallback_m4b
+                            if not os.path.exists(out_m4b):
+                                update_status(f"Merging {len(group_files)} parts: {safe_album}...")
+                                group_files.sort(key=advanced_sort_key)
+                                # Per-book progress for live merge feedback
+                                per_book_prog = (lambda p, sid=sub_task_id: on_book_progress_cb(sid, p)) if on_book_progress_cb else on_progress_cb
+                                if converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger, progress_cb=per_book_prog):
+                                    final_path = out_m4b
+                                else:
+                                    # AUTO-RECOVERY: purge orphan and retry
+                                    suspected_orphan = os.path.join(directory, f"{safe_album}.m4b")
+                                    if suspected_orphan in group_files:
+                                        update_status(f"Corrupt part detected. Purging {os.path.basename(suspected_orphan)}...")
+                                        try:
+                                            os.remove(suspected_orphan)
+                                            group_files.remove(suspected_orphan)
+                                            if logger: logger(f"Purged offending file: {suspected_orphan}")
+                                            out_m4b = suspected_orphan
+                                            if len(group_files) > 1:
+                                                update_status(f"Restarting merge: {safe_album}...")
+                                                if converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger, progress_cb=per_book_prog):
+                                                    final_path = out_m4b
+                                        except Exception as e:
+                                            if logger: logger(f"Failed to purge {suspected_orphan}: {e}")
+                            else:
+                                final_path = out_m4b
+                        
+                        if final_path and os.path.exists(final_path) and final_path not in self.local_library:
+                            update_status(f"Importing: {os.path.basename(final_path)}")
+                            entry = self._process_single_file_for_import(final_path, active_profile, converter, logger)
+                            self.local_library[final_path] = entry
+                            added_count += 1
+                            book_success = True
+                        elif final_path is None:
+                            # Merge truly failed — fall back to importing each part individually
+                            for fp in group_files:
+                                if os.path.exists(fp) and fp not in self.local_library:
+                                    entry = self._process_single_file_for_import(fp, active_profile, converter, logger)
+                                    self.local_library[fp] = entry
+                                    added_count += 1
+                            book_success = added_count > 0
                 
-                self.local_library[filepath] = entry
-                added_count += 1
+                except Exception as e:
+                    if logger: logger(f"Error processing {album_name}: {e}")
+                    book_success = False
+                finally:
+                    if book_success:
+                        self.db.save_local_db(self.local_library)
+                    if on_book_complete_cb:
+                        on_book_complete_cb(sub_task_id, book_success)
             
-            if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
-                update_status("Import cancelled.")
-                if on_complete_cb: on_complete_cb(0, final_count)
-                self.active_task_id = None
-                return
-
             if added_count > 0:
                 self.db.save_local_db(self.local_library)
             
+            if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                update_status("Import cancelled.")
+                if on_complete_cb: on_complete_cb(0, len(discovered))
+                self.active_task_id = None
+                return
+            
+            update_status(f"Successfully imported {added_count} book(s).")
             self.current_status = ""
             if on_complete_cb:
-                on_complete_cb(added_count, final_count)
-                
+                on_complete_cb(added_count, len(discovered))
+            
             self.active_task_id = None
         
         self.import_queue.put(worker)

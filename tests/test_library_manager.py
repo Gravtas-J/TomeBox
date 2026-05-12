@@ -493,3 +493,175 @@ def test_import_folder_grouping_and_merging(manager, monkeypatch):
     # 3 total final files imported (1 merged, 1 native m4b, 1 native aax)
     assert mock_process.call_count == 3
     mock_complete.assert_called_once()
+
+# --- MP3 Playlist Tests ---
+
+def test_build_playlist_entry_timeline_math(manager, monkeypatch):
+    """Verifies that the virtual timeline accurately accumulates MP3 durations."""
+    # Prevent FFmpeg cover extraction during the test
+    monkeypatch.setattr("core.controllers.library_manager.ProcessRunner.run_blocking", MagicMock())
+    monkeypatch.setattr(os.path, "exists", lambda p: False)
+
+    mock_converter = MagicMock()
+    
+    # Simulate a 3-file playlist with different durations
+    def mock_get_meta(filepath):
+        if "part1" in filepath: dur = 300.0 # 5 mins
+        elif "part2" in filepath: dur = 180.0 # 3 mins
+        else: dur = 120.0 # 2 mins
+        
+        return {
+            "format": {
+                "duration": dur,
+                "tags": {"artist": "Playlist Author", "series": "Epic Fantasy", "series-part": "2"}
+            },
+            "chapters": []
+        }
+        
+    mock_converter.get_metadata_and_chapters.side_effect = mock_get_meta
+    
+    files = ["/fake/part1.mp3", "/fake/part2.mp3", "/fake/part3.mp3"]
+    
+    entry, v_path = manager._build_playlist_entry(
+        directory="/fake", 
+        files=files, 
+        album_name="My Playlist", 
+        active_profile="Main", 
+        converter=mock_converter, 
+        logger=MagicMock()
+    )
+    
+    # 1. Verify Entry Structure
+    assert v_path.endswith("MyPlaylist_playlist")
+    assert entry["format"] == "PLAYLIST"
+    assert entry["is_playlist"] is True
+    assert entry["duration_min"] == 10  # (300+180+120) / 60
+    assert entry["series"] == "Epic Fantasy, Book 2"
+    
+    # 2. Verify Global Timeline Math & File Links
+    assert len(entry["chapters"]) == 3
+    
+    assert entry["chapters"][0]["file_path"] == "/fake/part1.mp3"
+    assert entry["chapters"][0]["start_time"] == "0.0"
+    assert entry["chapters"][0]["end_time"] == "300.0"
+    
+    assert entry["chapters"][1]["file_path"] == "/fake/part2.mp3"
+    assert entry["chapters"][1]["start_time"] == "300.0"
+    assert entry["chapters"][1]["end_time"] == "480.0"
+    
+    assert entry["chapters"][2]["file_path"] == "/fake/part3.mp3"
+    assert entry["chapters"][2]["start_time"] == "480.0"
+    assert entry["chapters"][2]["end_time"] == "600.0"
+
+def test_import_folder_playlist_mode_bypasses_ffmpeg(manager, monkeypatch):
+    """Verifies that selecting 'playlist' skips merging and directly injects the virtual path."""
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os.path, "exists", lambda p: True) # Pretend source files exist
+    
+    def mock_walk(path):
+        return [("/fake/folder/MyAudiobook", [], ["track01.mp3", "track02.mp3", "track03.mp3"])]
+    monkeypatch.setattr(os, "walk", mock_walk)
+    
+    mock_converter = MagicMock()
+    mock_converter.get_metadata_and_chapters.return_value = {"format": {"duration": 60}}
+    
+    # We explicitly do NOT mock _process_single_file_for_import because playlists bypass it
+    mock_complete = MagicMock()
+    
+    # Queue the import in Playlist Mode
+    manager.import_folder(
+        folder_path="/fake/folder", 
+        converter=mock_converter, 
+        active_profile="Main", 
+        on_status_cb=MagicMock(), 
+        on_complete_cb=mock_complete,
+        import_mode="playlist"  # <--- Critical Flag
+    )
+    
+    worker = manager.import_queue.get()
+    worker()
+    
+    # Assertions
+    mock_converter.concat_to_m4b.assert_not_called()  # Ensure FFmpeg was entirely bypassed
+    
+    # Locate the injected virtual path
+    virtual_paths = [p for p in manager.local_library.keys() if p.endswith("_playlist")]
+    assert len(virtual_paths) == 1
+    
+    entry = manager.local_library[virtual_paths[0]]
+    assert entry["is_playlist"] is True
+    assert len(entry["chapters"]) == 3
+    
+    mock_complete.assert_called_once()
+
+def test_monitor_preserves_virtual_playlists(manager, monkeypatch):
+    """Verifies the self-cleaning DB monitor doesn't delete virtual playlists."""
+    manager.local_library = {
+        "/fake/MyBook_playlist": {
+            "title": "Virtual Playlist",
+            "is_playlist": True,
+            "chapters": [{"file_path": "/fake/real_file.mp3"}]
+        },
+        "/fake/deleted_file.m4b": {
+            "title": "Ghost File"
+        }
+    }
+    
+    # Simulate: The virtual playlist folder does NOT exist, but the underlying MP3 DOES.
+    def fake_exists(path):
+        return path == "/fake/real_file.mp3"
+    monkeypatch.setattr(os.path, "exists", fake_exists)
+    
+    # Break the infinite loop after one pass
+    import time
+    class BreakLoop(Exception): pass
+    monkeypatch.setattr(time, "sleep", MagicMock(side_effect=BreakLoop))
+    
+    with pytest.raises(BreakLoop):
+        manager.monitor_local_files(MagicMock(), MagicMock())
+        
+    # The standard missing file should be purged
+    assert "/fake/deleted_file.m4b" not in manager.local_library
+    
+    # The virtual playlist should survive because its underlying MP3 exists!
+    assert "/fake/MyBook_playlist" in manager.local_library
+
+    def test_import_folder_playlist_rebuild_preserves_data(manager, monkeypatch):
+        """Verifies that dropping a new file into a playlist folder preserves existing progress/bookmarks."""
+        monkeypatch.setattr(os.path, "isdir", lambda p: True)
+        monkeypatch.setattr(os.path, "exists", lambda p: True)
+        
+        # 1. Inject an existing playlist with user data into the library
+        virtual_path = "/fake/folder/MyAudiobook_playlist"
+        manager.local_library[virtual_path] = {
+            "title": "MyAudiobook",
+            "is_playlist": True,
+            "progress": {"Main": 3600.0},
+            "bookmarks": [{"time": 120, "note": "Cool intro"}],
+            "last_position": 3600.0,
+            "last_chapter": 2
+        }
+        
+        # 2. Simulate the background scanner finding the folder again
+        monkeypatch.setattr(os, "walk", lambda p: [("/fake/folder/MyAudiobook", [], ["track01.mp3", "track02.mp3"])])
+        
+        mock_converter = MagicMock()
+        mock_converter.get_metadata_and_chapters.return_value = {"format": {"duration": 60}}
+        
+        manager.import_folder(
+            folder_path="/fake/folder/MyAudiobook", 
+            converter=mock_converter, 
+            active_profile="Main", 
+            on_status_cb=MagicMock(), 
+            on_complete_cb=MagicMock(),
+            import_mode="playlist"
+        )
+        
+        manager.import_queue.get()() # Run worker
+        
+        # 3. Assert the playlist was rebuilt BUT the user data survived
+        entry = manager.local_library[virtual_path]
+        assert len(entry["chapters"]) == 2 # Rebuilt with the 2 tracks
+        assert entry["progress"]["Main"] == 3600.0 # Progress survived
+        assert len(entry["bookmarks"]) == 1 # Bookmarks survived
+        assert entry["last_chapter"] == 2

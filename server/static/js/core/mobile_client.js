@@ -15,7 +15,9 @@ class TomeBoxClient {
             speedIndex: 0,
             activeChapterIndex: 0,
             sleep: { mode: null, timeout: null, targetTime: null },
-            pairingViewLoaded: false
+            pairingViewLoaded: false,
+            isPlaylist: false,
+            globalDuration: 0
         };
 
         this.dom = {
@@ -107,7 +109,6 @@ class TomeBoxClient {
         const seekContainer = document.getElementById('seek-bar-container');
         if (seekContainer) seekContainer.addEventListener('click', (e) => this.seekAudio(e));
 
-        // Game Bindings
         document.querySelectorAll('.game-card').forEach(card => {
             card.addEventListener('click', (e) => {
                 const gameId = e.currentTarget.dataset.game;
@@ -164,7 +165,8 @@ class TomeBoxClient {
         this.dom.grid.innerHTML = '';
         this.state.allBooks = [];
         let uniqueShelves = new Set();
-        const validFormats = ['M4B', 'MP3', 'AAXC', 'AAX'];
+        // --- ADDED PLAYLIST FORMAT ---
+        const validFormats = ['M4B', 'MP3', 'AAXC', 'AAX', 'PLAYLIST'];
 
         for (const [path, data] of Object.entries(this.state.rawLibraryData)) {
             const isCloudOnly = data.download_status === 'cloud_only';
@@ -268,10 +270,12 @@ class TomeBoxClient {
     async startPlayback(filePath, title, author, fallbackPosition, asin) {
         this.saveProgressToServer(); 
         
-        let latestPos = fallbackPosition;
-        if (this.state.rawLibraryData[filePath]) {
-            latestPos = this.state.rawLibraryData[filePath].progress?.[this.state.currentProfile] || fallbackPosition;
-        }
+        // --- NEW: Global Playlist Evaluation ---
+        const bookData = this.state.rawLibraryData[filePath] || {};
+        this.state.isPlaylist = bookData.is_playlist === true;
+        this.state.globalDuration = (bookData.duration_min || 0) * 60;
+        
+        let latestPos = bookData.progress?.[this.state.currentProfile] || fallbackPosition;
 
         this.state.currentPath = filePath;
         this.state.currentAsin = asin;
@@ -287,21 +291,75 @@ class TomeBoxClient {
             this.state.currentChapters = await res.json();
         } catch(e) { this.state.currentChapters = []; }
         
-        this.dom.audio.src = `/api/stream?path=${encodeURIComponent(filePath)}`;
         this.dom.audio.playbackRate = this.state.speeds[this.state.speedIndex];
         
-        this.dom.audio.onloadedmetadata = () => { this.dom.audio.currentTime = latestPos; };
-        
-        this.dom.audio.play().then(() => {
-            if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
-            if (this.dom.playerBar) {
-                this.dom.playerBar.classList.remove('hidden');
-                document.querySelector('main').style.paddingBottom = 'calc(var(--player-height) + 20px)';
-            }
-        }).catch(err => console.error("Play failed:", err));
+        // --- NEW: Route via Global Seek ---
+        this.seekToGlobalTime(latestPos, true);
         
         this.setSleepOff(); 
         this.setupMediaSession(title, author, asin);
+        
+        if (this.dom.playerBar) {
+            this.dom.playerBar.classList.remove('hidden');
+            document.querySelector('main').style.paddingBottom = 'calc(var(--player-height) + 20px)';
+        }
+    }
+
+    // --- NEW: Master Timeline Router ---
+    seekToGlobalTime(targetTime, autoPlay = false) {
+        if (this.state.isPlaylist && this.state.currentChapters.length > 0) {
+            let targetIdx = 0;
+            for (let i = 0; i < this.state.currentChapters.length; i++) {
+                if (targetTime >= this.state.currentChapters[i].start) targetIdx = i; else break;
+            }
+            const targetCh = this.state.currentChapters[targetIdx];
+            const physicalPath = targetCh.file_path || this.state.currentPath;
+            
+            if (targetIdx !== this.state.activeChapterIndex || !this.dom.audio.src.includes(encodeURIComponent(physicalPath))) {
+                this.state.activeChapterIndex = targetIdx;
+                const wasPlaying = !this.dom.audio.paused || autoPlay;
+                
+                this.dom.audio.src = `/api/stream?path=${encodeURIComponent(physicalPath)}`;
+                
+                // FIXED: Fire play() immediately to satisfy strict mobile gesture rules
+                if (wasPlaying) {
+                    this.dom.audio.play().catch(e => console.log("Buffering...", e));
+                    if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
+                }
+                
+                this.dom.audio.onloadedmetadata = () => { 
+                    this.dom.audio.currentTime = Math.max(0, targetTime - targetCh.start); 
+                };
+            } else {
+                this.dom.audio.currentTime = Math.max(0, targetTime - targetCh.start);
+                if (autoPlay) {
+                    this.dom.audio.play().catch(() => {});
+                    if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
+                }
+            }
+        } else {
+            // Standard M4B Engine
+            if (!this.dom.audio.src || !this.dom.audio.src.includes(encodeURIComponent(this.state.currentPath))) {
+                this.dom.audio.src = `/api/stream?path=${encodeURIComponent(this.state.currentPath)}`;
+                const wasPlaying = !this.dom.audio.paused || autoPlay;
+                
+                // FIXED: Fire play() immediately to satisfy strict mobile gesture rules
+                if (wasPlaying) {
+                    this.dom.audio.play().catch(e => console.log("Buffering...", e));
+                    if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
+                }
+                
+                this.dom.audio.onloadedmetadata = () => { 
+                    this.dom.audio.currentTime = targetTime; 
+                };
+            } else {
+                this.dom.audio.currentTime = targetTime;
+                if (autoPlay) {
+                    this.dom.audio.play().catch(() => {});
+                    if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
+                }
+            }
+        }
     }
 
     async cueLastPlayedBook() {
@@ -320,31 +378,51 @@ class TomeBoxClient {
 
     bindAudioEvents() {
         this.dom.audio.addEventListener('timeupdate', () => this.handleTimeUpdate());
+        
+        // --- NEW: Gapless Playlist Advancing ---
         this.dom.audio.addEventListener('ended', () => { 
-            this.dom.playBtn.innerText = '▶'; 
-            if (this.dom.progressFill) this.dom.progressFill.style.width = '0%'; 
+            if (this.state.isPlaylist && this.state.activeChapterIndex + 1 < this.state.currentChapters.length) {
+                const nextCh = this.state.currentChapters[this.state.activeChapterIndex + 1];
+                this.seekToGlobalTime(nextCh.start, true);
+            } else {
+                this.dom.playBtn.innerText = '▶'; 
+                if (this.dom.progressFill) this.dom.progressFill.style.width = '0%'; 
+            }
         });
+        
         this.dom.audio.addEventListener('pause', () => this.saveProgressToServer());
     }
 
     handleTimeUpdate() {
-        if (!this.dom.audio.duration) return;
-        const currentTime = this.dom.audio.currentTime;
-        let chStart = 0; let chEnd = this.dom.audio.duration; let chTitle = document.getElementById('player-title')?.innerText || "Playing";
+        if (!this.dom.audio.duration && !this.state.isPlaylist) return;
+        
+        let globalTime = this.dom.audio.currentTime;
+        let chStart = 0; 
+        let chEnd = this.dom.audio.duration || 0; 
+        let chTitle = document.getElementById('player-title')?.innerText || "Playing";
 
-        if (this.state.currentChapters.length > 0) {
+        if (this.state.isPlaylist && this.state.currentChapters.length > 0) {
+            const currentCh = this.state.currentChapters[this.state.activeChapterIndex];
+            globalTime = this.dom.audio.currentTime + currentCh.start;
+            chStart = currentCh.start;
+            chEnd = currentCh.end || (chStart + this.dom.audio.duration);
+            chTitle = currentCh.title;
+        } else if (this.state.currentChapters.length > 0) {
             let activeIdx = 0;
             for (let i = 0; i < this.state.currentChapters.length; i++) {
-                if (currentTime >= this.state.currentChapters[i].start) activeIdx = i; else break;
+                if (globalTime >= this.state.currentChapters[i].start) activeIdx = i; else break;
             }
             this.state.activeChapterIndex = activeIdx;
             const currentCh = this.state.currentChapters[activeIdx];
-            chStart = currentCh.start; chTitle = currentCh.title;
-            if (activeIdx + 1 < this.state.currentChapters.length) { chEnd = this.state.currentChapters[activeIdx + 1].start; }
+            chStart = currentCh.start; 
+            chTitle = currentCh.title;
+            if (activeIdx + 1 < this.state.currentChapters.length) { 
+                chEnd = this.state.currentChapters[activeIdx + 1].start; 
+            }
         }
 
         const chapterDuration = chEnd - chStart;
-        const timeIntoChapter = currentTime - chStart;
+        const timeIntoChapter = globalTime - chStart;
         const progressPercent = chapterDuration > 0 ? (timeIntoChapter / chapterDuration) * 100 : 0;
 
         if (this.dom.progressFill) this.dom.progressFill.style.width = `${progressPercent}%`;
@@ -356,7 +434,7 @@ class TomeBoxClient {
         if (timeEl) timeEl.textContent = `${this.formatTime(timeIntoChapter)} / ${this.formatTime(chapterDuration)}`;
         
         if (this.state.sleep.mode === 'chapter' && this.state.sleep.targetTime !== null) {
-            if (this.dom.audio.currentTime >= this.state.sleep.targetTime - 1) {
+            if (globalTime >= this.state.sleep.targetTime - 1) {
                 this.dom.audio.pause();
                 this.dom.playBtn.innerText = '▶';
                 this.setSleepOff();
@@ -379,13 +457,18 @@ class TomeBoxClient {
 
     saveProgressToServer() {
         if (this.state.currentPath && this.dom.audio.currentTime > 0) {
+            let globalTime = this.dom.audio.currentTime;
+            if (this.state.isPlaylist && this.state.currentChapters.length > 0) {
+                globalTime += this.state.currentChapters[this.state.activeChapterIndex].start;
+            }
+            
             if (this.state.rawLibraryData[this.state.currentPath]) {
                 if (!this.state.rawLibraryData[this.state.currentPath].progress) this.state.rawLibraryData[this.state.currentPath].progress = {};
-                this.state.rawLibraryData[this.state.currentPath].progress[this.state.currentProfile] = this.dom.audio.currentTime;
+                this.state.rawLibraryData[this.state.currentPath].progress[this.state.currentProfile] = globalTime;
             }
             fetch(`/api/progress`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: this.state.currentPath, position: this.dom.audio.currentTime, profile: this.state.currentProfile }),
+                body: JSON.stringify({ path: this.state.currentPath, position: globalTime, profile: this.state.currentProfile }),
                 keepalive: true
             }).catch(() => {});
         }
@@ -395,8 +478,8 @@ class TomeBoxClient {
         if ('mediaSession' in navigator) {
             const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
             navigator.mediaSession.metadata = new MediaMetadata({ title, artist: author, album: 'TomeBox', artwork: artworkUrl });
-            navigator.mediaSession.setActionHandler('seekbackward', () => { this.dom.audio.currentTime -= 15; });
-            navigator.mediaSession.setActionHandler('seekforward', () => { this.dom.audio.currentTime += 15; });
+            navigator.mediaSession.setActionHandler('seekbackward', () => this.seekRelative(-15));
+            navigator.mediaSession.setActionHandler('seekforward', () => this.seekRelative(15));
         }
     }
 
@@ -414,21 +497,23 @@ class TomeBoxClient {
     }
 
     seekRelative(seconds) {
-        if (this.dom.audio.duration) {
-            this.dom.audio.currentTime = Math.max(0, Math.min(this.dom.audio.currentTime + seconds, this.dom.audio.duration));
-        }
+        let globalTime = this.dom.audio.currentTime + (this.state.isPlaylist && this.state.currentChapters.length > 0 ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
+        let maxTime = this.state.isPlaylist ? this.state.globalDuration : this.dom.audio.duration;
+        let newGlobalTime = Math.max(0, Math.min(globalTime + seconds, maxTime));
+        this.seekToGlobalTime(newGlobalTime, !this.dom.audio.paused);
     }
 
     skipChapter(direction) {
         if (!this.state.currentChapters.length) { this.seekRelative(direction * 15); return; }
-        const now = this.dom.audio.currentTime;
+        const now = this.dom.audio.currentTime + (this.state.isPlaylist ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
+        
         if (direction === 1) { 
             const nextCh = this.state.currentChapters.find(c => c.start > now + 2);
-            if (nextCh) this.dom.audio.currentTime = nextCh.start;
+            if (nextCh) this.seekToGlobalTime(nextCh.start, !this.dom.audio.paused);
         } else { 
             const prevCh = [...this.state.currentChapters].reverse().find(c => c.start < now - 3);
-            if (prevCh) this.dom.audio.currentTime = prevCh.start;
-            else this.dom.audio.currentTime = 0; 
+            if (prevCh) this.seekToGlobalTime(prevCh.start, !this.dom.audio.paused);
+            else this.seekToGlobalTime(0, !this.dom.audio.paused); 
         }
     }
 
@@ -439,16 +524,13 @@ class TomeBoxClient {
         if (this.dom.speedBtn) this.dom.speedBtn.innerText = spd.toFixed(1) + 'x';
     }
 
-    // --- GAME LOGIC ---
     launchGame(gameId) {
         document.getElementById('games-menu').style.display = 'none';
         document.getElementById('active-game-container').style.display = 'block';
 
-        // 1. Explicitly close the search bar if it is open
         const searchContainer = document.getElementById('search-container');
         if (searchContainer) searchContainer.classList.remove('open');
 
-        // 2. Explicitly hide the player bar and adjust page padding
         if (this.dom.playerBar) {
             this.dom.playerBar.classList.add('hidden');
             const mainContainer = document.querySelector('main');
@@ -459,24 +541,16 @@ class TomeBoxClient {
             window.activeGameEngine.stop();
         }
 
-        console.log("Launching:", gameId);
-
-        // Direct Global References. Safe across loaded script files.
         try {
             if (gameId === 'particles') window.activeGameEngine = typeof BubblePopEngine !== 'undefined' ? BubblePopEngine : null;
             else if (gameId === '2048') window.activeGameEngine = typeof MergeEngine !== 'undefined' ? MergeEngine : null;
             else if (gameId === 'breakout') window.activeGameEngine = typeof BreakoutEngine !== 'undefined' ? BreakoutEngine : null;
             else if (gameId === 'invaders') window.activeGameEngine = typeof SpaceInvadersEngine !== 'undefined' ? SpaceInvadersEngine : null;
-        } catch(e) {
-            console.error("Failed to map engine", e);
-            window.activeGameEngine = null;
-        }
+        } catch(e) { window.activeGameEngine = null; }
 
         if (window.activeGameEngine && typeof window.activeGameEngine.start === 'function') {
-            // Slight delay ensures the fixed container has fully drawn its 100vh bounds before the engine claims the canvas size
             setTimeout(() => window.activeGameEngine.start(), 10);
         } else {
-            console.error("Game engine not found or failed to start for:", gameId);
             this.exitGame();
         }
     }
@@ -496,7 +570,6 @@ class TomeBoxClient {
         document.getElementById('active-game-container').style.display = 'none';
         document.getElementById('games-menu').style.display = 'grid'; 
 
-        // Restore Player Bar (Only if an audiobook is currently loaded)
         if (this.state.currentPath && this.dom.playerBar) {
             this.dom.playerBar.classList.remove('hidden');
             const mainContainer = document.querySelector('main');
@@ -504,14 +577,13 @@ class TomeBoxClient {
         }
     }
 
-    // --- MODAL LOGIC ---
     openSleepMenu() { document.getElementById('sleep-modal').style.display = 'flex'; }
     
     openChapterMenu() {
         if (!this.state.currentChapters.length) return alert("No chapters found for this audiobook.");
         const list = document.getElementById('chapter-list');
         list.innerHTML = '';
-        const now = this.dom.audio.currentTime;
+        const now = this.dom.audio.currentTime + (this.state.isPlaylist ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
         
         let activeIdx = this.state.currentChapters.findIndex(c => c.start > now) - 1;
         if (activeIdx < 0 && now >= this.state.currentChapters[0].start) activeIdx = this.state.currentChapters.length - 1;
@@ -521,8 +593,7 @@ class TomeBoxClient {
             div.className = 'list-item' + (idx === activeIdx ? ' active' : '');
             div.innerHTML = `<span>${this.escapeHtml(ch.title)}</span> <span>${this.formatTime(ch.start)}</span>`;
             div.addEventListener('click', () => { 
-                this.dom.audio.currentTime = ch.start; 
-                if(this.dom.audio.paused) this.togglePlay(); 
+                this.seekToGlobalTime(ch.start, !this.dom.audio.paused);
                 this.closeAllModals(); 
             });
             list.appendChild(div);
@@ -548,14 +619,14 @@ class TomeBoxClient {
         if (!this.state.currentChapters.length) return;
         
         this.state.sleep.mode = 'chapter';
-        const now = this.dom.audio.currentTime;
+        const now = this.dom.audio.currentTime + (this.state.isPlaylist ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
         let currentIdx = this.state.currentChapters.findIndex(c => c.start > now) - 1;
         if (currentIdx < 0 && now >= this.state.currentChapters[0].start) currentIdx = this.state.currentChapters.length - 1;
         
         let targetIdx = currentIdx + chapterCount;
         this.state.sleep.targetTime = (targetIdx < this.state.currentChapters.length) 
             ? this.state.currentChapters[targetIdx].start 
-            : this.dom.audio.duration;
+            : (this.state.isPlaylist ? this.state.globalDuration : this.dom.audio.duration);
 
         document.getElementById('btn-sleep').style.color = 'var(--accent)';
         this.closeAllModals();
@@ -575,7 +646,6 @@ class TomeBoxClient {
         this.closeAllModals();
     }
 
-    // --- BOOKMARKS LOGIC ---
     async openBookmarksModal() {
         document.getElementById('bookmarks-modal').style.display = 'flex';
         await this.loadBookmarks();
@@ -608,8 +678,7 @@ class TomeBoxClient {
                     <button class="action-btn-secondary action-btn-danger" data-idx="${idx}">🗑️</button>
                 `;
                 row.querySelector('.profile-row-info').addEventListener('click', () => {
-                    this.dom.audio.currentTime = bm.time;
-                    if (this.dom.audio.paused) this.togglePlay();
+                    this.seekToGlobalTime(bm.time, true);
                     this.closeAllModals();
                 });
                 row.querySelector('.action-btn-danger').addEventListener('click', () => this.deleteBookmark(idx));
@@ -620,13 +689,13 @@ class TomeBoxClient {
 
     async addBookmark() {
         if (!this.state.currentPath || this.dom.audio.currentTime === undefined) return alert("No book is currently playing.");
-        const time = this.dom.audio.currentTime;
-        const note = prompt(`Add a note for this bookmark at ${this.formatTime(time)}:`, "Awesome moment");
+        const globalTime = this.dom.audio.currentTime + (this.state.isPlaylist && this.state.currentChapters.length > 0 ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
+        const note = prompt(`Add a note for this bookmark at ${this.formatTime(globalTime)}:`, "Awesome moment");
         if (note === null) return; 
         try {
             const res = await fetch('/api/library/bookmarks', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: this.state.currentPath, time: time, note: note.trim() })
+                body: JSON.stringify({ path: this.state.currentPath, time: globalTime, note: note.trim() })
             });
             if (res.ok) await this.loadBookmarks();
             else alert("Failed to save bookmark.");
@@ -645,18 +714,23 @@ class TomeBoxClient {
     }
 
     seekAudio(e) {
-        if (!this.dom.audio.duration) return;
+        if (!this.dom.audio.duration && !this.state.isPlaylist) return;
         const container = document.getElementById('seek-bar-container');
         const clickPercent = Math.max(0, Math.min(1, (e.clientX - container.getBoundingClientRect().left) / container.clientWidth));
         
-        let chStart = 0, chEnd = this.dom.audio.duration;
+        let chStart = 0, chEnd = this.dom.audio.duration; 
         if (this.state.currentChapters.length > 0) {
-            chStart = this.state.currentChapters[this.state.activeChapterIndex].start;
-            if (this.state.activeChapterIndex + 1 < this.state.currentChapters.length) {
-                chEnd = this.state.currentChapters[this.state.activeChapterIndex + 1].start;
+            const currentCh = this.state.currentChapters[this.state.activeChapterIndex];
+            chStart = currentCh.start;
+            if (this.state.isPlaylist) {
+                chEnd = currentCh.end || (chStart + this.dom.audio.duration);
+            } else {
+                chEnd = this.state.activeChapterIndex + 1 < this.state.currentChapters.length ? this.state.currentChapters[this.state.activeChapterIndex + 1].start : this.dom.audio.duration;
             }
         }
-        this.dom.audio.currentTime = chStart + ((chEnd - chStart) * clickPercent);
+        
+        const targetGlobalTime = chStart + ((chEnd - chStart) * clickPercent);
+        this.seekToGlobalTime(targetGlobalTime, !this.dom.audio.paused);
     }
 
     toggleSidebar() {
@@ -675,31 +749,23 @@ class TomeBoxClient {
     }
 
     closeAllModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
+    
     async loadPairingView() {
         if (this.state.pairingViewLoaded) return;
 
         const qrContainer = document.getElementById('qr-container');
         const urlElement = document.getElementById('pairing-url');
-        
         if (!qrContainer || !urlElement) return;
 
         try {
-            // FIXED: Point to the actual endpoint defined in web_app.py
             const res = await fetch('/api/pairing-info'); 
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
             
             const data = await res.json();
-            
-            // Extract the fully formed URL provided by the backend
             const pairingUrl = data.pairing_url;
-            
-            if (!pairingUrl) {
-                throw new Error("Missing pairing_url in server response");
-            }
             
             urlElement.textContent = pairingUrl;
             
-            // Dynamically load the QR library only when needed
             await new Promise((resolve, reject) => {
                 if (window.QRCode) { resolve(); return; }
                 const script = document.createElement('script');
@@ -710,16 +776,8 @@ class TomeBoxClient {
             });
             
             qrContainer.innerHTML = '';
-            new QRCode(qrContainer, {
-                text: pairingUrl,
-                width: 200,
-                height: 200,
-                colorDark: '#000000',
-                colorLight: '#ffffff',
-                correctLevel: QRCode.CorrectLevel.H
-            });
+            new QRCode(qrContainer, { text: pairingUrl, width: 200, height: 200, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
             
-            // Tap to copy functionality
             urlElement.addEventListener('click', () => {
                 navigator.clipboard.writeText(pairingUrl).then(() => {
                     const original = pairingUrl;
@@ -731,8 +789,7 @@ class TomeBoxClient {
             this.state.pairingViewLoaded = true;
             
         } catch (error) {
-            console.error('Failed to load pairing info:', error);
-            qrContainer.innerHTML = `<p style="color: #ff6b6b; text-align: center; margin: 0;">Failed to load pairing code.<br>Check console for details.</p>`;
+            qrContainer.innerHTML = `<p style="color: #ff6b6b; text-align: center; margin: 0;">Failed to load pairing code.</p>`;
             urlElement.textContent = "Error loading URL";
         }
     }
@@ -753,14 +810,12 @@ class TomeBoxClient {
         if (activeView) activeView.style.display = 'block';
         if (activeNav) activeNav.classList.add('active');
 
-        // NEW: Trigger the QR code fetch when the Pairing view is opened
         if (viewId === 'pairing') {
             this.loadPairingView();
         }
     }
 }
 
-// Instantiate securely when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.TomeBoxApp = new TomeBoxClient();
 });

@@ -58,6 +58,11 @@ class ConversionManager:
                     total_duration=total_duration, progress_cb=self.on_progress
                 )
 
+                new_data = original_data.copy()
+                new_data.update({
+                    "title": title, "format": "M4B", "path": output_path, "asin": asin
+                })
+                
                 # Update database with new file
                 self.library_manager.local_library[output_path] = {
                     "title": title, "format": "M4B", "path": output_path, "asin": asin

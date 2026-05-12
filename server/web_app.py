@@ -524,53 +524,78 @@ def create_server_app(tomebox):
                 return []
             try:
                 cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", path]
-                result = ProcessRunner.run_blocking(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace'
-                )
+                result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True)
                 raw_chapters = json.loads(result.stdout).get("chapters", [])
             except Exception as e:
                 if hasattr(tomebox, 'logger'): tomebox.logger(f"API Error - FFprobe chapter extraction failed: {e}")
                 return []
-        
-        # Always normalize to the {start, title} shape the web client expects.
-        # raw_chapters may be either ffprobe-shape dicts (from cache or live ffprobe)
-        # or already-normalized dicts. Handle both.
+
         chapters = []
         for ch in raw_chapters:
-            # Prefer start_time (seconds, string) — fall back to start (already-normalized seconds)
             try:
                 start = float(ch.get("start_time", ch.get("start", 0)))
+                end = float(ch.get("end_time", 0))
             except (TypeError, ValueError):
                 start = 0.0
+                end = 0.0
             
             title = (
                 ch.get("tags", {}).get("title")
                 or ch.get("title")
                 or f"Chapter {ch.get('id', 0) + 1}"
             )
-            chapters.append({"start": start, "title": title})
+            
+            chapters.append({
+                "start": start, 
+                "end": end,
+                "title": title,
+                "file_path": ch.get("file_path")  
+            })
         
         return chapters
 
     @api.get("/api/stream")
-    def stream_audio(path: str, request: Request):
-        if not path or path not in tomebox.library_manager.local_library:
-            raise HTTPException(status_code=403, detail="Forbidden: File is not registered in the local library.")
-        mime_type = "audio/mpeg" if path.lower().endswith(".mp3") else "audio/mp4"
-        if not path or not os.path.exists(path):
-            raise HTTPException(status_code=404, detail="Audio file not found.")
-
-        file_size = os.path.getsize(path)
+    async def stream_audio(request: Request, path: str):
+        if not path:
+            raise HTTPException(status_code=400, detail="Path parameter is required")
+            
+        try:
+            safe_path = os.path.abspath(path)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid path format")
+            
+        mime_type = "audio/mpeg" if safe_path.lower().endswith(".mp3") else "audio/mp4"
+        
+        # 1. Try the exact string match first (Fastest, bypasses slash formatting issues)
+        is_authorized = path in tomebox.library_manager.local_library
+        
+        # 2. Fallback: Rigorous absolute path comparison
+        if not is_authorized:
+            for lib_path, data in tomebox.library_manager.local_library.items():
+                # Check standard M4B files with mismatched slashes
+                if os.path.abspath(lib_path) == safe_path:
+                    is_authorized = True
+                    break
+                    
+                # Check underlying Playlist MP3s
+                if data.get("is_playlist"):
+                    for ch in data.get("chapters", []):
+                        if os.path.abspath(ch.get("file_path", "")) == safe_path:
+                            is_authorized = True
+                            break
+                if is_authorized: 
+                    break
+                
+        # 3. Final Gatekeeper
+        if not is_authorized or not os.path.exists(safe_path):
+            raise HTTPException(status_code=404, detail="File not found or unauthorized")
+        file_size = os.path.getsize(safe_path)
         range_header = request.headers.get("Range")
 
         if not range_header:
             headers = {"Accept-Ranges": "bytes", "Content-Length": str(file_size), "Content-Type": mime_type}
             def full_file_iterator():
-                with open(path, "rb") as f: yield from f
+                with open(safe_path, "rb") as f: yield from f
             return StreamingResponse(full_file_iterator(), headers=headers)
 
         byte_range = range_header.replace("bytes=", "").split("-")
@@ -583,7 +608,7 @@ def create_server_app(tomebox):
         chunk_size = (end_byte - start_byte) + 1
 
         def chunk_generator():
-            with open(path, "rb") as f:
+            with open(safe_path, "rb") as f:
                 f.seek(start_byte)
                 bytes_left = chunk_size
                 while bytes_left > 0:
