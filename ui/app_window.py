@@ -1138,23 +1138,8 @@ class AAXManagerApp:
             messagebox.showerror("Error", "Cannot tag an orphaned file without an ASIN. Please scrape its metadata first.")
             return
 
-        if "shelves_db" not in self.settings:
-            self.settings["shelves_db"] = {}
-
-        current_shelves = self.settings["shelves_db"].get(asin, [])
-        current_shelves_str = ", ".join(current_shelves)
-
-        new_shelves_str = simpledialog.askstring(
-            "Manage Shelves",
-            f"Enter custom shelves for:\n{title}\n\n(Separate multiple tags with commas)",
-            initialvalue=current_shelves_str
-        )
-
-        if new_shelves_str is not None:
-            tags = [t.strip() for t in new_shelves_str.split(",") if t.strip()]
-            self.settings["shelves_db"][asin] = tags
-            self.db.save_settings(self.settings)
-            self.refresh_library_ui()
+        from ui.components.dialogs import open_shelf_management_window
+        open_shelf_management_window(self, title, asin)
 
     def save_tray_setting(self):
         self.settings["minimize_to_tray"] = self.minimize_to_tray_var.get()

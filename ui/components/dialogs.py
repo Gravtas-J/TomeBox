@@ -1115,3 +1115,106 @@ def open_device_management_window(app):
 
     ttk.Button(btn_frame, text="Close", command=app.device_win.destroy).pack(side=tk.RIGHT, padx=(5, 0))
     ttk.Button(btn_frame, text="Revoke Selected", command=revoke_device).pack(side=tk.RIGHT)
+
+def open_shelf_management_window(app, title, asin):
+    import tkinter as tk
+    from tkinter import ttk
+
+    if "shelves_db" not in app.settings:
+        app.settings["shelves_db"] = {}
+
+    # 1. Gather all unique existing shelves across the entire library
+    all_shelves = set()
+    for shelves in app.settings["shelves_db"].values():
+        all_shelves.update(shelves)
+    all_shelves = sorted(list(all_shelves))
+
+    # 2. Get current shelves for this specific book
+    current_shelves = set(app.settings["shelves_db"].get(asin, []))
+
+    win = tk.Toplevel(app.root)
+    win.title("Manage Shelves")
+    win.geometry("380x480")
+    win.transient(app.root)
+    win.resizable(False, False)
+
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    win.configure(bg=bg_color)
+
+    main_frame = ttk.Frame(win, padding=15)
+    main_frame.pack(fill="both", expand=True)
+
+    ttk.Label(main_frame, text="Manage Shelves", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+    ttk.Label(main_frame, text=title[:45] + ("..." if len(title) > 45 else ""), font=("Segoe UI", 9, "italic")).pack(anchor="w", pady=(0, 10))
+
+    # --- New Shelf Entry ---
+    add_frame = ttk.Frame(main_frame)
+    add_frame.pack(fill="x", pady=(0, 10))
+    
+    new_shelf_var = tk.StringVar()
+    entry = ttk.Entry(add_frame, textvariable=new_shelf_var)
+    entry.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 5))
+    
+    checkbox_vars = {}
+
+    def add_new_shelf(event=None):
+        new_shelf = new_shelf_var.get().strip()
+        if new_shelf and new_shelf not in checkbox_vars:
+            # Remove empty state label if it exists
+            for widget in inner_frame.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    widget.destroy()
+                    
+            var = tk.BooleanVar(value=True)
+            checkbox_vars[new_shelf] = var
+            ttk.Checkbutton(inner_frame, text=new_shelf, variable=var).pack(anchor="w", pady=2)
+            new_shelf_var.set("")
+            
+            # Auto-scroll to the newly added item
+            canvas.update_idletasks()
+            canvas.yview_moveto(1.0)
+
+    ttk.Button(add_frame, text="Add", width=6, command=add_new_shelf).pack(side=tk.RIGHT)
+    entry.bind("<Return>", add_new_shelf)
+
+    # --- Existing Shelves List (Scrollable) ---
+    list_frame = ttk.LabelFrame(main_frame, text="Your Shelves", padding=5)
+    list_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+    canvas = tk.Canvas(list_frame, bg=bg_color, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+    inner_frame = tk.Frame(canvas, bg=bg_color)
+
+    inner_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas_win = canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+    canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
+
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side=tk.LEFT, fill="both", expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill="y")
+
+    if not all_shelves:
+        ttk.Label(inner_frame, text="No custom shelves created yet.\nType a name above to create one.", justify="center", font=("Segoe UI", 9, "italic")).pack(pady=20)
+    else:
+        for shelf in all_shelves:
+            var = tk.BooleanVar(value=(shelf in current_shelves))
+            checkbox_vars[shelf] = var
+            ttk.Checkbutton(inner_frame, text=shelf, variable=var).pack(anchor="w", pady=2)
+
+    # --- Bottom Controls ---
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(fill="x", side=tk.BOTTOM)
+
+    def save_shelves():
+        selected_shelves = [shelf for shelf, var in checkbox_vars.items() if var.get()]
+        app.settings["shelves_db"][asin] = selected_shelves
+        app.db.save_settings(app.settings)
+        
+        app.root.after(0, app.refresh_library_ui)
+        win.destroy()
+
+    ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(btn_frame, text="Save", command=save_shelves).pack(side=tk.RIGHT)
+    
+    win.focus_set()
