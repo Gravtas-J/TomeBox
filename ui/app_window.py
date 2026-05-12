@@ -2198,6 +2198,28 @@ class AAXManagerApp:
         
         local_data = self.library_manager.local_library.get(filepath, {})
         
+        if hasattr(self, 'player_cover_lbl'):
+            asin = local_data.get("asin")
+            cover_path = None
+            if asin:
+                cp = os.path.join(self.covers_dir, f"{asin}.jpg")
+                if os.path.exists(cp):
+                    cover_path = cp
+                    
+            if cover_path:
+                try:
+                    from PIL import Image, ImageTk
+                    thumb = Image.open(cover_path)
+                    thumb.thumbnail((45, 45), Image.Resampling.LANCZOS)
+                    thumb_photo = ImageTk.PhotoImage(thumb)
+                    self.player_cover_lbl.config(image=thumb_photo, width=45, height=45)
+                    self.player_cover_lbl.image = thumb_photo # Prevent garbage collection
+                except Exception:
+                    self.player_cover_lbl.config(image="", width=0, height=0)
+            else:
+                self.player_cover_lbl.config(image="", width=0, height=0)
+            if hasattr(self, 'btn_compact'):
+                self.btn_compact.config(state=tk.NORMAL)
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
