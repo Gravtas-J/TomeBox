@@ -350,3 +350,68 @@ def test_sync_missing_covers(manager, monkeypatch):
     # It should have skipped 111, downloaded 222, and skipped 333
     mock_get.assert_called_once_with("https://img2", timeout=10)
     mock_complete.assert_called_once()
+
+def test_apply_manual_metadata_custom_cover_and_embed(manager, monkeypatch):
+    """Tests manual metadata application with a custom cover image and FFmpeg embedding."""
+    filepath = "/fake/book.m4b"
+    manager.library_manager.local_library = {
+        filepath: {"title": "Old Title", "asin": "OLD_123"}
+    }
+    
+    new_data = {
+        "title": "Manual Title",
+        "authors": "Manual Author",
+        "series": "Manual Series",
+        "asin": "NEW_456"
+    }
+    
+    # Mock OS existence so it triggers the custom cover flow
+    monkeypatch.setattr("os.path.exists", lambda p: True)
+    
+    # --- FIXED MOCKING LOGIC ---
+    mock_img_instance = MagicMock()
+    mock_img_instance.mode = "RGBA" # Simulate a PNG with transparency
+    mock_img_instance.convert.return_value = mock_img_instance
+    
+    # Patch PIL.Image.open directly at the source
+    mock_open = MagicMock(return_value=mock_img_instance)
+    monkeypatch.setattr("PIL.Image.open", mock_open)
+    # ---------------------------
+    
+    # Mock FFmpeg execution and file replacement
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    monkeypatch.setattr("core.controllers.metadata_manager.ProcessRunner.run_blocking", mock_run)
+    monkeypatch.setattr("os.replace", MagicMock())
+    
+    # Execute
+    manager.apply_manual_metadata(
+        filepath, 
+        new_data, 
+        embed_to_file=True, 
+        new_cover_path="/fake/custom_upload.png"
+    )
+    
+    # 1. Verify DB Updates
+    updated = manager.library_manager.local_library[filepath]
+    assert updated["title"] == "Manual Title"
+    assert updated["authors"] == "Manual Author"
+    assert updated["series"] == "Manual Series"
+    assert updated["asin"] == "NEW_456"
+    
+    # 2. Verify PIL Image conversion (RGBA -> RGB for JPEG requirement)
+    mock_open.assert_called_with("/fake/custom_upload.png")
+    mock_img_instance.convert.assert_called_with("RGB")
+    mock_img_instance.save.assert_called_once()
+    
+    # 3. Verify FFmpeg Embedding flags
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    assert "ffmpeg" in cmd
+    assert "title=Manual Title" in cmd
+    assert "artist=Manual Author" in cmd
+    assert "show=Manual Series" in cmd
+    assert "series=Manual Series" in cmd
+    
+    # 4. Verify EventBus Notification fired for the UI
+    manager.on_apply_complete.assert_called_once_with(filepath, "Manual Title")
