@@ -92,8 +92,8 @@ def test_download_cancellation(downloader, monkeypatch):
     monkeypatch.setattr("builtins.open", MagicMock())
 
     # Mock OS cleanup functions
-    mock_remove = MagicMock()
-    monkeypatch.setattr(os, "remove", mock_remove)
+    mock_unlink = MagicMock()
+    monkeypatch.setattr("core.downloader.safe_unlink", mock_unlink)
     monkeypatch.setattr(os.path, "exists", lambda p: True)
 
     # Simulate the user clicking cancel after the first chunk downloads
@@ -106,23 +106,23 @@ def test_download_cancellation(downloader, monkeypatch):
         downloader.download_item("123", "Title", "/fake/dir", check_cancel_callback=mock_check_cancel)
 
     # Verify the partial file was aggressively deleted
-    mock_remove.assert_called_once()
-    assert "Title [123].aaxc.part" in mock_remove.call_args[0][0]
+    mock_unlink.assert_called_once()
+    assert "Title [123].aaxc.part" in mock_unlink.call_args[0][0]
 
 def test_download_network_error_cleanup(downloader, monkeypatch):
     """Verifies that an unexpected network crash leaves no orphan .part files."""
     # Force urllib to crash immediately upon opening the connection
     monkeypatch.setattr(urllib.request, "urlopen", MagicMock(side_effect=Exception("Connection Reset by Peer")))
 
-    mock_remove = MagicMock()
-    monkeypatch.setattr(os, "remove", mock_remove)
+    mock_unlink = MagicMock()
+    monkeypatch.setattr("core.downloader.safe_unlink", mock_unlink)
     monkeypatch.setattr(os.path, "exists", lambda p: True)
 
     with pytest.raises(Exception, match="Connection Reset"):
         downloader.download_item("123", "Title", "/fake/dir")
 
     # Verify cleanup still triggered
-    mock_remove.assert_called_once()
+    mock_unlink.assert_called_once()
 
 def test_download_cleanup_os_error(downloader, monkeypatch):
     """Verifies it doesn't crash if the OS locks the .part file during cleanup."""
@@ -131,7 +131,7 @@ def test_download_cleanup_os_error(downloader, monkeypatch):
     monkeypatch.setattr(os.path, "exists", lambda p: True)
     
     # Force the cleanup deletion to fail
-    monkeypatch.setattr(os, "remove", MagicMock(side_effect=OSError("File Locked")))
+    monkeypatch.setattr("core.downloader.safe_unlink", MagicMock())
     
     with pytest.raises(Exception, match="Crash"):
         downloader.download_item("123", "Title", "/fake/dir")

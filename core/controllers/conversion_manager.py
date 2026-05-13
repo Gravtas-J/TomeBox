@@ -4,6 +4,7 @@ import traceback
 import shutil
 from core.utils.wake import keep
 from core.events import default_bus
+from core.utils.fs import safe_unlink
 class ConversionManager:
     def __init__(self, converter, library_manager, logger, covers_dir, callbacks, get_drm_flags_cb, thread_pool, event_bus=None):
         self.thread_pool = thread_pool
@@ -69,12 +70,8 @@ class ConversionManager:
                 }
                 
                 # Delete the original encrypted file
-                if os.path.exists(input_path):
-                    try:
-                        os.remove(input_path)
-                        self.logger(f"Deleted original file: {input_path}")
-                    except Exception as e:
-                        self.logger(f"Could not delete original file: {e}")
+                safe_unlink(input_path, self.logger)
+                self.logger(f"Cleanup attempt finished for original file: {input_path}")
                         
                 if input_path in self.library_manager.local_library:
                     del self.library_manager.local_library[input_path]
@@ -159,11 +156,7 @@ class ConversionManager:
                             self.library_manager.local_library[out_path]["path"] = out_path
                             
                             # Delete the original file after batch convert
-                            if os.path.exists(filepath): 
-                                try:
-                                    os.remove(filepath)
-                                except OSError:
-                                    pass
+                            safe_unlink(filepath, self.logger)
                                     
                             if filepath in self.library_manager.local_library:
                                 del self.library_manager.local_library[filepath]

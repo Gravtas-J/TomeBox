@@ -6,6 +6,7 @@ from core.utils.wake import keep
 from core.utils.process_runner import ProcessRunner
 from core.downloader import DownloadCanceledError
 from core.events import default_bus
+from core.utils.fs import safe_unlink
 class DownloadManager:
     def __init__(self, api_client, logger, library_manager, callbacks, thread_pool, start_workers=True, event_bus=None):
         self.thread_pool = thread_pool
@@ -152,9 +153,7 @@ class DownloadManager:
         )
 
         if self.active_flags.get(asin, False):
-            if os.path.exists(filepath):
-                try: os.remove(filepath)
-                except OSError: pass
+            safe_unlink(filepath, self.logger)
             return
 
         final_filepath = filepath
@@ -182,31 +181,20 @@ class DownloadManager:
                 result = ProcessRunner.run_blocking(cmd, capture_output=True)
                 
                 if self.active_flags.get(asin, False):
-                    if os.path.exists(m4b_filepath):
-                        try: os.remove(m4b_filepath)
-                        except OSError: pass
-                    if os.path.exists(filepath):
-                        try: os.remove(filepath)
-                        except OSError: pass
+                    safe_unlink(m4b_filepath, self.logger)
+                    safe_unlink(filepath, self.logger)
                     return
 
                 if result.returncode == 0 and os.path.exists(m4b_filepath) and os.path.getsize(m4b_filepath) > 0:
-                    try:
-                        os.remove(filepath)
-                    except OSError:
-                        pass
+                    safe_unlink(filepath, self.logger)
                     final_filepath = m4b_filepath
                     final_ext = ".m4b"
                 else:
                     self.logger(f"Auto-conversion failed for {title}: {result.stderr}")
-                    if os.path.exists(m4b_filepath):
-                        try: os.remove(m4b_filepath)
-                        except OSError: pass
+                    safe_unlink(m4b_filepath, self.logger)
             except Exception as e:
                 self.logger(f"Auto-conversion exception for {title}: {e}")
-                if os.path.exists(m4b_filepath):
-                    try: os.remove(m4b_filepath)
-                    except OSError: pass
+                safe_unlink(m4b_filepath, self.logger)
 
         self.event_bus.publish("download.status", asin=asin, status="Complete", is_global=False)
             

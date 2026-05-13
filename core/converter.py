@@ -2,6 +2,7 @@ import subprocess
 import os
 import json
 from core.utils.process_runner import ProcessRunner
+from core.utils.fs import safe_unlink
 
 def resolve_cover_path(base_cover_path, asin):
     """
@@ -165,8 +166,7 @@ class AudioConverter:
             
             # --- CANCELLATION & CLEANUP LOGIC ---
             if getattr(self, 'is_cancelled', False):
-                if os.path.exists(temp_out_path): 
-                    os.remove(temp_out_path)
+                safe_unlink(temp_out_path, self.logger)
                 return False
                 
             success = self.current_process.returncode == 0 and os.path.exists(temp_out_path) and os.path.getsize(temp_out_path) > 0
@@ -177,31 +177,20 @@ class AudioConverter:
                 return True
             else:
                 # Nuke the broken file if FFmpeg errored out naturally
-                if os.path.exists(temp_out_path): 
-                    os.remove(temp_out_path)
+                safe_unlink(temp_out_path, self.logger)
                 return False
 
         except Exception as e:
             if getattr(self, 'current_process', None):
                 self.current_process.kill()
-            if os.path.exists(temp_out_path):
-                try: os.remove(temp_out_path)
-                except: pass
+            safe_unlink(temp_out_path, self.logger)
             if logger: logger(f"Concat aborted: {e}")
             return False
             
         finally:
-            if os.path.exists(concat_txt_path):
-                try: os.remove(concat_txt_path)
-                except: pass
-            if os.path.exists(metadata_txt_path):
-                try: os.remove(metadata_txt_path)
-                except: pass
-            
-            if os.path.exists(temp_out_path):
-                try: os.remove(temp_out_path)
-                except: pass
-                
+            safe_unlink(concat_txt_path, self.logger)
+            safe_unlink(metadata_txt_path, self.logger)
+            safe_unlink(temp_out_path, self.logger)
             self.current_process = None
 
     def cancel(self):
@@ -328,17 +317,11 @@ class AudioConverter:
             
         except Exception as e:
             # THE AFTERMATH CLEANUP
-            if os.path.exists(temp_out_path):
-                try: 
-                    os.remove(temp_out_path)
-                except OSError: 
-                    pass
+            safe_unlink(temp_out_path, self.logger)
             raise e
         finally:
             self.current_process = None
-            if os.path.exists(temp_out_path):
-                try: os.remove(temp_out_path)
-                except OSError: pass
+            safe_unlink(temp_out_path, self.logger)
 
     def split_into_chapters(self, input_path, target_dir, chapters, drm_flags, progress_cb=None):
         import subprocess
@@ -404,9 +387,7 @@ class AudioConverter:
                 self.current_process = None
                 
             if getattr(self, 'is_cancelled', False):
-                if os.path.exists(temp_out_path):
-                    try: os.remove(temp_out_path)
-                    except OSError: pass
+                safe_unlink(temp_out_path, self.logger)
                 self._cleanup_split_files(created_files, target_dir)
                 raise Exception("Chapter splitting cancelled by user.")
                 
@@ -415,8 +396,7 @@ class AudioConverter:
                     os.replace(temp_out_path, out_path)
                     created_files.append(out_path)
                 except OSError:
-                    try: os.remove(temp_out_path)
-                    except OSError: pass
+                    safe_unlink(temp_out_path, self.logger)
                 
         return True
 
@@ -424,8 +404,8 @@ class AudioConverter:
         """Helper to nuke all generated chapter files if the user aborts."""
         import os
         for f in created_files:
-            if os.path.exists(f):
-                try: os.remove(f)
-                except OSError: pass
-        try: os.rmdir(target_dir)
-        except OSError: pass
+            safe_unlink(f, self.logger)
+        try: 
+            os.rmdir(target_dir) # rmdir safely fails if directory isn't empty, no need to change
+        except OSError: 
+            pass

@@ -70,8 +70,8 @@ def test_convert_single_flow_and_original_deletion(manager, monkeypatch):
     monkeypatch.setattr("core.converter.ProcessRunner.run_async", mock_run_async)
     
     # Mock OS functions to simulate a successful file write and prevent real deletions
-    mock_remove = MagicMock()
-    monkeypatch.setattr(os, "remove", mock_remove)
+    mock_unlink = MagicMock()
+    monkeypatch.setattr("core.controllers.conversion_manager.safe_unlink", mock_unlink)
     monkeypatch.setattr(os, "replace", MagicMock())
     monkeypatch.setattr(os.path, "exists", lambda p: True)
     
@@ -95,15 +95,15 @@ def test_convert_single_flow_and_original_deletion(manager, monkeypatch):
     
     # 2. Verify original-file deletion (Built-in behavior of convert_single)
     # Check that os.remove was called on the original input file
-    assert call(input_file) in mock_remove.call_args_list
+    mock_unlink.assert_any_call(input_file, manager.logger)
     
     # Verify the library was updated
     assert output_file in manager.library_manager.local_library
 
 def test_split_book_preserves_original(manager, monkeypatch):
     """Verifies that splitting a book does NOT delete the source file."""
-    mock_remove = MagicMock()
-    monkeypatch.setattr(os, "remove", mock_remove)
+    mock_unlink = MagicMock()
+    monkeypatch.setattr("core.controllers.conversion_manager.safe_unlink", mock_unlink)
     monkeypatch.setattr(os, "makedirs", MagicMock())
     
     # Mock the converter's internal split logic so we only test the manager's orchestration
@@ -115,13 +115,13 @@ def test_split_book_preserves_original(manager, monkeypatch):
     manager.converter.split_into_chapters.assert_called_once()
     
     # Assert os.remove was never called on the input file
-    if mock_remove.called:
-        for args_call in mock_remove.call_args_list:
+    if mock_unlink.called:
+        for args_call in mock_unlink.call_args_list:
             assert args_call[0][0] != input_file, "Original file was erroneously deleted during split!"
 
 def test_batch_error_accumulation(manager, monkeypatch):
     """Feeds 5 paths, simulates failures on 2 of them, and verifies exactly 2 errors are caught."""
-    monkeypatch.setattr(os, "remove", MagicMock())
+    monkeypatch.setattr("core.controllers.conversion_manager.safe_unlink", MagicMock())
     monkeypatch.setattr(os, "replace", MagicMock())
     monkeypatch.setattr(os.path, "exists", lambda p: True) # Pretend all 5 paths exist on disk
     

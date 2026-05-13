@@ -1,6 +1,6 @@
 import os
 import urllib.request
-
+from core.utils.fs import safe_unlink
 
 class DownloadCanceledError(Exception):
     pass
@@ -71,10 +71,6 @@ class AudiobookDownloader:
 
         except Exception as e:
             # Clean up the partial file if it fails or gets canceled
-            if os.path.exists(temp_filepath):
-                try:
-                    os.remove(temp_filepath)
-                    self.logger(f"Cleaned up partial file: {temp_filepath}")
-                except OSError:
-                    pass
+            safe_unlink(temp_filepath, self.logger)
+            self.logger(f"Cleaned up partial file: {temp_filepath}")
             raise e
