@@ -13,6 +13,7 @@ import time
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list, normalize_title, find_matching_cloud_item
 from core.events import default_bus
+from core.utils.fs import safe_unlink
 class LibraryManager:
     def __init__(self, db_manager, api_client, base_dir, start_workers=True, event_bus=None):
         self.db = db_manager
@@ -865,7 +866,7 @@ class LibraryManager:
                                     if suspected_orphan in group_files:
                                         update_status(f"Corrupt part detected. Purging {os.path.basename(suspected_orphan)}...")
                                         try:
-                                            os.remove(suspected_orphan)
+                                            safe_unlink(suspected_orphan, logger)
                                             group_files.remove(suspected_orphan)
                                             if logger: logger(f"Purged offending file: {suspected_orphan}")
                                             out_m4b = suspected_orphan

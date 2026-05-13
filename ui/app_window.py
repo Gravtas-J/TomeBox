@@ -49,7 +49,7 @@ from core.controllers.download_manager import DownloadManager
 from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
-from core.controllers.stats_manager import StatsManager
+from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -76,37 +76,6 @@ class AAXManagerApp:
     def file_path(self, val): 
         self._active_book_path = val
         self.playback.file_path = val
-
-    @property
-    def chapters(self): return self.playback.chapters
-    @chapters.setter
-    def chapters(self, val): self.playback.chapters = val
-
-    @property
-    def current_chapter_idx(self): return self.playback.current_chapter_idx
-    @current_chapter_idx.setter
-    def current_chapter_idx(self, val): self.playback.current_chapter_idx = val
-
-    @property
-    def current_play_time(self): return self.playback.current_play_time
-    @current_play_time.setter
-    def current_play_time(self, val): self.playback.current_play_time = val
-
-    @property
-    def chapter_duration(self): return self.playback.chapter_duration
-    @chapter_duration.setter
-    def chapter_duration(self, val): self.playback.chapter_duration = val
-
-    @property
-    def is_playing(self): return self.playback.is_playing
-    @is_playing.setter
-    def is_playing(self, val): self.playback.is_playing = val
-
-    @property
-    def is_paused(self): return self.playback.is_paused
-    @is_paused.setter
-    def is_paused(self, val): self.playback.is_paused = val
-
     def __init__(self, root, base_dir):
         self.root = root
         self.root.title("TomeBox")
@@ -321,14 +290,7 @@ class AAXManagerApp:
         
         self.session_listen_buffer = 0.0
         
-        self.achievements = {
-            "first_dl": {"title": "System Integration Complete", "desc": "Download your first audiobook.", "type": "books_downloaded", "threshold": 1},
-            "hoarder_1": {"title": "Spatial Expansion", "desc": "Download 10 audiobooks.", "type": "books_downloaded", "threshold": 10},
-            "first_finish": {"title": "Core Consumed", "desc": "Finish an audiobook.", "type": "books_finished", "threshold": 1},
-            "finish_5": {"title": "Path Advancement", "desc": "Finish 5 audiobooks.", "type": "books_finished", "threshold": 5},
-            "listen_10h": {"title": "Mana Cultivator", "desc": "Listen for 10 total hours.", "type": "seconds_listened", "threshold": 36000},
-            "listen_50h": {"title": "Dao of the Tome", "desc": "Listen for 50 total hours.", "type": "seconds_listened", "threshold": 180000}
-        }
+        self.achievements = ACHIEVEMENTS
         self.root.after(1500, self._prompt_resume_imports)
 
     
@@ -1095,7 +1057,7 @@ class AAXManagerApp:
         
         target_idx = tree.index(selected)
 
-        if 0 <= target_idx < len(self.chapters):
+        if 0 <= target_idx < len(self.playback.chapters):
             # Close the window
             if hasattr(self, 'chapter_win') and self.chapter_win:
                 self.chapter_win.destroy()
@@ -1104,8 +1066,8 @@ class AAXManagerApp:
             self.stop_audio()
                 
             # Set the new target
-            self.current_chapter_idx = target_idx
-            self.current_play_time = 0.0
+            self.playback.current_chapter_idx = target_idx
+            self.playback.current_play_time = 0.0
             
             self.play_chapter()
 
@@ -1208,9 +1170,9 @@ class AAXManagerApp:
 
     def on_filter_change(self):
 
-        if self.is_playing:
+        if self.playback.is_playing:
             self.pause_audio()
-            self.is_paused = False
+            self.playback.is_paused = False
             self.resume_playback()
 
     def handle_window_close(self):
@@ -1276,8 +1238,8 @@ class AAXManagerApp:
                 
                 
                 # Visually move the progress bar on the PC screen
-                if hasattr(self, 'progress_var') and self.chapters:
-                    total_duration = float(self.chapters[-1].get("end_time", 0))
+                if hasattr(self, 'progress_var') and self.playback.chapters:
+                    total_duration = float(self.playback.chapters[-1].get("end_time", 0))
                     if total_duration > 0:
                         self.progress_var.set((abs_position / total_duration) * 100)
                         
@@ -2161,7 +2123,7 @@ class AAXManagerApp:
             self.sleep_mode = None
             self.timer_btn.config(text="Sleep: Off")
             
-            if self.is_playing:
+            if self.playback.is_playing:
                 self.logger.info("Sleep timer (minutes) finished. Pausing playback.")
                 self.pause_audio()
             return
@@ -2360,10 +2322,10 @@ class AAXManagerApp:
         is_encrypted = filepath.endswith(".aax") or filepath.endswith(".aaxc")
         
         # --- 1. Clear ghost state immediately to prevent UI hanging on the old book ---
-        self.chapters = []
-        self.current_chapter_idx = 0
-        self.current_play_time = 0.0
-        self.chapter_duration = 0.0
+        self.playback.chapters = []
+        self.playback.current_chapter_idx = 0
+        self.playback.current_play_time = 0.0
+        self.playback.chapter_duration = 0.0
         self.update_info() 
         
         self.dl_status_var.set("Analyzing...")
@@ -2406,22 +2368,22 @@ class AAXManagerApp:
         
         if cached_chapters:
             # Instant load from cache
-            self.chapters = cached_chapters
+            self.playback.chapters = cached_chapters
         else:
             # First time load: Run ffprobe and cache the result
             self.dl_status_var.set(f"Extracting chapters: {os.path.basename(self.file_path)}")
             self.root.update()
             
-            self.chapters = self.extract_chapters(self.file_path)
+            self.playback.chapters = self.extract_chapters(self.file_path)
             
-            local_data["chapters"] = self.chapters
+            local_data["chapters"] = self.playback.chapters
             self.library_manager.local_library[filepath] = local_data
             self.library_manager.db.save_local_db(self.library_manager.local_library)
 
         self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
         
         # --- 3. Moved dummy chapter generation here so it evaluates properly ---
-        if not self.chapters:
+        if not self.playback.chapters:
             self.logger.info("No chapters found in file. Generating dummy master chapter.")
             duration_sec = local_data.get("duration_min", 0) * 60
             
@@ -2431,7 +2393,7 @@ class AAXManagerApp:
                 except Exception:
                     duration_sec = 86400 
                     
-            self.chapters = [{
+            self.playback.chapters = [{
                 "id": 0,
                 "start_time": "0.000000",
                 "end_time": str(duration_sec),
@@ -2447,34 +2409,34 @@ class AAXManagerApp:
             
         if abs_pos is not None:
             found_chap = 0
-            for i, chap in enumerate(self.chapters):
+            for i, chap in enumerate(self.playback.chapters):
                 start = float(chap.get("start_time", 0))
                 end = float(chap.get("end_time", 0))
                 if start <= abs_pos < end:
                     found_chap = i
                     break
-                if i == len(self.chapters) - 1 and abs_pos >= end:
+                if i == len(self.playback.chapters) - 1 and abs_pos >= end:
                     found_chap = i
                     
-            self.current_chapter_idx = found_chap
-            self.current_play_time = max(0.0, abs_pos - float(self.chapters[found_chap].get("start_time", 0)))
+            self.playback.current_chapter_idx = found_chap
+            self.playback.current_play_time = max(0.0, abs_pos - float(self.playback.chapters[found_chap].get("start_time", 0)))
         else:
-            self.current_chapter_idx = local_data.get("last_chapter", 0)
-            self.current_play_time = local_data.get("last_time", 0.0)
+            self.playback.current_chapter_idx = local_data.get("last_chapter", 0)
+            self.playback.current_play_time = local_data.get("last_time", 0.0)
         
-        if self.current_chapter_idx >= len(self.chapters):
-            self.current_chapter_idx = 0
-            self.current_play_time = 0.0
+        if self.playback.current_chapter_idx >= len(self.playback.chapters):
+            self.playback.current_chapter_idx = 0
+            self.playback.current_play_time = 0.0
             
         self.update_info()
         
-        chapter = self.chapters[self.current_chapter_idx]
-        self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
+        chapter = self.playback.chapters[self.playback.current_chapter_idx]
+        self.playback.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
         
-        curr_str = self.format_time(self.current_play_time)
-        dur_str = self.format_time(self.chapter_duration)
+        curr_str = self.format_time(self.playback.current_play_time)
+        dur_str = self.format_time(self.playback.chapter_duration)
         self.time_label.config(text=f"{curr_str} / {dur_str}")
-        percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
+        percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
         self.progress_var.set(percent)
 
         self.metadata_manager.fetch_display_metadata(filepath)
@@ -2485,21 +2447,21 @@ class AAXManagerApp:
             messagebox.showwarning("No File", "Please load an audiobook first.")
             return
 
-        was_playing = self.is_playing
+        was_playing = self.playback.is_playing
         if was_playing:
             self.pause_audio()
 
-        current_time = self.current_play_time
-        chapter_idx = self.current_chapter_idx
+        current_time = self.playback.current_play_time
+        chapter_idx = self.playback.current_chapter_idx
 
         abs_time = current_time
-        if self.chapters:
-            abs_time += float(self.chapters[chapter_idx].get("start_time", 0))
+        if self.playback.chapters:
+            abs_time += float(self.playback.chapters[chapter_idx].get("start_time", 0))
 
         note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.format_time(current_time)}:")
 
         if was_playing:
-            self.is_paused = False
+            self.playback.is_paused = False
             self.resume_playback()
             
         if not note: return 
@@ -2538,8 +2500,8 @@ class AAXManagerApp:
             chap_title = f"Chapter {chap_idx + 1}"
             
             # Use loaded chapters if it's the active file, otherwise use generic title
-            if target_path == self.file_path and self.chapters and chap_idx < len(self.chapters):
-                chap_title = self.chapters[chap_idx].get("tags", {}).get("title", chap_title)
+            if target_path == self.file_path and self.playback.chapters and chap_idx < len(self.playback.chapters):
+                chap_title = self.playback.chapters[chap_idx].get("tags", {}).get("title", chap_title)
                 
             t_str = self.format_time(bm.get("time", 0))
             display_time = f"{chap_title} - {t_str}"
@@ -2564,8 +2526,8 @@ class AAXManagerApp:
                 self.load_specific_file(target_path)
             
             self.stop_audio()
-            self.current_chapter_idx = bm.get("chapter_idx", 0)
-            self.current_play_time = bm.get("time", 0.0)
+            self.playback.current_chapter_idx = bm.get("chapter_idx", 0)
+            self.playback.current_play_time = bm.get("time", 0.0)
             
             self.play_chapter()
 
@@ -2685,23 +2647,23 @@ class AAXManagerApp:
         return metadata.get("chapters", [])
 
     def play_chapter(self):
-        if not self.file_path or not self.chapters: return
+        if not self.file_path or not self.playback.chapters: return
         
         # 1. Update UI Info
-        chapter = self.chapters[self.current_chapter_idx]
-        self.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
+        chapter = self.playback.chapters[self.playback.current_chapter_idx]
+        self.playback.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
         self.update_info()
         
         # 2. Resume playback
-        self.is_paused = False
+        self.playback.is_paused = False
         self.resume_playback()
 
     def resume_playback(self):
         local_data = self.library_manager.local_library.get(self.file_path, {})
         is_playlist = local_data.get("is_playlist", False)
         
-        if is_playlist and self.chapters:
-            chapter = self.chapters[self.current_chapter_idx]
+        if is_playlist and self.playback.chapters:
+            chapter = self.playback.chapters[self.playback.current_chapter_idx]
             physical_file = chapter.get("file_path", self.file_path)
             self.playback.file_path = physical_file
             self.playback.is_playlist = True
@@ -2709,7 +2671,7 @@ class AAXManagerApp:
             self.playback.file_path = self.file_path
             self.playback.is_playlist = False
 
-        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.playback.file_path.endswith((".aax", ".aaxc")) else None
+        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
         
         # Make sure the controller has the latest UI settings before playing
         self.playback.set_speed(float(self.playback_speed.get().replace("x", "")))
@@ -2722,24 +2684,24 @@ class AAXManagerApp:
             drm_flags=drm_flags
         )
         
-        self.is_playing = True
+        self.playback.is_playing = True
 
     def pause_audio(self):
-        if self.is_playing:
+        if self.playback.is_playing:
             self.playback.pause()
-            self.is_playing = False
-            self.is_paused = True
+            self.playback.is_playing = False
+            self.playback.is_paused = True
             
-            curr_str = self.format_time(self.current_play_time)
-            dur_str = self.format_time(self.chapter_duration)
+            curr_str = self.format_time(self.playback.current_play_time)
+            dur_str = self.format_time(self.playback.chapter_duration)
             self.time_label.config(text=f"{curr_str} / {dur_str}")
             
             self.save_playback_state()
 
     def stop_audio(self):
         self.playback.stop()
-        self.is_playing = False
-        self.is_paused = False
+        self.playback.is_playing = False
+        self.playback.is_paused = False
         self.save_playback_state()
 
     def cancel_active_task(self):
@@ -2774,15 +2736,15 @@ class AAXManagerApp:
             self.resume_playback()
             
         # If paused, update the UI visually (if playing, the background tick will handle it)
-        if self.is_paused:
-            curr_str = self.format_time(self.current_play_time)
-            dur_str = self.format_time(self.chapter_duration)
+        if self.playback.is_paused:
+            curr_str = self.format_time(self.playback.current_play_time)
+            dur_str = self.format_time(self.playback.chapter_duration)
             self.time_label.config(text=f"{curr_str} / {dur_str}")
-            percent = (self.current_play_time / self.chapter_duration) * 100 if self.chapter_duration > 0 else 0
+            percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
             self.progress_var.set(percent)
 
     def on_progress_click(self, event):
-        if not hasattr(self, 'chapter_duration') or self.chapter_duration <= 0:
+        if not hasattr(self, 'chapter_duration') or self.playback.chapter_duration <= 0:
             return
             
         # Calculate percentage based on where the mouse clicked relative to the width
@@ -2791,10 +2753,10 @@ class AAXManagerApp:
         
         if bar_width > 0:
             percent = click_x / bar_width
-            target_time = self.chapter_duration * percent
+            target_time = self.playback.chapter_duration * percent
             
             # Since your seek method takes an offset, we calculate the difference
-            offset = target_time - self.current_play_time
+            offset = target_time - self.playback.current_play_time
             self.seek_audio(offset)
 
     def on_speed_change(self, event=None):
@@ -2802,17 +2764,17 @@ class AAXManagerApp:
         self.playback.set_speed(speed_val)
         
         # FFplay requires a restart to change speed mid-stream
-        if self.is_playing:
+        if self.playback.is_playing:
             self.pause_audio()
-            self.is_paused = False
+            self.playback.is_paused = False
             self.resume_playback()
 
     def on_volume_change(self, event=None):
         self.playback.set_volume(int(self.volume_var.get()))
         # Only restart if we are on Mac/Linux (Windows changes it dynamically via pycaw)
-        if os.name != 'nt' and self.is_playing:
+        if os.name != 'nt' and self.playback.is_playing:
             self.pause_audio()
-            self.is_paused = False
+            self.playback.is_paused = False
             self.resume_playback()
 
     def format_time(self, seconds):
@@ -2834,17 +2796,17 @@ class AAXManagerApp:
                     self.timer_btn.config(text="Sleep: Off")
                     self.logger.info("Sleep timer (chapters) finished. Pausing playback.")
                     
-                    self.is_paused = True
+                    self.playback.is_paused = True
                     self.update_info()
-                    curr_str = self.format_time(self.current_play_time)
-                    dur_str = self.format_time(self.chapter_duration)
+                    curr_str = self.format_time(self.playback.current_play_time)
+                    dur_str = self.format_time(self.playback.chapter_duration)
                     self.time_label.config(text=f"{curr_str} / {dur_str}")
                     self.progress_var.set(0)
                     return
                 else:
                     self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
 
-            self.is_paused = False
+            self.playback.is_paused = False
             self.update_info()
             self.resume_playback()
             
@@ -2862,13 +2824,13 @@ class AAXManagerApp:
 
         
         # 3. Resume playing
-        self.is_paused = False
+        self.playback.is_paused = False
         self.update_info()
         self.resume_playback()
 
     def update_info(self):
-        if self.chapters:
-            title = self.chapters[self.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.current_chapter_idx + 1}")
+        if self.playback.chapters:
+            title = self.playback.chapters[self.playback.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.playback.current_chapter_idx + 1}")
             self.info_label.config(text=f"Playing:\n{title}")
 
     def reset_ui_if_idle(self):
