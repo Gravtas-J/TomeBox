@@ -143,7 +143,7 @@ def test_firewall_rule_checks(manager):
     
     mock_result_exists = MagicMock()
     mock_result_exists.returncode = 0
-    mock_result_exists.stdout = "Rule Name: TomeBox" 
+    mock_result_exists.stdout = "TomeBox"
     
     # Use context managers so the OS patch is strictly isolated to the function execution
     with patch("os.name", "nt"), \
