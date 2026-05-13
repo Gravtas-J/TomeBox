@@ -134,27 +134,39 @@ def test_toggle_system_sleep(manager, monkeypatch):
     # 0x80000000 = 2147483648 (Continuous)
     mock_ctypes.windll.kernel32.SetThreadExecutionState.assert_called_with(2147483648)
 
-def test_firewall_rule_checks(manager, monkeypatch):
-    """Verifies the firewall checker logic without querying the real host OS."""
-    monkeypatch.setattr(os, "name", "nt")
-    # 1. Create a fake subprocess result that pretends the rule exists
+import os
+import subprocess
+from unittest.mock import patch, MagicMock
+
+def test_firewall_rule_checks(manager):
+    """Verifies the firewall checker logic safely without crashing pytest on Linux CI/CD."""
+    
     mock_result_exists = MagicMock()
     mock_result_exists.returncode = 0
-    mock_result_exists.stdout = "Rule Name: TomeBox" # Or whatever your checker looks for
+    mock_result_exists.stdout = "Rule Name: TomeBox" 
     
-    # 2. Intercept the system call (Adjust the import path to match whatever 
-    monkeypatch.setattr("core.utils.process_runner.ProcessRunner.run_blocking", MagicMock(return_value=mock_result_exists))
+    # Use context managers so the OS patch is strictly isolated to the function execution
+    with patch("os.name", "nt"), \
+         patch("subprocess.run", return_value=mock_result_exists), \
+         patch("core.utils.process_runner.ProcessRunner.run_blocking", return_value=mock_result_exists):
+        
+        result_true = manager._is_firewall_rule_installed()
+        
+    # Assert OUTSIDE the 'with' block so pytest can safely format tracebacks if it fails!
+    assert result_true is True
     
-    # 3. Assert the True path
-    assert manager._is_firewall_rule_installed() is True
     
-    # 4. Assert the False path
     mock_result_missing = MagicMock()
     mock_result_missing.returncode = 1
     mock_result_missing.stdout = "No rules match the specified criteria."
     
-    monkeypatch.setattr(subprocess, "run", MagicMock(return_value=mock_result_missing))
-    assert manager._is_firewall_rule_installed() is False
+    with patch("os.name", "nt"), \
+         patch("subprocess.run", return_value=mock_result_missing), \
+         patch("core.utils.process_runner.ProcessRunner.run_blocking", return_value=mock_result_missing):
+        
+        result_false = manager._is_firewall_rule_installed()
+        
+    assert result_false is False
 
 def test_add_firewall_rule(manager, monkeypatch):
     """Verifies UAC escalation call for adding firewall rules."""
