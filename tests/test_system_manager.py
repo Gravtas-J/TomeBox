@@ -135,34 +135,30 @@ def test_toggle_system_sleep(manager, monkeypatch):
     mock_ctypes.windll.kernel32.SetThreadExecutionState.assert_called_with(2147483648)
 
 def test_firewall_rule_checks(manager):
-    """Verifies the firewall checker logic safely without crashing pytest on Linux CI/CD."""
+    """Verifies the firewall checker logic safely without running netsh on CI/CD."""
     
+    # --- TEST 1: Rule Exists (True) ---
     mock_result_exists = MagicMock()
-    mock_result_exists.returncode = 0
-    mock_result_exists.stdout = "TomeBox"
+    # As long as "No rules match" is NOT in this string, it will return True
+    mock_result_exists.stdout = "Rule Name: TomeBox Web Server\nEnabled: Yes\nDirection: In" 
     
-    # Use context managers so the OS patch is strictly isolated to the function execution
-    with patch("os.name", "nt"), \
-         patch("subprocess.run", return_value=mock_result_exists), \
-         patch("core.utils.process_runner.ProcessRunner.run_blocking", return_value=mock_result_exists):
+    with patch("subprocess.run", return_value=mock_result_exists):
+        assert manager._is_firewall_rule_installed() is True
         
-        result_true = manager._is_firewall_rule_installed()
         
-    # Assert OUTSIDE the 'with' block so pytest can safely format tracebacks if it fails!
-    assert result_true is True
-    
-    
+    # --- TEST 2: Rule Missing (False) ---
     mock_result_missing = MagicMock()
-    mock_result_missing.returncode = 1
+    # The string MUST contain "No rules match"
     mock_result_missing.stdout = "No rules match the specified criteria."
     
-    with patch("os.name", "nt"), \
-         patch("subprocess.run", return_value=mock_result_missing), \
-         patch("core.utils.process_runner.ProcessRunner.run_blocking", return_value=mock_result_missing):
+    with patch("subprocess.run", return_value=mock_result_missing):
+        assert manager._is_firewall_rule_installed() is False
         
-        result_false = manager._is_firewall_rule_installed()
-        
-    assert result_false is False
+
+    # --- TEST 3: Subprocess Exception (False) ---
+    # Verify the try/except block safely catches execution errors
+    with patch("subprocess.run", side_effect=Exception("Terminal crashed")):
+        assert manager._is_firewall_rule_installed() is False
 
 def test_add_firewall_rule(manager, monkeypatch):
     """Verifies UAC escalation call for adding firewall rules."""
