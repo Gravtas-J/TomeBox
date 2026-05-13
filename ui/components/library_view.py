@@ -83,8 +83,7 @@ def setup_library_view(app, parent):
     count_frame = ttk.Frame(lib_frame)
     count_frame.pack(fill="x", pady=(0, 5))
     
-    app.lib_count_var = tk.StringVar(value="Books found: 0")
-    count_label = ttk.Label(count_frame, textvariable=app.lib_count_var, cursor="question_arrow", font=("Segoe UI", 9, "bold"))
+    count_label = ttk.Label(count_frame, textvariable=app.ui_state.lib_count, cursor="question_arrow", font=("Segoe UI", 9, "bold"))
     count_label.pack(side=tk.LEFT)
     app.lib_count_tooltip = ToolTip(count_label)
 
@@ -93,32 +92,28 @@ def setup_library_view(app, parent):
 
     ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
     
-    app.search_var = tk.StringVar()
-    app.search_var.trace_add("write", lambda *args: app.refresh_library_ui()) 
-    app.search_entry = ttk.Entry(filter_frame, textvariable=app.search_var, width=35)
+    app.ui_state.search.trace_add("write", lambda *args: app.refresh_library_ui()) 
+    app.search_entry = ttk.Entry(filter_frame, textvariable=app.ui_state.search, width=35)
     app.search_entry.pack(side=tk.LEFT, padx=(0, 20))
 
     ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 5))
     
-    app.filter_var = tk.StringVar(value="All")
-    filter_combo = ttk.Combobox(filter_frame, textvariable=app.filter_var, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
+    filter_combo = ttk.Combobox(filter_frame, textvariable=app.ui_state.filter, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
     filter_combo.pack(side=tk.LEFT)
     filter_combo.bind("<<ComboboxSelected>>", lambda e: app.refresh_library_ui())
 
     ttk.Label(filter_frame, text="Shelf:").pack(side=tk.LEFT, padx=(10, 5))
-    app.shelf_filter_var = tk.StringVar(value="All Shelves")
-    app.shelf_combo = ttk.Combobox(filter_frame, textvariable=app.shelf_filter_var, state="readonly", width=15)
+    app.shelf_combo = ttk.Combobox(filter_frame, textvariable=app.ui_state.shelf_filter, state="readonly", width=15)
     app.shelf_combo.pack(side=tk.LEFT)
     app.shelf_combo.bind("<<ComboboxSelected>>", lambda e: app.refresh_library_ui())
 
     app.sort_label = ttk.Label(filter_frame, text="Sort:")
-    app.sort_var = tk.StringVar(value=app.settings.get("sort_pref", "Date Added (Newest)"))
     sort_options = ["Title (A-Z)", "Author (A-Z)", "Date Added (Newest)", "Date Added (Oldest)"]
     
-    app.sort_combo = ttk.Combobox(filter_frame, textvariable=app.sort_var, values=sort_options, state="readonly", width=16)
+    app.sort_combo = ttk.Combobox(filter_frame, textvariable=app.ui_state.sort, values=sort_options, state="readonly", width=16)
     
     def on_sort_change(event):
-        app.settings["sort_pref"] = app.sort_var.get()
+        app.settings["sort_pref"] = app.ui_state.sort.get()
         if hasattr(app, 'db'):
             app.db.save_settings(app.settings)
         app.refresh_library_ui()
@@ -232,24 +227,19 @@ def setup_library_view(app, parent):
     dl_prog_frame = ttk.Frame(lib_frame)
     dl_prog_frame.pack(fill="x", padx=5)
     
-    app.dl_status_var = tk.StringVar(value="Idle")
-    app.dl_progress_var = tk.DoubleVar()
-    
     status_frame = ttk.Frame(dl_prog_frame)
     status_frame.pack(side=tk.TOP, fill="x")
     
-    ttk.Label(status_frame, textvariable=app.dl_status_var).pack(side=tk.LEFT)
+    ttk.Label(status_frame, textvariable=app.ui_state.dl_status).pack(side=tk.LEFT)
     # The new Cancel Task button
     ttk.Button(status_frame, text="Cancel Task", command=app.cancel_active_task).pack(side=tk.RIGHT)
     
-    app.error_btn_var = tk.StringVar(value="Errors (0)")
-    app.error_btn = ttk.Button(status_frame, textvariable=app.error_btn_var, command=app.open_error_log, state=tk.DISABLED)
+    app.error_btn = ttk.Button(status_frame, textvariable=app.ui_state.error_btn, command=app.open_error_log, state=tk.DISABLED)
     app.error_btn.pack(side=tk.RIGHT, padx=5)
     
-    app.api_health_var = tk.StringVar(value="API: Online")
-    api_health_label = ttk.Label(status_frame, textvariable=app.api_health_var, foreground="#888888")
+    api_health_label = ttk.Label(status_frame, textvariable=app.ui_state.api_health, foreground="#888888")
     api_health_label.pack(side=tk.RIGHT, padx=15)
 
-    ttk.Progressbar(dl_prog_frame, variable=app.dl_progress_var, maximum=100).pack(side=tk.TOP, fill="x")
+    ttk.Progressbar(dl_prog_frame, variable=app.ui_state.dl_progress, maximum=100).pack(side=tk.TOP, fill="x")
 
     app.refresh_library_ui()

@@ -30,8 +30,7 @@ def setup_player_bar(app):
     app.time_label.pack(side=tk.RIGHT, padx=15)
 
     # --- Progress Bar ---
-    app.progress_var = tk.DoubleVar()
-    app.progress_bar = ttk.Progressbar(app.play_frame, variable=app.progress_var, maximum=100)
+    app.progress_bar = ttk.Progressbar(app.play_frame, variable=app.ui_state.playback_progress, maximum=100)
     app.progress_bar.pack(fill="x", padx=5, pady=5)
     
     if hasattr(app, 'on_progress_click'):
@@ -73,17 +72,15 @@ def setup_player_bar(app):
     ttk.Button(app.extras_frame, text="🔖 Bookmark", width=12, command=app.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
     ttk.Button(app.extras_frame, text="📑 Chapters", command=lambda: open_chapter_window(app)).pack(side=tk.LEFT, padx=(5, 2))
 
-    app.playback_speed = tk.StringVar(value="1.0x")
     speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
-    speed_menu = ttk.Combobox(app.extras_frame, textvariable=app.playback_speed, values=speed_options, state="readonly", width=5)
+    speed_menu = ttk.Combobox(app.extras_frame, textvariable=app.ui_state.playback_speed, values=speed_options, state="readonly", width=5)
     speed_menu.bind("<<ComboboxSelected>>", app.on_speed_change)
     speed_menu.pack(side=tk.LEFT, padx=10)
 
-    app.volume_var = tk.DoubleVar(value=100.0)
     vol_frame = ttk.Frame(app.extras_frame)
     vol_frame.pack(side=tk.LEFT, padx=5)
     ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
-    app.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app.volume_var, command=app.on_volume_change, length=80)
+    app.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app.ui_state.volume, command=app.on_volume_change, length=80)
     app.vol_slider.pack(side=tk.LEFT)
 
     timer_frame = ttk.Frame(app.extras_frame)
@@ -91,19 +88,16 @@ def setup_player_bar(app):
     app.timer_btn = ttk.Button(timer_frame, text="Sleep: Off", command=lambda: open_sleep_menu(app), width=16)
     app.timer_btn.pack(side=tk.LEFT)
     
-    app.timer_countdown_var = tk.StringVar(value="")
-    ttk.Label(timer_frame, textvariable=app.timer_countdown_var, width=5).pack(side=tk.LEFT)
+    ttk.Label(timer_frame, textvariable=app.ui_state.timer_countdown, width=5).pack(side=tk.LEFT)
 
     # --- Filters Row (Hidden in Compact Mode) ---
-    app.voice_boost_var = tk.BooleanVar(value=app.settings.get("voice_boost", False))
-    app.skip_silence_var = tk.BooleanVar(value=app.settings.get("skip_silence", False))
     
     app.filters_frame = ttk.Frame(app.play_frame)
     app.filters_frame.pack(fill="x", pady=(5, 0))
     
     ttk.Label(app.filters_frame, text="Filters:").pack(side=tk.LEFT, padx=(5, 10))
-    ttk.Checkbutton(app.filters_frame, text="Voice Boost (Compressor)", variable=app.voice_boost_var, command=app.on_filter_change).pack(side=tk.LEFT, padx=5)
-    ttk.Checkbutton(app.filters_frame, text="Skip Silence", variable=app.skip_silence_var, command=app.on_filter_change).pack(side=tk.LEFT, padx=5)
+    ttk.Checkbutton(app.filters_frame, text="Voice Boost (Compressor)", variable=app.ui_state.voice_boost, command=app.on_filter_change).pack(side=tk.LEFT, padx=5)
+    ttk.Checkbutton(app.filters_frame, text="Skip Silence", variable=app.ui_state.skip_silence, command=app.on_filter_change).pack(side=tk.LEFT, padx=5)
 
     def enforce_initial_state():
         is_compact = app.settings.get("compact_player", False)

@@ -20,7 +20,7 @@ def setup_menu_bar(app):
     app.file_menu.add_separator()
     app.file_menu.add_checkbutton(
         label="Minimize to Tray on Close", 
-        variable=app.minimize_to_tray_var, 
+        variable=app.ui_state.minimize_to_tray, 
         command=app.save_tray_setting
     )
     app.file_menu.add_separator()
@@ -29,18 +29,16 @@ def setup_menu_bar(app):
     app.appearance_menu = tk.Menu(app.file_menu, tearoff=0)
     app.file_menu.add_cascade(label="Appearance", menu=app.appearance_menu)
     
-    app.palette_var = tk.StringVar(value=app.settings.get("classic_palette", "light"))
-    
-    app.appearance_menu.add_radiobutton(label="Light Default", variable=app.palette_var, value="light", command=lambda: app.apply_classic_palette("light"))
-    app.appearance_menu.add_radiobutton(label="Dark Charcoal", variable=app.palette_var, value="dark", command=lambda: app.apply_classic_palette("dark"))
-    app.appearance_menu.add_radiobutton(label="Terminal Green", variable=app.palette_var, value="terminal", command=lambda: app.apply_classic_palette("terminal"))
+    app.appearance_menu.add_radiobutton(label="Light Default", variable=app.ui_state.palette, value="light", command=lambda: app.apply_classic_palette("light"))
+    app.appearance_menu.add_radiobutton(label="Dark Charcoal", variable=app.ui_state.palette, value="dark", command=lambda: app.apply_classic_palette("dark"))
+    app.appearance_menu.add_radiobutton(label="Terminal Green", variable=app.ui_state.palette, value="terminal", command=lambda: app.apply_classic_palette("terminal"))
     app.appearance_menu.add_separator()
-    app.appearance_menu.add_radiobutton(label="Solarized Dark", variable=app.palette_var, value="solarized_dark", command=lambda: app.apply_classic_palette("solarized_dark"))
-    app.appearance_menu.add_radiobutton(label="Solarized Light", variable=app.palette_var, value="solarized_light", command=lambda: app.apply_classic_palette("solarized_light"))
+    app.appearance_menu.add_radiobutton(label="Solarized Dark", variable=app.ui_state.palette, value="solarized_dark", command=lambda: app.apply_classic_palette("solarized_dark"))
+    app.appearance_menu.add_radiobutton(label="Solarized Light", variable=app.ui_state.palette, value="solarized_light", command=lambda: app.apply_classic_palette("solarized_light"))
     app.appearance_menu.add_separator()
-    app.appearance_menu.add_radiobutton(label="Dracula", variable=app.palette_var, value="dracula", command=lambda: app.apply_classic_palette("dracula"))
-    app.appearance_menu.add_radiobutton(label="Nordic Slate", variable=app.palette_var, value="nord", command=lambda: app.apply_classic_palette("nord"))
-    app.appearance_menu.add_radiobutton(label="Cyberpunk", variable=app.palette_var, value="cyberpunk", command=lambda: app.apply_classic_palette("cyberpunk"))
+    app.appearance_menu.add_radiobutton(label="Dracula", variable=app.ui_state.palette, value="dracula", command=lambda: app.apply_classic_palette("dracula"))
+    app.appearance_menu.add_radiobutton(label="Nordic Slate", variable=app.ui_state.palette, value="nord", command=lambda: app.apply_classic_palette("nord"))
+    app.appearance_menu.add_radiobutton(label="Cyberpunk", variable=app.ui_state.palette, value="cyberpunk", command=lambda: app.apply_classic_palette("cyberpunk"))
 
     app.file_menu.add_separator()
 

@@ -69,6 +69,33 @@ if hasattr(sys, '_MEIPASS'):
 
 if os.path.exists(bundled_bin_dir):
     os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+class UiState:
+    def __init__(self, settings):
+        # General / System
+        self.minimize_to_tray = tk.BooleanVar(value=settings.get("minimize_to_tray", True))
+        self.palette = tk.StringVar(value=settings.get("classic_palette", "light"))
+        self.auth_bytes = tk.StringVar(value="") 
+        self.locale = tk.StringVar(value="us")
+        
+        # Library View
+        self.lib_count = tk.StringVar(value="Books found: 0")
+        self.search = tk.StringVar()
+        self.filter = tk.StringVar(value="All")
+        self.shelf_filter = tk.StringVar(value="All Shelves")
+        self.sort = tk.StringVar(value=settings.get("sort_pref", "Date Added (Newest)"))
+        self.dl_status = tk.StringVar(value="Idle")
+        self.dl_progress = tk.DoubleVar()
+        self.error_btn = tk.StringVar(value="Errors (0)")
+        self.api_health = tk.StringVar(value="API: Online")
+        
+        # Player Bar
+        self.playback_progress = tk.DoubleVar()
+        self.playback_speed = tk.StringVar(value="1.0x")  
+        self.volume = tk.DoubleVar(value=100.0)
+        self.timer_countdown = tk.StringVar(value="")
+        self.voice_boost = tk.BooleanVar(value=settings.get("voice_boost", False))
+        self.skip_silence = tk.BooleanVar(value=settings.get("skip_silence", False))
 class AAXManagerApp:
     @property
     def file_path(self): return getattr(self, '_active_book_path', "")
@@ -97,9 +124,6 @@ class AAXManagerApp:
         icon_ico = get_resource_path("ui", "tomebox.ico")
         icon_png = get_resource_path("ui", "tomebox.png")
 
-
-        
-        
         def apply_taskbar_icon():
             try:
                 # Force the OS to acknowledge the window exists first
@@ -118,6 +142,7 @@ class AAXManagerApp:
 
         # 3. Load Settings and Global Paths
         self.settings = self.db.load_settings()
+        self.ui_state = UiState(self.settings)
         self.logger = setup_logger(self.base_dir, debug_mode=self.settings.get("debug_mode", False))
         self.logger.info("=== TomeBox Application Started ===")
         self.covers_dir = os.path.join(self.base_dir, "covers")
@@ -125,7 +150,6 @@ class AAXManagerApp:
         self.root.after(200, apply_taskbar_icon)
         # 4. Apply Profile Variables
         self.active_profile = self.settings.get("active_profile", "Main")
-        self.minimize_to_tray_var = tk.BooleanVar(value=self.settings.get("minimize_to_tray", True))
         
         # Use the DB manager to get paths instead of calculating them here
         self.auth_save_path = self.db.get_auth_path(self.active_profile)
@@ -169,7 +193,7 @@ class AAXManagerApp:
             covers_dir=self.covers_dir,
             thread_pool=self.thread_pool,
             get_drm_flags_cb=lambda path: self.api_client.get_drm_flags(
-                path, self.library_manager.local_library.get(path, {}), self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir, self.logger
+                path, self.library_manager.local_library.get(path, {}), self.active_profile, self.ui_state.auth_bytes.get().strip(), self.db.data_dir, self.logger
             ),
             callbacks={
                 "on_status": lambda msg: self.root.after(0, self.update_global_status, msg),
@@ -192,14 +216,8 @@ class AAXManagerApp:
         self.system_manager = SystemManager(logger=self.logger)
         self.system_manager.enforce_single_instance(on_wake_callback=lambda: self.root.after(0, self.bring_to_front))
 
-        self.auth_bytes = tk.StringVar(value="")
-        self.locale = tk.StringVar(value="us")
         self.player_process = None
-        self.failed_tasks = []
-
-        self.debug_mode = tk.BooleanVar(value=False)
-        self.dl_progress_var = tk.DoubleVar()
-        self.dl_status_var = tk.StringVar(value="Idle")
+        self.failed_tasks = []        
 
         self.root.after(100, self.check_dependencies)
         
@@ -358,21 +376,21 @@ class AAXManagerApp:
         if messagebox.askyesno("Interrupted Imports Found", 
                                f"TomeBox recovered {len(valid_pending)} interrupted import tasks from a previous session.\n\n"
                                "Would you like to resume importing them now?"):
-            self.dl_status_var.set("Resuming interrupted imports...")
+            self.ui_state.dl_status.set("Resuming interrupted imports...")
             for task in valid_pending:
                 path = task["path"]
                 is_folder = task["is_folder"]
                 if is_folder:
                     self.library_manager.import_folder(
                         folder_path=path, converter=self.converter, active_profile=self.active_profile,
-                        on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                        on_status_cb=lambda msg: self.root.after(0, self.ui_state.dl_status.set, msg),
                         on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
-                        logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.dl_progress_var.set(pct))
+                        logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.ui_state.dl_progress.set(pct))
                     )
                 else:
                     self.library_manager.import_files(
                         file_paths=[path], converter=self.converter, active_profile=self.active_profile,
-                        on_status_cb=lambda msg: self.root.after(0, self.dl_status_var.set, msg),
+                        on_status_cb=lambda msg: self.root.after(0, self.ui_state.dl_status.set, msg),
                         on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
                         logger=self.logger
                         # Removed on_progress_cb here too!
@@ -421,11 +439,11 @@ class AAXManagerApp:
             })
             
             # Wake up the Error button
-            self.error_btn_var.set(f"Errors ({len(self.failed_tasks)})")
+            self.ui_state.error_btn.set(f"Errors ({len(self.failed_tasks)})")
             self.error_btn.config(state=tk.NORMAL)
             
             # Bounce the status text momentarily so they notice
-            self.dl_status_var.set(f"Task failed: {os.path.basename(filepath)}")
+            self.ui_state.dl_status.set(f"Task failed: {os.path.basename(filepath)}")
             self.root.after(4000, lambda: self.reset_ui_if_idle())
         self.root.after(0, update)
 
@@ -518,10 +536,10 @@ class AAXManagerApp:
         """Thread-safe update of the API health status label."""
         def update():
             if hasattr(self, 'api_health_var'):
-                self.api_health_var.set(f"API: {message}")
+                self.ui_state.api_health.set(f"API: {message}")
             if is_error:
                 # Auto-reset the health indicator back to Online after the 60s cooldown expires
-                self.root.after(60000, lambda: self.api_health_var.set("API: Online"))
+                self.root.after(60000, lambda: self.ui_state.api_health.set("API: Online"))
         self.root.after(0, update)
 
     def _on_scrape_error(self, err_msg):
@@ -546,7 +564,7 @@ class AAXManagerApp:
                 
             # Update the main task status bar to ensure the user sees it, 
             # rather than throwing a disruptive messagebox popup.
-            self.dl_status_var.set(user_msg)
+            self.ui_state.dl_status.set(user_msg)
             
             # Optionally, log the error trace silently to the log file via our new logger method
             if hasattr(self, 'logger'):
@@ -606,7 +624,7 @@ class AAXManagerApp:
         def update_ui():
             # Update Progress Bar & Labels
             percent = (current_time / total_time) * 100 if total_time > 0 else 0
-            self.progress_var.set(percent)
+            self.ui_state.playback_progress.set(percent)
             
             curr_str = self.format_time(current_time)
             dur_str = self.format_time(total_time)
@@ -634,11 +652,11 @@ class AAXManagerApp:
             except Exception as e:
                 import traceback; traceback.print_exc()
             if added_count > 0:
-                self.dl_status_var.set(f"Successfully imported {added_count} files.")
+                self.ui_state.dl_status.set(f"Successfully imported {added_count} files.")
             elif total_found > 0:
-                self.dl_status_var.set("Files already in library.")
+                self.ui_state.dl_status.set("Files already in library.")
             else:
-                self.dl_status_var.set("No valid audiobooks found to import.")
+                self.ui_state.dl_status.set("No valid audiobooks found to import.")
         self.root.after(0, update)
 
     def toggle_web_server(self):
@@ -733,11 +751,11 @@ class AAXManagerApp:
                 "Cancel = Abort"
             )
             if choice is None:
-                self.dl_status_var.set("Import cancelled.")
+                self.ui_state.dl_status.set("Import cancelled.")
                 return
             import_mode = 'merge' if choice else 'playlist'
 
-        self.dl_status_var.set("Processing dropped items...")
+        self.ui_state.dl_status.set("Processing dropped items...")
 
         for path in dropped_paths:
             if not os.path.exists(path):
@@ -975,7 +993,7 @@ class AAXManagerApp:
         
         # Clear current session
         self.api_client.auth = None
-        self.auth_bytes.set("")
+        self.ui_state.auth_bytes.set("")
         self.library_manager.cloud_items = self.load_cloud_cache()
         
         # Try to load the new profile's auth file
@@ -1012,7 +1030,7 @@ class AAXManagerApp:
         self.thread_pool.submit(
             self.library_manager.silent_cloud_sync, 
             self.logger, 
-            lambda msg: self.root.after(0, lambda: self.dl_status_var.set(msg)), 
+            lambda msg: self.root.after(0, lambda: self.ui_state.dl_status.set(msg)), 
             lambda: self.root.after(0, self.refresh_library_ui)
         )
         # Schedule the next check in 15 minutes (900000 milliseconds)
@@ -1165,7 +1183,7 @@ class AAXManagerApp:
         open_shelf_management_window(self, title, asin)
 
     def save_tray_setting(self):
-        self.settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
+        self.settings["minimize_to_tray"] = self.ui_state.minimize_to_tray.get()
         self.db.save_settings(self.settings)
 
     def on_filter_change(self):
@@ -1176,7 +1194,7 @@ class AAXManagerApp:
             self.resume_playback()
 
     def handle_window_close(self):
-        if self.minimize_to_tray_var.get():
+        if self.ui_state.minimize_to_tray.get():
             self.hide_window_to_tray()
         else:
             if self.tray_icon:
@@ -1241,7 +1259,7 @@ class AAXManagerApp:
                 if hasattr(self, 'progress_var') and self.playback.chapters:
                     total_duration = float(self.playback.chapters[-1].get("end_time", 0))
                     if total_duration > 0:
-                        self.progress_var.set((abs_position / total_duration) * 100)
+                        self.ui_state.playback_progress.set((abs_position / total_duration) * 100)
                         
         except Exception as e:
             self.logger.error(f"Failed to sync remote playhead: {e}")
@@ -1490,9 +1508,9 @@ class AAXManagerApp:
         for row in self.library_tree.get_children():
             self.library_tree.delete(row)
 
-        search_query = self.search_var.get()
-        current_filter = self.filter_var.get()
-        current_shelf = getattr(self, 'shelf_filter_var', tk.StringVar(value="All Shelves")).get()
+        search_query = self.ui_state.search.get()
+        current_filter = self.ui_state.filter.get()
+        current_shelf = self.ui_state.shelf_filter.get()
 
         # 2. Ask the Controller for the data
         filtered_rows, shelf_list = self.library_manager.get_view_data(
@@ -1502,7 +1520,7 @@ class AAXManagerApp:
         )
 
         if hasattr(self, 'sort_var'):
-            sort_pref = self.sort_var.get()
+            sort_pref = self.ui_state.sort.get()
             
             def get_sort_key(row):
                 title, authors, series_str, duration_str, asin, status, row_path, date_str = row
@@ -1579,7 +1597,7 @@ class AAXManagerApp:
             fmt = data.get("format", "UNKNOWN").upper()
             formats[fmt] = formats.get(fmt, 0) + 1
             
-        self.lib_count_var.set(f"Books found: {total_books}")
+        self.ui_state.lib_count.set(f"Books found: {total_books}")
         
         if formats:
             tooltip_text = "\n".join([f"{f}: {c}" for f, c in sorted(formats.items())])
@@ -1883,13 +1901,13 @@ class AAXManagerApp:
         self.logger.info("DEBUG: auto_load_auth fired from startup timer.")
         if self.api_client.load_auth_from_file(self.auth_save_path):
             activation_bytes = self.api_client.get_activation_bytes()
-            self.auth_bytes.set(activation_bytes)
+            self.ui_state.auth_bytes.set(activation_bytes)
             self.logger.info(f"Session loaded automatically. Activation Bytes: {activation_bytes}")
             
             # Reset filters before fetch so UI shows everything when worker completes
-            self.filter_var.set("All")
-            self.shelf_filter_var.set("All Shelves")
-            self.search_var.set("")
+            self.ui_state.filter.set("All")
+            self.ui_state.shelf_filter.set("All Shelves")
+            self.ui_state.search.set("")
             
             self.fetch_cloud_library()
         else:
@@ -1903,7 +1921,7 @@ class AAXManagerApp:
         try:
             if self.api_client.load_auth_from_file(filepath):
                 activation_bytes = self.api_client.get_activation_bytes()
-                self.auth_bytes.set(activation_bytes)
+                self.ui_state.auth_bytes.set(activation_bytes)
                 self.logger.info(f"Activation Bytes Received: {activation_bytes}")
                 self.api_client.save_auth_to_file(self.auth_save_path)
                 
@@ -1952,16 +1970,16 @@ class AAXManagerApp:
             if self.api_client.login_with_browser(locale, custom_login_callback):
                 activation_bytes = self.api_client.get_activation_bytes()
                 
-                self.root.after(0, self.auth_bytes.set, activation_bytes)
+                self.root.after(0, self.ui_state.auth_bytes.set, activation_bytes)
                 self.logger.info(f"Activation Bytes Received: {activation_bytes}")
                 
                 self.api_client.save_auth_to_file(self.auth_save_path)
                 self.logger.info(f"Session saved locally to {self.auth_save_path}")
 
                 self.root.after(0, lambda: messagebox.showinfo("Success", "Connected to Audible!"))
-                self.filter_var.set("All")
-                self.shelf_filter_var.set("All Shelves")
-                self.search_var.set("")
+                self.ui_state.filter.set("All")
+                self.ui_state.shelf_filter.set("All Shelves")
+                self.ui_state.search.set("")
                 self.root.after(0, self.fetch_cloud_library)
                 
         except Exception as e:
@@ -1987,7 +2005,7 @@ class AAXManagerApp:
 
         self.logger.info("DEBUG: self.api_client.auth verified. Launching fetch_library_worker thread...")
         
-        self.dl_status_var.set("Fetching data from Amazon... Please wait.")
+        self.ui_state.dl_status.set("Fetching data from Amazon... Please wait.")
         
         self.thread_pool.submit(self.fetch_library_worker)
 
@@ -2141,14 +2159,14 @@ class AAXManagerApp:
             
         if val == "Off":
             self.sleep_timer_active = False
-            self.timer_countdown_var.set("")
+            self.ui_state.timer_countdown.set("")
             return
             
         mins = int(val.replace("m", ""))
         self.sleep_timer_seconds = mins * 60
         self.sleep_timer_active = True
 
-        self.timer_countdown_var.set(self.format_time(self.sleep_timer_seconds))
+        self.ui_state.timer_countdown.set(self.format_time(self.sleep_timer_seconds))
         
         self.sleep_timer_tick()
 
@@ -2328,7 +2346,7 @@ class AAXManagerApp:
         self.playback.chapter_duration = 0.0
         self.update_info() 
         
-        self.dl_status_var.set("Analyzing...")
+        self.ui_state.dl_status.set("Analyzing...")
         self.root.update()
         
         local_data = self.library_manager.local_library.get(filepath, {})
@@ -2358,7 +2376,7 @@ class AAXManagerApp:
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.file_path)
             if not success:
-                self.dl_status_var.set("Verification Failed")
+                self.ui_state.dl_status.set("Verification Failed")
                 messagebox.showerror("Audio Processing Error", f"Failed to process the file. Reason:\n\n{error_msg}")
                 self.file_path = ""
                 return
@@ -2371,7 +2389,7 @@ class AAXManagerApp:
             self.playback.chapters = cached_chapters
         else:
             # First time load: Run ffprobe and cache the result
-            self.dl_status_var.set(f"Extracting chapters: {os.path.basename(self.file_path)}")
+            self.ui_state.dl_status.set(f"Extracting chapters: {os.path.basename(self.file_path)}")
             self.root.update()
             
             self.playback.chapters = self.extract_chapters(self.file_path)
@@ -2380,7 +2398,7 @@ class AAXManagerApp:
             self.library_manager.local_library[filepath] = local_data
             self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-        self.dl_status_var.set(f"Ready: {os.path.basename(self.file_path)}")
+        self.ui_state.dl_status.set(f"Ready: {os.path.basename(self.file_path)}")
         
         # --- 3. Moved dummy chapter generation here so it evaluates properly ---
         if not self.playback.chapters:
@@ -2437,7 +2455,7 @@ class AAXManagerApp:
         dur_str = self.format_time(self.playback.chapter_duration)
         self.time_label.config(text=f"{curr_str} / {dur_str}")
         percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
-        self.progress_var.set(percent)
+        self.ui_state.playback_progress.set(percent)
 
         self.metadata_manager.fetch_display_metadata(filepath)
         self.refresh_bookmarks_ui()
@@ -2551,7 +2569,7 @@ class AAXManagerApp:
         
         
         local_data = self.library_manager.local_library.get(filepath, {})
-        auth_bytes = self.auth_bytes.get().strip()
+        auth_bytes = self.ui_state.auth_bytes.get().strip()
         
         drm_flags = self.api_client.get_drm_flags(
             filepath=filepath, 
@@ -2588,7 +2606,7 @@ class AAXManagerApp:
         
         # Safely extract chapters on the fly if the DB doesn't have them yet
         if not db_chapters:
-            self.dl_status_var.set(f"Extracting chapters: {os.path.basename(target_path)}")
+            self.ui_state.dl_status.set(f"Extracting chapters: {os.path.basename(target_path)}")
             self.root.update()
             
             db_chapters = self.extract_chapters(target_path)
@@ -2598,7 +2616,7 @@ class AAXManagerApp:
                 self.library_manager.local_library[target_path] = local_data
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
             
-            self.dl_status_var.set("Idle")
+            self.ui_state.dl_status.set("Idle")
 
         # Identify if the chapters are real or just the auto-generated dummy
         has_real_chapters = False
@@ -2617,7 +2635,7 @@ class AAXManagerApp:
         if not output_dir: 
             return
             
-        self.dl_status_var.set("Splitting into chapters... Please wait.")
+        self.ui_state.dl_status.set("Splitting into chapters... Please wait.")
         self.conversion_manager.split_book(target_path, output_dir, db_chapters)
 
     def start_convert_all_thread(self):
@@ -2671,16 +2689,16 @@ class AAXManagerApp:
             self.playback.file_path = self.file_path
             self.playback.is_playlist = False
 
-        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
+        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.ui_state.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
         
         # Make sure the controller has the latest UI settings before playing
-        self.playback.set_speed(float(self.playback_speed.get().replace("x", "")))
-        self.playback.set_volume(int(self.volume_var.get()))
+        self.playback.set_speed(float(self.ui_state.playback_speed.get().replace("x", "")))
+        self.playback.set_volume(int(self.ui_state.volume.get()))
         
         # Tell the controller to spin up FFplay
         self.playback.play(
-            voice_boost=self.voice_boost_var.get(),
-            skip_silence=self.skip_silence_var.get(),
+            voice_boost=self.ui_state.voice_boost.get(),
+            skip_silence=self.ui_state.skip_silence.get(),
             drm_flags=drm_flags
         )
         
@@ -2741,7 +2759,7 @@ class AAXManagerApp:
             dur_str = self.format_time(self.playback.chapter_duration)
             self.time_label.config(text=f"{curr_str} / {dur_str}")
             percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
-            self.progress_var.set(percent)
+            self.ui_state.playback_progress.set(percent)
 
     def on_progress_click(self, event):
         if not hasattr(self, 'chapter_duration') or self.playback.chapter_duration <= 0:
@@ -2760,7 +2778,7 @@ class AAXManagerApp:
             self.seek_audio(offset)
 
     def on_speed_change(self, event=None):
-        speed_val = float(self.playback_speed.get().replace("x", ""))
+        speed_val = float(self.ui_state.playback_speed.get().replace("x", ""))
         self.playback.set_speed(speed_val)
         
         # FFplay requires a restart to change speed mid-stream
@@ -2770,7 +2788,7 @@ class AAXManagerApp:
             self.resume_playback()
 
     def on_volume_change(self, event=None):
-        self.playback.set_volume(int(self.volume_var.get()))
+        self.playback.set_volume(int(self.ui_state.volume.get()))
         # Only restart if we are on Mac/Linux (Windows changes it dynamically via pycaw)
         if os.name != 'nt' and self.playback.is_playing:
             self.pause_audio()
@@ -2801,7 +2819,7 @@ class AAXManagerApp:
                     curr_str = self.format_time(self.playback.current_play_time)
                     dur_str = self.format_time(self.playback.chapter_duration)
                     self.time_label.config(text=f"{curr_str} / {dur_str}")
-                    self.progress_var.set(0)
+                    self.ui_state.playback_progress.set(0)
                     return
                 else:
                     self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
@@ -2840,17 +2858,17 @@ class AAXManagerApp:
         is_converting = getattr(self.converter, 'current_process', None) is not None
         
         if not is_importing and not is_downloading and not is_converting:
-            self.dl_status_var.set("Idle")
-            self.dl_progress_var.set(0)
+            self.ui_state.dl_status.set("Idle")
+            self.ui_state.dl_progress.set(0)
 
     def update_global_status(self, msg):
         if msg in ["Idle", ""]:
             self.reset_ui_if_idle()
         else:
-            self.dl_status_var.set(msg)
+            self.ui_state.dl_status.set(msg)
 
     def update_global_progress(self, pct):
         if pct == 0:
             self.reset_ui_if_idle()
         else:
-            self.dl_progress_var.set(pct)    
+            self.ui_state.dl_progress.set(pct)    
