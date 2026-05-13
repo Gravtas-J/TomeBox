@@ -182,14 +182,16 @@ class SystemManager:
             return ip
         except Exception:
             return "127.0.0.1"
+        
     def _is_firewall_rule_installed(self, port=8000):
         """Checks if the TomeBox firewall rule already exists."""
         import subprocess
         try:
-            # Check for our specific rule name
             cmd = ['netsh', 'advfirewall', 'firewall', 'show', 'rule', 'name=TomeBox Web Server']
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            # If the rule exists, netsh returns info. If not, it returns an error saying no rules match.
+            kwargs = {'capture_output': True, 'text': True}
+            if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            result = subprocess.run(cmd, **kwargs)
             return "No rules match" not in result.stdout
         except Exception:
             return False

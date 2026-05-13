@@ -3,7 +3,7 @@ import sys
 import json
 import pytest
 import subprocess
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 from core.controllers.system_manager import SystemManager
 from core.utils.process_runner import ProcessRunner
 
@@ -133,10 +133,6 @@ def test_toggle_system_sleep(manager, monkeypatch):
     
     # 0x80000000 = 2147483648 (Continuous)
     mock_ctypes.windll.kernel32.SetThreadExecutionState.assert_called_with(2147483648)
-
-import os
-import subprocess
-from unittest.mock import patch, MagicMock
 
 def test_firewall_rule_checks(manager):
     """Verifies the firewall checker logic safely without crashing pytest on Linux CI/CD."""
