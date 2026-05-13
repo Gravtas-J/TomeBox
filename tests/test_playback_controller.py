@@ -224,26 +224,37 @@ def test_seek_to_absolute_edge_cases(controller):
 
 def test_tick_loop(controller, monkeypatch):
     """Tricks the time loop into running exactly one tick to verify speed math."""
+    from unittest.mock import MagicMock
+    import time
+    import pytest
+    
     controller.is_playing = True
     controller._monitor_active = True
     controller._last_tick_time = 1000.0
     controller.playback_speed = 2.0
     controller.current_play_time = 0.0
     controller.chapter_duration = 100.0
-
-    # Simulate exactly 1 real second passing
-    monkeypatch.setattr(time, "time", lambda: 1001.0) 
     
-    # Force the infinite loop to break after the first sleep
+    # Spy on the event bus
+    controller.event_bus = MagicMock()
+    
+    monkeypatch.setattr(time, "time", lambda: 1001.0)
+    
     class BreakLoop(Exception): pass
     monkeypatch.setattr(time, "sleep", MagicMock(side_effect=BreakLoop))
-
+    
     with pytest.raises(BreakLoop):
         controller._tick_loop()
-
-    # 1 real second * 2.0 speed = 2.0 virtual seconds progressed
+        
     assert controller.current_play_time == 2.0
-    controller.on_tick_cb.assert_called_once_with(2.0, 100.0, 2.0)
+    
+    # Assert the event bus broadcasted the tick
+    controller.event_bus.publish.assert_called_once_with(
+        "playback.tick", 
+        current_time=2.0, 
+        total_time=100.0, 
+        duration=100.0
+    )
 
 def test_chapter_navigation_and_hooks(controller):
     # Next Chapter
@@ -265,10 +276,20 @@ def test_chapter_navigation_and_hooks(controller):
     assert controller.current_chapter_idx == 0
 
     # Player Complete Hook (Fired by FFplay exit)
+    from unittest.mock import MagicMock
+    
+    # Spy on the event bus
+    controller.event_bus = MagicMock()
     controller.is_playing = True
+    
+    # Fire the completion hook
     controller._handle_player_complete()
+    
+    # Verify internal state changed
     assert controller.is_playing is False
-    controller.on_chapter_end_cb.assert_called_once()
+    
+    # Verify it broadcasted the completion to the rest of the app
+    controller.event_bus.publish.assert_called_once_with("playback.chapter_end")
 
 def test_get_current_state(controller):
     # Active file state

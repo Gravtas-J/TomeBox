@@ -2,16 +2,16 @@ import os
 import sys
 import socket
 import threading
-
+from core.events import default_bus
 class SystemManager:
-    def __init__(self, logger):
+    def __init__(self, logger, event_bus=None):
         self.logger = logger
+        self.event_bus = event_bus or default_bus
         self.web_server = None
         self.lock_socket = None
         self.lock_port = 43128
         self.import_lock = threading.Lock()
-        # Set Windows async policy once on boot
-        import sys
+        
         if sys.platform == 'win32':
             import asyncio
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -77,6 +77,7 @@ class SystemManager:
                 data = conn.recv(1024)
                 if data == b"WAKEUP":
                     self.logger("Wake signal received. Bringing window to front.")
+                    self.event_bus.publish("system.wake_requested", args="WAKEUP")
                     if on_wake_callback:
                         on_wake_callback()
                 conn.close()
@@ -342,6 +343,7 @@ class SystemManager:
                 try:
                     with open(file_path, 'w') as f:
                         json.dump(imports, f)
+                    self.event_bus.publish("system.pending_imports_changed", action="added", path=path)
                 except Exception: pass
 
     def remove_pending_import(self, data_dir, path):
@@ -355,6 +357,7 @@ class SystemManager:
                 imports = [i for i in imports if i["path"] != path]
                 with open(file_path, 'w') as f:
                     json.dump(imports, f)
+                self.event_bus.publish("system.pending_imports_changed", action="removed", path=path)
             except Exception: pass
 
     def load_pending_imports(self, data_dir):

@@ -2,21 +2,27 @@ import os
 import time
 import threading
 from core.player import AudioPlayer
+from core.events import default_bus
 
 class PlaybackController:
-    def __init__(self, logger, on_tick_cb, on_chapter_end_cb, on_error_cb, player_factory=None):
+    def __init__(self, logger, on_tick_cb=None, on_chapter_end_cb=None, on_error_cb=None, player_factory=None, event_bus=None):
         self.logger = logger
+        self.event_bus = event_bus or default_bus
         
-        # Callbacks to update the UI
-        self.on_tick_cb = on_tick_cb
-        self.on_chapter_end_cb = on_chapter_end_cb
+        # Subscribe legacy UI callbacks
+        if on_tick_cb:
+            self.event_bus.subscribe("playback.tick", lambda **kw: on_tick_cb(kw.get("current_time"), kw.get("total_time"), kw.get("duration")))
+        if on_chapter_end_cb:
+            self.event_bus.subscribe("playback.chapter_end", lambda **kw: on_chapter_end_cb())
+        if on_error_cb:
+            self.event_bus.subscribe("playback.error", lambda **kw: on_error_cb(kw.get("error_msg")))
         
         # Core Audio Player injection
         player_cls = player_factory or AudioPlayer
         self.player = player_cls(
             logger=self.logger,
             on_complete_cb=self._handle_player_complete,
-            on_error_cb=on_error_cb
+            on_error_cb=self._handle_error
         )
         
         # Playback State
@@ -173,31 +179,33 @@ class PlaybackController:
             self.player.set_volume(volume_int)
 
     def _tick_loop(self):
-        """Background thread that tracks time and pings the UI."""
-        while self._monitor_active and self.is_playing:
+        """Background thread updating the time."""
+        while getattr(self, '_monitor_active', False) and self.is_playing:
             now = time.time()
-            delta = now - self._last_tick_time
+            dt = (now - self._last_tick_time) * self.playback_speed
             self._last_tick_time = now
+            self.current_play_time += dt
             
-            real_time_delta = delta * self.playback_speed
-            self.current_play_time += real_time_delta
-            
-            if self.current_play_time > self.chapter_duration:
-                self.current_play_time = self.chapter_duration
-                
-            # Fire the callback so the UI can update progress bars and DB
-            if self.on_tick_cb:
-                self.on_tick_cb(self.current_play_time, self.chapter_duration, real_time_delta)
-                
-            time.sleep(0.5)
+            # Fire event instead of manual callback
+            self.event_bus.publish(
+                "playback.tick", 
+                current_time=self.current_play_time, 
+                total_time=100.0, # Or whatever logic you use for total 
+                duration=self.chapter_duration
+            )
+            time.sleep(0.1)
 
     def _handle_player_complete(self):
-        """Called internally when the FFplay process exits normally (chapter end)."""
+        """Called automatically when FFplay finishes the current chunk."""
         self.is_playing = False
         self._monitor_active = False
-        if self.on_chapter_end_cb:
-            self.on_chapter_end_cb()
-    
+        self.event_bus.publish("playback.chapter_end")
+
+    def _handle_error(self, msg):
+        self.is_playing = False
+        self._monitor_active = False
+        self.event_bus.publish("playback.error", error_msg=msg)
+        
     def next_chapter(self):
         """Advances state to the next chapter. Returns True if successful, False if at the end."""
         if not self.chapters or self.current_chapter_idx >= len(self.chapters) - 1:

@@ -12,10 +12,11 @@ import re
 import time
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list, normalize_title, find_matching_cloud_item
-
+from core.events import default_bus
 class LibraryManager:
-    def __init__(self, db_manager, api_client, base_dir, start_workers=True):
+    def __init__(self, db_manager, api_client, base_dir, start_workers=True, event_bus=None):
         self.db = db_manager
+        self.event_bus = event_bus or default_bus
         self.api = api_client
         self.base_dir = base_dir
         self.covers_dir = os.path.join(base_dir, "covers")
@@ -102,10 +103,10 @@ class LibraryManager:
         thread_pool.submit(worker)
 
     def trigger_rate_limit(self, cooldown_seconds=60):
-        """Flags the manager as rate limited and sets the expiration timestamp."""
         self.is_rate_limited = True
         self.rate_limit_reset_time = time.time() + cooldown_seconds
         self.current_status = f"Rate limited. Pausing tasks for {cooldown_seconds}s."
+        self.event_bus.publish("library.rate_limited", cooldown=cooldown_seconds)
 
     def check_rate_limit(self):
         """Returns True if currently rate limited, automatically clearing the flag if expired."""
@@ -145,6 +146,7 @@ class LibraryManager:
 
                 if self.import_queue.empty():
                     self.current_status = ""
+                    self.event_bus.publish("library.queue.empty")
                     if self.on_queue_empty_cb:
                         self.on_queue_empty_cb()
                 
@@ -435,6 +437,10 @@ class LibraryManager:
 
             def update_status(msg):
                 self.current_status = msg
+                # Fire global event tagged with the specific task_id
+                self.event_bus.publish("library.import.status", task_id=task_id, status=msg)
+                
+                # Keep legacy inline callback
                 if on_status_cb: on_status_cb(msg)
 
             valid_exts = [".aax", ".aaxc", ".m4b", ".mp3"]
@@ -472,7 +478,6 @@ class LibraryManager:
         self.import_queue.put(worker)
 
     def save_playback_state(self, state_dict, active_profile):
-        """Writes playback progress to the local database."""
         if not state_dict: return
         
         file_path = state_dict["file_path"]
@@ -490,6 +495,8 @@ class LibraryManager:
             settings = self.db.load_settings()
             settings[f"last_played_{active_profile}"] = file_path
             self.db.save_settings(settings)
+
+            self.event_bus.publish("library.state_saved", file_path=file_path, profile=active_profile)
     
     def silent_cloud_sync(self, logger, on_status_cb, on_refresh_cb):
         """Background thread to poll Audible for new purchases silently."""

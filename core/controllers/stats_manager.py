@@ -1,11 +1,25 @@
 import threading
+from core.events import default_bus
 
 class StatsManager:
-    def __init__(self, db_manager, callbacks):
+    def __init__(self, db_manager, callbacks=None, event_bus=None):
         self.db = db_manager
         self.stats_lock = threading.Lock()
-        self.on_achievement = callbacks.get("on_achievement")
+        self.event_bus = event_bus or default_bus
         
+        # Backwards compatibility: Map legacy callback to the event bus
+        callbacks = callbacks or {}
+        self.on_achievement = callbacks.get("on_achievement")
+        if self.on_achievement:
+            # FIXED: Unpack the dictionary so the legacy UI gets the two strings it expects
+            self.event_bus.subscribe(
+                "stats.achievement_unlocked", 
+                lambda **kw: self.on_achievement(
+                    kw.get("achievement", {}).get("title", "Achievement"), 
+                    kw.get("achievement", {}).get("desc", "Unlocked!")
+                )
+            )
+            
         self.achievements = {
             "first_dl": {"title": "System Integration Complete", "desc": "Download your first audiobook.", "type": "books_downloaded", "threshold": 1},
             "hoarder_1": {"title": "Spatial Expansion", "desc": "Download 10 audiobooks.", "type": "books_downloaded", "threshold": 10},
@@ -22,6 +36,10 @@ class StatsManager:
             stats[stat_name] = stats.get(stat_name, 0) + amount
             settings["stats"] = stats
             self.db.save_settings(settings)
+            
+            # Announce stat change for any interested UI elements (like a profile dashboard)
+            self.event_bus.publish("stats.updated", stat_name=stat_name, total=stats[stat_name])
+            
             self.check_achievements(settings)
 
     def check_achievements(self, settings):
@@ -33,7 +51,9 @@ class StatsManager:
                 current_val = stats.get(data["type"], 0)
                 if current_val >= data["threshold"]:
                     unlocked.append(ach_id)
-                    settings["stats"]["unlocked_achievements"] = unlocked
-                    self.db.save_settings(settings)
-                    if self.on_achievement:
-                        self.on_achievement(data["title"], data["desc"])
+                    
+                    self.event_bus.publish("stats.achievement_unlocked", achievement=data)
+                    
+        stats["unlocked_achievements"] = unlocked
+        settings["stats"] = stats
+        self.db.save_settings(settings)
