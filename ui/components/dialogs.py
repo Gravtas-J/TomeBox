@@ -175,9 +175,9 @@ def open_auth_window(app):
 
     btn_frame = ttk.Frame(auth_frame)
     btn_frame.pack(fill="x", pady=5)
-    app.browser_login_btn = ttk.Button(btn_frame, text="Browser Login", command=app.start_browser_login_thread)
+    app.browser_login_btn = ttk.Button(btn_frame, text="Browser Login", command=app.auth_controller.start_browser_login_thread)
     app.browser_login_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-    app.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=app.load_auth_file_prompt)
+    app.auth_file_btn = ttk.Button(btn_frame, text="Load .json", command=app.auth_controller.load_auth_file_prompt)
     app.auth_file_btn.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
     profile_frame = ttk.Frame(auth_frame)
@@ -190,8 +190,8 @@ def open_auth_window(app):
     app.profile_combo.set(app.active_profile)
     app.profile_combo.pack(side=tk.LEFT, padx=5)
     
-    ttk.Button(profile_frame, text="New", width=5, command=app.add_new_profile).pack(side=tk.LEFT)
-    app.profile_combo.bind("<<ComboboxSelected>>", app.switch_profile)
+    ttk.Button(profile_frame, text="New", width=5, command=app.auth_controller.add_new_profile).pack(side=tk.LEFT)
+    app.profile_combo.bind("<<ComboboxSelected>>", app.auth_controller.switch_profile)
 
     bytes_frame = ttk.LabelFrame(main_frame, text="Decryption Bytes", padding=10)
     bytes_frame.pack(fill="x", pady=10)

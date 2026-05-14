@@ -56,6 +56,8 @@ from ui.action_router import ActionRouter
 from ui.import_session import ImportSession
 from ui.palette_controller import PaletteController
 from ui.playback_presenter import PlaybackPresenter
+from ui.auth_controller import AuthController
+
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -120,6 +122,7 @@ class AAXManagerApp:
         self.import_session = ImportSession(self)
         self.palette_controller = PaletteController(self)
         self.playback_presenter = PlaybackPresenter(self)
+        self.auth_controller = AuthController(self)
 
         self.root.dnd_bind('<<Drop>>', self.import_session.on_file_drop)
         self.base_dir = base_dir  
@@ -275,7 +278,7 @@ class AAXManagerApp:
         self.root.after(200, _focus_search)
 
         self.setup_tray_icon()
-        self.root.after(500, self.auto_load_auth)
+        self.root.after(500, self.auth_controller.auto_load_auth)
         self.root.after(900000, self.run_background_sync)
         self.root.after(3000, lambda: self.library_manager.run_background_library_scan(
             self.converter, self.active_profile, self.logger, self.thread_pool, 
@@ -558,33 +561,6 @@ class AAXManagerApp:
         import webbrowser
         self.logger.info("Opening Buy Me a Coffee link...")
         webbrowser.open("https://buymeacoffee.com/ProblematicSyntax")
-
-    def add_new_profile(self):
-        new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
-        if new_name and new_name not in self.profiles_list:
-            self.profiles_list.append(new_name)
-            self.settings["profiles"] = self.profiles_list
-            self.profile_combo.config(values=self.profiles_list)
-            self.profile_combo.set(new_name)
-            self.switch_profile()
-
-    def switch_profile(self, event=None):
-        selected = self.profile_combo.get()
-        self.active_profile = selected
-        self.settings["active_profile"] = selected
-        self.db.save_settings(self.settings)
-        
-        self.auth_save_path = get_resource_path( "data", f"auth_{self.active_profile}.json")
-        self.cloud_cache_path = get_resource_path( "data", f"cloud_{self.active_profile}.json")
-        
-        # Clear current session
-        self.api_client.auth = None
-        self.ui_state.auth_bytes.set("")
-        self.library_manager.cloud_items = self.load_cloud_cache()
-        
-        # Try to load the new profile's auth file
-        self.auto_load_auth()
-        self.refresh_library_ui()
 
     def check_dependencies(self):
         import shutil
@@ -1409,104 +1385,6 @@ class AAXManagerApp:
         self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.refresh_library_ui))
         self.refresh_library_ui()
         messagebox.showinfo("Match Successful", f"Successfully linked '{title}' to:\n\n{filepath}")
-
-    def auto_load_auth(self):
-        self.logger.info("DEBUG: auto_load_auth fired from startup timer.")
-        if self.api_client.load_auth_from_file(self.auth_save_path):
-            activation_bytes = self.api_client.get_activation_bytes()
-            self.ui_state.auth_bytes.set(activation_bytes)
-            self.logger.info(f"Session loaded automatically. Activation Bytes: {activation_bytes}")
-            
-            # Reset filters before fetch so UI shows everything when worker completes
-            self.ui_state.filter.set("All")
-            self.ui_state.shelf_filter.set("All Shelves")
-            self.ui_state.search.set("")
-            
-            self.fetch_cloud_library()
-        else:
-            self.logger.info("No saved session found. Please log in.")
-
-    def load_auth_file_prompt(self):
-        filepath = filedialog.askopenfilename(filetypes=[("JSON Auth File", "*.json")], title="Select Audible Auth File")
-        if not filepath: return
-
-        self.logger.info(f"Loading auth from external file: {filepath}")
-        try:
-            if self.api_client.load_auth_from_file(filepath):
-                activation_bytes = self.api_client.get_activation_bytes()
-                self.ui_state.auth_bytes.set(activation_bytes)
-                self.logger.info(f"Activation Bytes Received: {activation_bytes}")
-                self.api_client.save_auth_to_file(self.auth_save_path)
-                
-                messagebox.showinfo("Success", "Auth file loaded! You can now fetch your library.")
-                self.fetch_cloud_library()
-        except Exception as e:
-            self.logger.error(f"ERROR: {traceback.format_exc()}")
-            messagebox.showerror("Error", "Could not load auth file. Check the log.")
-
-    def start_browser_login_thread(self):
-        if self.browser_login_btn and self.browser_login_btn.winfo_exists():
-            self.browser_login_btn.config(text="Connecting...", state=tk.DISABLED)
-        self.thread_pool.submit(self.browser_login_worker, self.ui_state.locale.get())
-
-    def browser_login_worker(self, locale):
-        self.logger.info(f"Starting external browser login for region: {locale}")
-        
-        def custom_login_callback(login_url):
-            self.logger.info("Opening default web browser...")
-            webbrowser.open(login_url)
-            
-            result = [None]
-            event = threading.Event()
-            
-            def ask_user_for_url():
-                msg = (
-                    "1. Your web browser should have opened.\n"
-                    "2. Log in to Amazon / Audible.\n"
-                    "3. Once logged in, you will land on a blank or 'Page Not Found' error page.\n\n"
-                    "4. Copy the ENTIRE URL from your browser's address bar and paste it below:"
-                )
-                res = simpledialog.askstring("Audible Login Authorization", msg, parent=self.root)
-                result[0] = res
-                event.set()
-                
-            self.root.after(0, ask_user_for_url)
-            event.wait()
-            
-            if not result[0]:
-                raise Exception("Authentication cancelled by user.")
-                
-            return result[0].strip()
-
-        try:
-            self.logger.info("Waiting for user to complete browser login and paste URL...")
-            if self.api_client.login_with_browser(locale, custom_login_callback):
-                activation_bytes = self.api_client.get_activation_bytes()
-                
-                self.root.after(0, self.ui_state.auth_bytes.set, activation_bytes)
-                self.logger.info(f"Activation Bytes Received: {activation_bytes}")
-                
-                self.api_client.save_auth_to_file(self.auth_save_path)
-                self.logger.info(f"Session saved locally to {self.auth_save_path}")
-
-                self.root.after(0, lambda: messagebox.showinfo("Success", "Connected to Audible!"))
-                self.ui_state.filter.set("All")
-                self.ui_state.shelf_filter.set("All Shelves")
-                self.ui_state.search.set("")
-                self.root.after(0, self.fetch_cloud_library)
-                
-        except Exception as e:
-            error_trace = traceback.format_exc()
-            self.logger.error("ERROR DURING LOGIN:")
-            self.logger.error(error_trace)
-            self.root.after(0, lambda: messagebox.showerror("Login Failed", str(e)))
-            
-        finally:
-            self.logger.info("Login thread terminated.")
-            def restore_btn():
-                if self.browser_login_btn and self.browser_login_btn.winfo_exists():
-                    self.browser_login_btn.config(text="Login via Browser", state=tk.NORMAL)
-            self.root.after(0, restore_btn)
 
     def fetch_cloud_library(self):
         self.logger.info("DEBUG: fetch_cloud_library method started executing.")
