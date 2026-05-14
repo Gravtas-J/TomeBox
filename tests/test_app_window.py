@@ -75,6 +75,9 @@ def test_set_download_folder(mock_askdir, app_instance):
     """Verifies changing the download folder writes to settings."""
     mock_askdir.return_value = "/new/download/dir"
     
+    # Forget the saves that happened automatically during app bootup
+    app_instance.db.save_settings.reset_mock()
+    
     app_instance.set_download_folder()
     
     assert app_instance.default_download_dir == "/new/download/dir"
