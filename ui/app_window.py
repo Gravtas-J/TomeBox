@@ -156,6 +156,9 @@ class AAXManagerApp:
 
         # 3. Load Settings and Global Paths
         self.settings = self.db.load_settings()
+        if self.settings.get("compact_player", False):
+            self.settings["compact_player"] = False
+            self.db.save_settings(self.settings)
         self.ui_state = UiState(self.settings)
         self.logger = setup_logger(self.base_dir, debug_mode=self.settings.get("debug_mode", False))
         self.logger.info("=== TomeBox Application Started ===")

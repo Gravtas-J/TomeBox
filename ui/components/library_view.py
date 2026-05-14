@@ -148,7 +148,7 @@ def setup_library_view(app, parent):
     app.library_tree = ttk.Treeview(
         tree_frame, 
         columns=("Title", "Author", "Series", "Duration", "ASIN", "Status", "File Path", "Date Added"), 
-        displaycolumns=("Title", "Author", "Series", "Duration", "Date Added", "Status", "File Path"),
+        displaycolumns=("Title", "ASIN", "Author", "Series", "Duration", "Date Added", "File Path", "Status" ),
         show="headings", 
         yscrollcommand=app.v_scroll.set,
         xscrollcommand=app.h_scroll.set

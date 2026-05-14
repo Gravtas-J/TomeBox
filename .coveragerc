@@ -1,5 +1,5 @@
 [run]
-source = core, api, server
+source = core, api, server, ui
 omit =
     tests/*
     conftest.py

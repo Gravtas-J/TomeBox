@@ -105,3 +105,19 @@ def mock_tkinter_dialogs(monkeypatch):
     # Auto-select dummy files/folders for file explorers
     monkeypatch.setattr(fd, "askopenfilename", MagicMock(return_value="/mock/path/file.m4b"))
     monkeypatch.setattr(fd, "askdirectory", MagicMock(return_value="/mock/path/folder"))
+
+@pytest.fixture(autouse=True)
+def prevent_tkinter_windows(monkeypatch):
+    """
+    Globally prevents any test from accidentally spawning a real Tkinter window.
+    Intercepts Tk() and Toplevel() calls and replaces them with mocks.
+    """
+    import tkinter as tk
+    
+    # Create a dummy root mock that won't crash when .after() or .withdraw() is called
+    dummy_root = MagicMock()
+    dummy_root.after.side_effect = lambda delay, func, *args: func(*args)
+    dummy_root.after_idle.side_effect = lambda func, *args: func(*args)
+    
+    monkeypatch.setattr(tk, "Tk", lambda *args, **kwargs: dummy_root)
+    monkeypatch.setattr(tk, "Toplevel", lambda *args, **kwargs: MagicMock())
