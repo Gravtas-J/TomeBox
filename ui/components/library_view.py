@@ -92,7 +92,7 @@ def setup_library_view(app, parent):
 
     ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
     
-    app.ui_state.search.trace_add("write", lambda *args: app.refresh_library_ui()) 
+    app.ui_state.search.trace_add("write", lambda *args: app.library_presenter.refresh_library_ui()) 
     app.search_entry = ttk.Entry(filter_frame, textvariable=app.ui_state.search, width=35)
     app.search_entry.pack(side=tk.LEFT, padx=(0, 20))
 
@@ -100,12 +100,12 @@ def setup_library_view(app, parent):
     
     filter_combo = ttk.Combobox(filter_frame, textvariable=app.ui_state.filter, values=["All", "Downloaded", "Cloud Only"], state="readonly", width=15)
     filter_combo.pack(side=tk.LEFT)
-    filter_combo.bind("<<ComboboxSelected>>", lambda e: app.refresh_library_ui())
+    filter_combo.bind("<<ComboboxSelected>>", lambda e: app.library_presenter.refresh_library_ui())
 
     ttk.Label(filter_frame, text="Shelf:").pack(side=tk.LEFT, padx=(10, 5))
     app.shelf_combo = ttk.Combobox(filter_frame, textvariable=app.ui_state.shelf_filter, state="readonly", width=15)
     app.shelf_combo.pack(side=tk.LEFT)
-    app.shelf_combo.bind("<<ComboboxSelected>>", lambda e: app.refresh_library_ui())
+    app.shelf_combo.bind("<<ComboboxSelected>>", lambda e: app.library_presenter.refresh_library_ui())
 
     app.sort_label = ttk.Label(filter_frame, text="Sort:")
     sort_options = ["Title (A-Z)", "Author (A-Z)", "Date Added (Newest)", "Date Added (Oldest)"]
@@ -116,11 +116,11 @@ def setup_library_view(app, parent):
         app.settings["sort_pref"] = app.ui_state.sort.get()
         if hasattr(app, 'db'):
             app.db.save_settings(app.settings)
-        app.refresh_library_ui()
+        app.library_presenter.refresh_library_ui()
         
     app.sort_combo.bind("<<ComboboxSelected>>", on_sort_change)
 
-    app.view_btn = ttk.Button(filter_frame, text="Grid View", command=app.toggle_library_view)
+    app.view_btn = ttk.Button(filter_frame, text="Grid View", command=app.library_presenter.toggle_library_view)
     app.view_btn.pack(side=tk.RIGHT, padx=5)
 
     app.toggle_queue_btn = ttk.Button(filter_frame, text="Show/Hide Queue", command=app.import_session.toggle_queue_visibility)
@@ -171,10 +171,10 @@ def setup_library_view(app, parent):
     app.grid_canvas.configure(yscrollcommand=app.v_scroll.set)
     app.grid_inner.bind("<Configure>", lambda e: app.grid_canvas.configure(scrollregion=app.grid_canvas.bbox("all")))
     
-    app.grid_canvas.bind("<Configure>", app.on_canvas_resize)
-    app.root.bind_all("<MouseWheel>", app._on_global_scroll)  
-    app.root.bind_all("<Button-4>", app._on_global_scroll)    
-    app.root.bind_all("<Button-5>", app._on_global_scroll)   
+    app.grid_canvas.bind("<Configure>", app.library_presenter.on_canvas_resize)
+    app.root.bind_all("<MouseWheel>", app.library_presenter._on_global_scroll)  
+    app.root.bind_all("<Button-4>", app.library_presenter._on_global_scroll)    
+    app.root.bind_all("<Button-5>", app.library_presenter._on_global_scroll)   
     app.root.bind_all("<Button-3>", app.show_context_menu)
 
     app.root.bind_all("<Button-2>", app.show_context_menu)         
@@ -193,7 +193,7 @@ def setup_library_view(app, parent):
     ttk.Label(app.empty_state_frame, text=empty_text, justify="center", font=("Segoe UI", 12)).pack()
 
     for col in app.library_tree["columns"]:
-        app.library_tree.heading(col, text=col, command=lambda _col=col: app.sort_treeview(app.library_tree, _col, False))
+        app.library_tree.heading(col, text=col, command=lambda _col=col: app.library_presenter.sort_treeview(app.library_tree, _col, False))
         
     # 2. Turn off stretch for ALL columns
     app.library_tree.column("Title", width=250, minwidth=200, stretch=tk.NO)
@@ -242,4 +242,4 @@ def setup_library_view(app, parent):
 
     ttk.Progressbar(dl_prog_frame, variable=app.ui_state.dl_progress, maximum=100).pack(side=tk.TOP, fill="x")
 
-    app.refresh_library_ui()
+    app.library_presenter.refresh_library_ui()

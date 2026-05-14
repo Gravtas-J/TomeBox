@@ -89,7 +89,7 @@ class ActionRouter:
     def on_dl_complete(self, filepath, title, post_action):
         def update():
             self.app.stats_manager.add_stat("books_downloaded", 1)
-            self.app.refresh_library_ui()
+            self.app.library_presenter.refresh_library_ui()
             
             if post_action in ["play", "convert"]:
                 self.app.load_specific_file(filepath)

@@ -57,7 +57,7 @@ from ui.import_session import ImportSession
 from ui.palette_controller import PaletteController
 from ui.playback_presenter import PlaybackPresenter
 from ui.auth_controller import AuthController
-
+from ui.library_presenter import LibraryPresenter
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -123,11 +123,10 @@ class AAXManagerApp:
         self.palette_controller = PaletteController(self)
         self.playback_presenter = PlaybackPresenter(self)
         self.auth_controller = AuthController(self)
+        self.library_presenter = LibraryPresenter(self)
 
         self.root.dnd_bind('<<Drop>>', self.import_session.on_file_drop)
         self.base_dir = base_dir  
-        self.current_sort_col = "Title"  
-        self.current_sort_descending = False
 
         # 1. Initialize Database Manager FIRST
         self.db = DatabaseManager(self.base_dir)
@@ -230,11 +229,6 @@ class AAXManagerApp:
         # UI & View State
         self.current_view_mode = "list"
         self._selected_grid_item = None
-        self._last_selected_card_frame = None
-        self._current_filtered_data = []
-        self._last_canvas_width = 0
-        self._resize_timer = None
-        self.cover_cache = {}
         
         # Window / Dialog State
         self.chapter_win = None
@@ -282,7 +276,7 @@ class AAXManagerApp:
         self.root.after(900000, self.run_background_sync)
         self.root.after(3000, lambda: self.library_manager.run_background_library_scan(
             self.converter, self.active_profile, self.logger, self.thread_pool, 
-            on_refresh_cb=lambda: self.root.after(0, self.refresh_library_ui)
+            on_refresh_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
         ))
         dl_dir = self.settings.get("download_folder") or self.settings.get("download_dir")
         lib_paths = list(self.library_manager.local_library.keys())
@@ -294,7 +288,7 @@ class AAXManagerApp:
         ).start()
         threading.Thread(
             target=self.library_manager.monitor_local_files, 
-            args=(self.logger, lambda: self.root.after(0, self.refresh_library_ui)), 
+            args=(self.logger, lambda: self.root.after(0, self.library_presenter.refresh_library_ui)), 
             daemon=True
         ).start()
 
@@ -593,7 +587,7 @@ class AAXManagerApp:
             self.library_manager.silent_cloud_sync, 
             self.logger, 
             lambda msg: self.root.after(0, lambda: self.ui_state.dl_status.set(msg)), 
-            lambda: self.root.after(0, self.refresh_library_ui)
+            lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
         )
         # Schedule the next check in 15 minutes (900000 milliseconds)
         self.root.after(900000, self.run_background_sync)
@@ -848,253 +842,6 @@ class AAXManagerApp:
                 
             self.download_manager.queue_batch(missing_items, save_dir)
 
-    def toggle_library_view(self):
-        if self.current_view_mode == "list":
-            self.current_view_mode = "grid"
-            self.view_btn.config(text="List View")
-            
-            if hasattr(self, 'cover_toggle'):
-                self.cover_toggle.pack(side=tk.RIGHT, padx=5)
-            if hasattr(self, 'sort_label'):
-                self.sort_label.pack(side=tk.LEFT, padx=(10, 5))
-                self.sort_combo.pack(side=tk.LEFT)
-            
-            self.library_tree.grid_remove()
-            self.h_scroll.grid_remove()
-            
-            if self.library_manager.cloud_items or self.library_manager.local_library:
-                self.grid_canvas.grid(row=0, column=0, sticky="nsew")
-            
-            self.v_scroll.config(command=self.grid_canvas.yview)
-            self.grid_canvas.config(yscrollcommand=self.v_scroll.set)
-        else:
-            self.current_view_mode = "list"
-            self.view_btn.config(text="Grid View")
-            
-            if hasattr(self, 'cover_toggle'):
-                self.cover_toggle.pack_forget()
-            if hasattr(self, 'sort_label'):
-                self.sort_label.pack_forget()
-                self.sort_combo.pack_forget()
-            
-            self.grid_canvas.grid_remove()
-            
-            if self.library_manager.cloud_items or self.library_manager.local_library:
-                self.library_tree.grid(row=0, column=0, sticky="nsew")
-                self.h_scroll.grid(row=1, column=0, sticky="ew")
-            
-            self.v_scroll.config(command=self.library_tree.yview)
-            self.library_tree.config(yscrollcommand=self.v_scroll.set)
-            
-        self.refresh_library_ui()
-
-    def on_canvas_resize(self, event):
-
-        if hasattr(self, 'grid_window_id'):
-            self.grid_canvas.itemconfig(self.grid_window_id, width=event.width)
-        if getattr(self, '_last_canvas_width', None) == event.width:
-            return
-        self._last_canvas_width = event.width
-        if self._resize_timer is not None:
-            self.root.after_cancel(self._resize_timer)
-        self._resize_timer = self.root.after(200, self.draw_grid_view)
-
-    def draw_grid_view(self):
-        if self.current_view_mode != "grid": return
-        
-        for widget in self.grid_inner.winfo_children():
-            widget.destroy()
-
-
-        style = ttk.Style()
-        default_bg = style.lookup("TFrame", "background") or "#f0f0f0"
-        default_fg = style.lookup("TLabel", "foreground") or "#000000"
-        select_bg = "#4a90e2" 
-
-        self.grid_canvas.config(bg=default_bg)
-        self.grid_inner.config(bg=default_bg)
-        
-        canvas_width = self.grid_canvas.winfo_width()
-        cols = max(1, canvas_width // 190)
-
-        for i in range(20): 
-            self.grid_inner.columnconfigure(i, weight=0)
-        for i in range(cols):
-            self.grid_inner.columnconfigure(i, weight=1)
-        
-        for idx, row_data in enumerate(getattr(self, '_current_filtered_data', [])):
-            title, authors, series_str, duration_str, asin, status, row_path, date_str = row_data
-
-            outer_card = tk.Frame(self.grid_inner, bg=default_bg)
-            outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
-
-            card = tk.Frame(outer_card, bg=default_bg, width=170, height=240, bd=0, highlightthickness=0)
-            card.pack_propagate(False) 
-            card.pack(padx=2, pady=2) 
-            
-            is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
-            is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
-            
-            if is_missing_file:
-                warning_lbl = tk.Label(card, text="⚠️ File Missing", bg="#ff4444", fg="#ffffff", font=("Segoe UI", 8, "bold"))
-                warning_lbl.pack(side=tk.TOP, fill="x")
-            elif is_missing_duration:
-                warning_lbl = tk.Label(card, text="⚠️ No Duration", bg="#ffaa00", fg="#000000", font=("Segoe UI", 8, "bold"))
-                warning_lbl.pack(side=tk.TOP, fill="x")
-
-            img_obj = None
-            if asin in self.cover_cache:
-                img_obj = self.cover_cache[asin]
-            else:
-                cover_path = os.path.join(self.covers_dir, f"{asin}.jpg")
-                if os.path.exists(cover_path):
-                    try:
-                        img = Image.open(cover_path)
-                        img.thumbnail((150, 150))
-                        img_obj = ImageTk.PhotoImage(img)
-                        self.cover_cache[asin] = img_obj 
-                    except: pass
-                
-            
-            img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0, cursor="hand2")
-            img_label.pack(pady=(5, 0))
-            display_title = title[:45] + "..." if len(title) > 45 else title
-            
-            text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
-            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
-            text_label.pack(pady=(5, 0))
-            
-            def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
-                # Safely check if a previous card exists before trying to un-highlight it
-                last_card = getattr(self, '_last_selected_card_frame', None)
-                if last_card is not None and last_card.winfo_exists():
-                    last_card.config(bg=default_bg)
-                
-                oc.config(bg=select_bg)
-                self._last_selected_card_frame = oc 
-                self._selected_grid_item = {'values': [t, "", "", "", a, s, ""]} 
-                self.on_item_select()
-                
-            def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
-                on_card_click(e, oc, t, a, s)
-                self.playback_presenter.master_play()
-
-            outer_card.bind("<Button-1>", on_card_click)
-            outer_card.bind("<Double-1>", on_card_double_click)
-            card.bind("<Button-1>", on_card_click)
-            card.bind("<Double-1>", on_card_double_click)
-            img_label.bind("<Button-1>", on_card_click)
-            img_label.bind("<Double-1>", on_card_double_click)
-            
-            text_label.bind("<Button-1>", on_card_click)
-            text_label.bind("<Double-1>", on_card_double_click)
-
-        self.grid_inner.update_idletasks()
-        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
-
-    def refresh_library_ui(self, *args):
-        # 1. Clear the current UI
-        for row in self.library_tree.get_children():
-            self.library_tree.delete(row)
-
-        search_query = self.ui_state.search.get()
-        current_filter = self.ui_state.filter.get()
-        current_shelf = self.ui_state.shelf_filter.get()
-
-        # 2. Ask the Controller for the data
-        filtered_rows, shelf_list = self.library_manager.get_view_data(
-            search_query=search_query,
-            filter_type=current_filter,
-            shelf_filter=current_shelf
-        )
-
-        if hasattr(self, 'sort_var'):
-            sort_pref = self.ui_state.sort.get()
-            
-            def get_sort_key(row):
-                title, authors, series_str, duration_str, asin, status, row_path, date_str = row
-                
-                if sort_pref == "Title (A-Z)":
-                    return title.lower()
-                elif sort_pref == "Author (A-Z)":
-                    return authors.lower()
-                else: # Date Added
-                    # Check local database for physical files
-                    if row_path and row_path in self.library_manager.local_library:
-                        return self.library_manager.local_library[row_path].get("date_added", 0)
-                    # Cloud-only items drop to the bottom of the "Newest" list
-                    return 0 
-                    
-            is_reverse = sort_pref == "Date Added (Newest)"
-            filtered_rows.sort(key=get_sort_key, reverse=is_reverse)
-
-
-        self._current_filtered_data = filtered_rows
-
-        # 3. Repopulate the shelf filter dropdown
-        if hasattr(self, 'shelf_combo'):
-            self.shelf_combo['values'] = shelf_list
-
-        # 4. Handle Empty State
-        is_completely_empty = (not self.library_manager.cloud_items) and (not self.library_manager.local_library)
-
-        if is_completely_empty:
-            self.library_tree.grid_remove()
-            self.h_scroll.grid_remove()
-            self.grid_canvas.grid_remove()
-            self.v_scroll.grid_remove()
-            self.empty_state_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
-        else:
-            self.empty_state_frame.grid_remove()
-            self.v_scroll.grid(row=0, column=1, sticky="ns")
-            
-            if self.current_view_mode == "list":
-                self.grid_canvas.grid_remove()
-                self.library_tree.grid(row=0, column=0, sticky="nsew")
-                self.h_scroll.grid(row=1, column=0, sticky="ew")
-
-                # Configure the health warning tag colors
-                self.library_tree.tag_configure('warning', foreground='#ffaa00') # Orange for missing metadata
-                self.library_tree.tag_configure('error', foreground='#ff4444')   # Red for missing files
-
-                for row in filtered_rows:
-                    title, authors, series_str, duration_str, asin, status, row_path, date_str = row
-                    
-                    # Evaluate Health
-                    tags = ()
-                    is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
-                    is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
-
-                    if is_missing_file:
-                        tags = ('error',)
-                    elif is_missing_duration:
-                        tags = ('warning',)
-
-                    self.library_tree.insert("", "end", values=row, tags=tags)
-
-                if hasattr(self, 'current_sort_col') and hasattr(self, 'current_sort_descending'):
-                    self.sort_treeview(self.library_tree, self.current_sort_col, self.current_sort_descending)
-            else:
-                self.library_tree.grid_remove()
-                self.h_scroll.grid_remove()
-                self.grid_canvas.grid(row=0, column=0, sticky="nsew")
-                self.draw_grid_view()
-        total_books = len(self.library_manager.local_library)
-        formats = {}
-        
-        for path, data in self.library_manager.local_library.items():
-            fmt = data.get("format", "UNKNOWN").upper()
-            formats[fmt] = formats.get(fmt, 0) + 1
-            
-        self.ui_state.lib_count.set(f"Books found: {total_books}")
-        
-        if formats:
-            tooltip_text = "\n".join([f"{f}: {c}" for f, c in sorted(formats.items())])
-        else:
-            tooltip_text = "Library is empty."
-            
-        if hasattr(self, 'lib_count_tooltip'):
-            self.lib_count_tooltip.text = tooltip_text
 
     def handle_action_on_selected(self, action_type):
         if self.current_view_mode == "list":
@@ -1196,33 +943,6 @@ class AAXManagerApp:
         """Re-routes the scraper button to the new unified Match UI."""
         from ui.components.dialogs import open_match_to_audible_window
         open_match_to_audible_window(self, filepath)
-
-    def sort_treeview(self, tree, col, descending):
-        data = [(tree.set(child, col), child) for child in tree.get_children('')]
-        
-        def sort_key(item):
-            val = item[0]
-            if "h " in val and "m" in val:
-                try:
-                    parts = val.split("h ")
-                    h = int(parts[0])
-                    m = int(parts[1].replace("m", ""))
-                    return h * 60 + m
-                except ValueError:
-                    pass
-
-            if val == "N/A":
-                return "0000-00-00"
-                
-            return val.lower()
-
-        data.sort(key=sort_key, reverse=descending)
-        self.current_sort_col = col
-        self.current_sort_descending = descending
-        for index, (val, child) in enumerate(data):
-            tree.move(child, '', index)
-            
-        tree.heading(col, command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
 
     def setup_ui(self):
         setup_menu_bar(self)
@@ -1382,8 +1102,8 @@ class AAXManagerApp:
         self.library_manager.db.save_local_db(self.library_manager.local_library)
         
         # 6. Fetch the cover art and refresh UI
-        self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.refresh_library_ui))
-        self.refresh_library_ui()
+        self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui))
+        self.library_presenter.refresh_library_ui()
         messagebox.showinfo("Match Successful", f"Successfully linked '{title}' to:\n\n{filepath}")
 
     def fetch_cloud_library(self):
@@ -1409,11 +1129,11 @@ class AAXManagerApp:
             
             self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
 
-            self.root.after(0, self.refresh_library_ui)
+            self.root.after(0, self.library_presenter.refresh_library_ui)
             self.root.after(0, lambda: self.action_router.reset_ui_if_idle())
 
             self.metadata_manager.sync_missing_covers(
-                on_complete_cb=lambda: self.root.after(0, lambda: self.refresh_library_ui() if self.current_view_mode == 'grid' else None)
+                on_complete_cb=lambda: self.root.after(0, lambda: self.library_presenter.refresh_library_ui() if self.current_view_mode == 'grid' else None)
             )
             
         except httpx.ConnectError:
@@ -1455,58 +1175,13 @@ class AAXManagerApp:
                 
         if removed_count > 0:
             self.db.save_local_db(self.library_manager.local_library)
-            self.refresh_library_ui()
+            self.library_presenter.refresh_library_ui()
             
             # Wipe panel after deletion
             self.clear_sidebar()
             self._selected_local_path = None
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
-
-    def _on_global_scroll(self, event):
-        """A universal scroll handler that intelligently scrolls whatever canvas the mouse is hovering over."""
-        widget = event.widget
-        
-        # Safeguard for older OS/Tkinter versions that pass widget paths as strings
-        if isinstance(widget, str):
-            try:
-                widget = self.root.nametowidget(widget)
-            except Exception:
-                return
-
-        target_canvas = None
-        current = widget
-        
-        # Walk up the widget hierarchy to find a scrollable Canvas
-        while current:
-            # Do NOT hijack scrolling if hovering over native scrollable widgets
-            if isinstance(current, (ttk.Treeview, tk.Text, tk.Listbox)):
-                return
-                
-            if isinstance(current, tk.Canvas):
-                # Ensure we only scroll the main library grid if it is the actively visible view
-                if hasattr(self, 'grid_canvas') and current == self.grid_canvas:
-                    if self.current_view_mode != "grid":
-                        return 
-                target_canvas = current
-                break
-            
-            try:
-                current = current.master
-            except AttributeError:
-                break
-
-        if not target_canvas:
-            return
-
-        num = getattr(event, 'num', 0)
-        delta = getattr(event, 'delta', 0)
-
-        # Standardized directional math for Windows (-120/+120) and macOS (-1/+1)
-        if num == 4 or delta > 0:
-            target_canvas.yview_scroll(-1, "units")
-        elif num == 5 or delta < 0:
-            target_canvas.yview_scroll(1, "units")
 
     def manage_library_folders_prompt(self):
         """Opens a UI dialog to manage the background scanner's watched folders."""
@@ -1561,7 +1236,7 @@ class AAXManagerApp:
             # Trigger an immediate scan of the new folders!
             self.library_manager.run_background_library_scan(
                 self.converter, self.active_profile, self.logger, self.thread_pool, 
-                on_refresh_cb=lambda: self.root.after(0, self.refresh_library_ui)
+                on_refresh_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
             )
             win.destroy()
             
