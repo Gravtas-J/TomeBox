@@ -7,17 +7,25 @@ from core.events import EventBus
 def mock_app():
     app = MagicMock()
     
-    # Mock the Tkinter UiState variables
     app.ui_state.dl_status.set = MagicMock()
     app.ui_state.dl_progress.set = MagicMock()
-    
-    # Mock the queue dictionary
     app.queue_ui_elements = {}
     
-    # Force app.root.after(delay, func, *args) to execute synchronously
-    app.root.after.side_effect = lambda delay, func, *args: func(*args)
+    def safe_after(delay, func, *args):
+        # Allow nested calls up to 3 levels deep before breaking the circuit
+        depth = getattr(safe_after, "depth", 0)
+        if depth > 3:
+            return "timer_id" 
+            
+        safe_after.depth = depth + 1
+        try:
+            func(*args)
+        finally:
+            safe_after.depth -= 1
+        return "timer_id"
+        
+    app.root.after.side_effect = safe_after
     
-    # Mock background managers for the reset_ui_if_idle check
     app.library_manager._is_importing = False
     app.library_manager.import_queue.empty.return_value = True
     app.download_manager.is_processing = False
@@ -82,7 +90,7 @@ def test_remove_queue_ui_row(router, mock_app):
     assert "task_1" not in mock_app.queue_ui_elements
     
     # Assert the drawer closes itself when the last item is removed
-    mock_app.toggle_queue_drawer.assert_called_with(False)
+    mock_app.import_session.toggle_queue_drawer.assert_called_with(False)
 
 def test_conversion_complete_event(router, mock_app, monkeypatch):
     messagebox_mock = MagicMock()
@@ -110,9 +118,9 @@ def test_download_complete_event_post_actions(router, mock_app):
     router.event_bus.publish("download.complete", filepath="book1.aax", title="Book 1", post_action="play")
     
     mock_app.stats_manager.add_stat.assert_called_with("books_downloaded", 1)
-    mock_app.refresh_library_ui.assert_called()
-    mock_app.load_specific_file.assert_called_with("book1.aax")
-    mock_app.play_chapter.assert_called()
+    mock_app.library_presenter.refresh_library_ui.assert_called()
+    mock_app.playback_presenter.load_specific_file.assert_called_with("book1.aax")
+    mock_app.playback_presenter.master_play.assert_called()
 
     # Test auto-convert post action
     router.event_bus.publish("download.complete", filepath="book2.aax", title="Book 2", post_action="convert")
@@ -169,7 +177,7 @@ def test_import_queue_empty_event(router, mock_app):
     
 def test_book_start_and_complete(router, mock_app):
     router.on_book_start("sub_task_1", "The Hobbit")
-    mock_app.add_queue_ui_row.assert_called_with("sub_task_1", "The Hobbit")
+    mock_app.import_session.add_queue_ui_row.assert_called_with("sub_task_1", "The Hobbit")
 
     # Keep a distinct reference to the mock
     status_mock = MagicMock()
@@ -187,10 +195,10 @@ def test_scrape_apply_complete_reloads_cover(router, mock_app):
     router.event_bus.publish("metadata.apply_complete", filepath="C:/audio/book.m4b", title="New Title")
     
     mock_app.cover_cache.clear.assert_called_once()
-    mock_app.refresh_library_ui.assert_called()
+    mock_app.library_presenter.refresh_library_ui.assert_called()
     mock_app.metadata_manager.fetch_display_metadata.assert_called_with("C:/audio/book.m4b")
     # Because they are listening to it, it should auto-reload the specific file
-    mock_app.load_specific_file.assert_called_with("C:/audio/book.m4b")
+    mock_app.playback_presenter.load_specific_file.assert_called_with("C:/audio/book.m4b")
 
 def test_scrape_error_handling(router, mock_app):
     # Test Rate Limit

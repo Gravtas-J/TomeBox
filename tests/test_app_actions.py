@@ -52,4 +52,4 @@ def test_match_local_file_to_cloud_mapping(mock_app):
     # Verify DB save and cover sync triggers fired
     mock_app.library_manager.db.save_local_db.assert_called_once()
     mock_app.metadata_manager.sync_missing_covers.assert_called_once()
-    mock_app.refresh_library_ui.assert_called()
+    mock_app.library_presenter.refresh_library_ui.assert_called()

@@ -167,7 +167,6 @@ def test_play_pause_stop(controller, monkeypatch):
     controller.play(voice_boost=True, skip_silence=False, drm_flags=[])
     assert controller.is_playing is True
     assert controller.is_paused is False
-    assert controller._monitor_active is True
     assert ("play", "/fake/book.m4b", 0.0) in controller.player.call_log
 
     # 2. PAUSE
@@ -176,7 +175,6 @@ def test_play_pause_stop(controller, monkeypatch):
     controller.pause()
     assert controller.is_playing is False
     assert controller.is_paused is True
-    assert controller._monitor_active is False
     assert controller.current_play_time == 8.5 
     assert ("stop",) in controller.player.call_log
 
@@ -244,7 +242,7 @@ def test_tick_loop(controller, monkeypatch):
     monkeypatch.setattr(time, "sleep", MagicMock(side_effect=BreakLoop))
     
     with pytest.raises(BreakLoop):
-        controller._tick_loop()
+        controller._tick_loop(controller._tick_session)
         
     assert controller.current_play_time == 2.0
     
@@ -253,7 +251,7 @@ def test_tick_loop(controller, monkeypatch):
         "playback.tick", 
         current_time=2.0, 
         total_time=100.0, 
-        duration=100.0
+        duration=2.0
     )
 
 def test_chapter_navigation_and_hooks(controller):

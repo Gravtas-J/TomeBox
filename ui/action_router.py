@@ -29,7 +29,7 @@ class ActionRouter:
         self.event_bus.subscribe("conversion.progress", lambda **kw: self.app.root.after(0, self.update_global_progress, kw.get("percent")))
         self.event_bus.subscribe("conversion.complete", lambda **kw: self.app.root.after(0, lambda: messagebox.showinfo("Conversion Success", kw.get("message"))))
         self.event_bus.subscribe("conversion.error", lambda **kw: self.on_task_error(kw.get("filepath"), kw.get("action"), kw.get("error_msg")))
-        self.event_bus.subscribe("conversion.refresh_required", lambda **kw: self.app.root.after(0, self.app.refresh_library_ui))
+        self.event_bus.subscribe("conversion.refresh_required", lambda **kw: self.app.root.after(0, self.app.library_presenter.refresh_library_ui))
 
         # --- Library Events ---
         self.event_bus.subscribe("library.queue.empty", lambda **kw: self.on_import_queue_empty())
@@ -92,9 +92,9 @@ class ActionRouter:
             self.app.library_presenter.refresh_library_ui()
             
             if post_action in ["play", "convert"]:
-                self.app.load_specific_file(filepath)
+                self.app.playback_presenter.load_specific_file(filepath)
                 if post_action == "play":
-                    self.app.root.after(500, self.app.play_chapter)
+                    self.app.root.after(500, self.app.playback_presenter.master_play)
                 elif post_action == "convert":
                     self.app.root.after(500, self.app.start_convert_thread)
         self.app.root.after(0, update)
@@ -141,7 +141,7 @@ class ActionRouter:
     def on_import_complete(self, added_count, total_found=0):
         def update():
             try:
-                self.app.refresh_library_ui()
+                self.app.library_presenter.refresh_library_ui()
             except Exception as e:
                 import traceback; traceback.print_exc()
             if added_count > 0:
@@ -163,7 +163,7 @@ class ActionRouter:
         self.on_dl_status(sub_task_id, status, is_global=False)
         self._schedule_row_removal(sub_task_id)
         if success:
-            self.app.root.after(0, self.app.refresh_library_ui)
+            self.app.root.after(0, self.app.library_presenter.refresh_library_ui)
 
     # --- Error Callbacks ---
     def on_task_error(self, filepath, action_type, error_msg):
@@ -183,10 +183,10 @@ class ActionRouter:
         def update():
             self.reset_ui_if_idle()
             self.app.cover_cache.clear()
-            self.app.refresh_library_ui()
+            self.app.library_presenter.refresh_library_ui()
             self.app.metadata_manager.fetch_display_metadata(filepath)
             if self.app.file_path == filepath:
-                self.app.load_specific_file(filepath)
+                self.app.playback_presenter.load_specific_file(filepath)
             messagebox.showinfo("Success", "Metadata scraped and applied!")
         self.app.root.after(0, update)
 

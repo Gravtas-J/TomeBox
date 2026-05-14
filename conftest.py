@@ -80,3 +80,28 @@ def fake_api_client():
     mock_client.get_activation_bytes.return_value = "00000000"
     
     return mock_client
+
+@pytest.fixture(autouse=True)
+def mock_tkinter_dialogs(monkeypatch):
+    """
+    Globally suppresses all Tkinter popups during testing and auto-answers them.
+    Because autouse=True, this automatically applies to all 200+ tests without needing to be imported.
+    """
+    import tkinter.messagebox as mb
+    import tkinter.simpledialog as sd
+    import tkinter.filedialog as fd
+
+    # Auto-click "OK" on alerts
+    monkeypatch.setattr(mb, "showinfo", MagicMock(return_value="ok"))
+    monkeypatch.setattr(mb, "showwarning", MagicMock(return_value="ok"))
+    monkeypatch.setattr(mb, "showerror", MagicMock(return_value="ok"))
+    
+    # Auto-click "Yes" on confirmation prompts
+    monkeypatch.setattr(mb, "askyesno", MagicMock(return_value=True))
+
+    # Auto-fill text inputs (like Profile creation or URL pasting)
+    monkeypatch.setattr(sd, "askstring", MagicMock(return_value="Mocked_Input_String"))
+
+    # Auto-select dummy files/folders for file explorers
+    monkeypatch.setattr(fd, "askopenfilename", MagicMock(return_value="/mock/path/file.m4b"))
+    monkeypatch.setattr(fd, "askdirectory", MagicMock(return_value="/mock/path/folder"))
