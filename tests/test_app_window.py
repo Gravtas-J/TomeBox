@@ -37,11 +37,13 @@ def app_instance(MockCloud, MockLibPres, MockAuth, MockPlayPres, MockPal, MockIm
         app.search_entry = MagicMock()
     
     # Prevent the UI components from crashing trying to draw to the headless mock
+    # Prevent the UI components from crashing trying to draw to the headless mock
     with patch("ui.app_window.setup_menu_bar", side_effect=fake_setup_menu), \
          patch("ui.app_window.PlayerBarView"), \
          patch("ui.app_window.setup_library_view"), \
          patch("ui.app_window.setup_sidebar"), \
-         patch("ui.app_window.UiState"):
+         patch("ui.app_window.UiState"), \
+         patch("os.makedirs"):  
          
         app = AAXManagerApp(root, "/mock/base/dir")
         
