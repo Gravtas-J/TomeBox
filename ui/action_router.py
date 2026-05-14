@@ -63,7 +63,7 @@ class ActionRouter:
             del self.app.queue_ui_elements[task_id]
         
         if not self.app.queue_ui_elements:
-            self.app.toggle_queue_drawer(False)
+            self.app.import_session.toggle_queue_drawer(False)
 
     def _schedule_row_removal(self, task_id):
         self.app.root.after(3000, lambda: self.remove_queue_ui_row(task_id))
@@ -153,7 +153,7 @@ class ActionRouter:
         self.app.root.after(0, update)
 
     def on_book_start(self, sub_task_id, title):
-        self.app.root.after(0, lambda: self.app.add_queue_ui_row(sub_task_id, title))
+        self.app.root.after(0, lambda: self.app.import_session.add_queue_ui_row(sub_task_id, title))
 
     def on_book_progress(self, sub_task_id, pct):
         self.on_dl_progress(sub_task_id, pct, is_global=False)
