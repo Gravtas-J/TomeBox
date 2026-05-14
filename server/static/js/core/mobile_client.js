@@ -218,7 +218,9 @@ class TomeBoxClient {
             } else {
                 card.addEventListener('click', () => this.startPlayback(path, titleStr, authorStr, resumePos, safeAsin));
             }
-            
+            if (document.body.classList.contains('desktop') && window.DesktopApp) {
+                window.DesktopApp.attachContextMenu(card, data);
+            }
             this.dom.grid.appendChild(card);
             this.state.allBooks.push({ 
                 path: path, element: card, searchString: `${titleStr} ${authorStr}`.toLowerCase(), 

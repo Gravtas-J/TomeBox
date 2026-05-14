@@ -1,89 +1,181 @@
 // ========================================
-// TomeBox Desktop UI — sidebar, routing, pairing
+// TomeBox Desktop Client
 // ========================================
 
-(function() {
-    'use strict';
+class TomeBoxDesktop {
+    constructor() {
+        this.state = {
+            activeTaskAsins: new Set(),
+            pendingDownloadAsins: [],
+            pendingLoginProfile: null,
+            pendingLoginLocale: null,
+            currentContextItem: null,
+            queuePollingInterval: null,
+            devicesViewLoaded: false,
+            sidebarStateKey: 'tomebox_sidebar_collapsed'
+        };
 
-    // ------------ Sidebar Toggle ------------
-    
-    const SIDEBAR_STATE_KEY = 'tomebox_sidebar_collapsed';
-    
-    function initSidebar() {
-        const toggle = document.getElementById('sidebar-toggle');
-        const shell = document.getElementById('app-shell');
+        this.dom = {
+            shell: document.getElementById('app-shell'),
+            sidebarToggle: document.getElementById('sidebar-toggle'),
+            qrContainer: document.getElementById('qr-container'),
+            pairingUrl: document.getElementById('pairing-url'),
+            profileSelector: document.getElementById('profile-selector'),
+            libraryStatus: document.getElementById('library-status'),
+            libraryGrid: document.getElementById('library-grid')
+        };
+
+        this.routes = {
+            '#/library': 'library',
+            '#/devices': 'devices',
+            '#/pairing': 'devices',
+            '#/account': 'account'
+        };
+
+        this.init();
+    }
+
+    async init() {
+        this.bindStaticUI();
+        this.initSidebar();
+        this.initRouting();
+        this.bindGlobalEvents();
         
-        if (!toggle || !shell) return;
-        
-        // Restore previous state
-        if (localStorage.getItem(SIDEBAR_STATE_KEY) === 'true') {
-            shell.classList.add('sidebar-collapsed');
+        await this.loadActiveProfile();
+        this.checkFirstRun();
+        this.startQueuePolling();
+
+        document.addEventListener('tomebox:libraryLoaded', () => this.updateLibraryCountDisplay());
+    }
+
+    // ==========================================
+    // UI BINDING ENGINE
+    // ==========================================
+    bindStaticUI() {
+        const bind = (id, event, handler) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener(event, handler.bind(this));
+        };
+
+        // Header & Search
+        bind('search-box', 'keyup', () => { if (window.TomeBoxApp) window.TomeBoxApp.filterLibrary(); });
+        bind('shelf-filter', 'change', () => { if (window.TomeBoxApp) window.TomeBoxApp.filterLibrary(); });
+        bind('sort-filter', 'change', () => { if (window.TomeBoxApp) window.TomeBoxApp.filterLibrary(); });
+        bind('btn-action-menu-toggle', 'click', this.toggleActionMenu);
+        bind('refresh-library-btn', 'click', this.refreshLibrary);
+        bind('btn-download-all', 'click', this.downloadAllMissing);
+        bind('btn-add-file', 'click', this.addLocalFile);
+        bind('btn-import-folder', 'click', this.importFolder);
+        bind('btn-cancel-import', 'click', this.cancelImport);
+        bind('profile-selector', 'change', this.handleProfileSelect);
+
+        // Avatar Routing
+        document.querySelectorAll('.profile-icon, .profile-label').forEach(el => {
+            el.addEventListener('click', () => {
+                window.location.hash = '#/account';
+                this.loadActiveProfile();
+            });
+        });
+
+        // Account Tab
+        bind('btn-new-profile', 'click', this.openCreateProfileModal);
+
+        // Event Delegation for dynamic Profile List
+        const profList = document.getElementById('profiles-list');
+        if (profList) {
+            profList.addEventListener('click', (e) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const action = btn.dataset.action;
+                const name = btn.dataset.profile;
+                if (action === 'signin') this.openLoginModal(name);
+                if (action === 'switch') this.switchProfile(name);
+                if (action === 'delete') this.deleteProfile(name);
+            });
         }
-        
-        toggle.addEventListener('click', () => {
-            shell.classList.toggle('sidebar-collapsed');
-            localStorage.setItem(
-                SIDEBAR_STATE_KEY,
-                shell.classList.contains('sidebar-collapsed')
-            );
+
+        // Modals (Background & Cancel clicks)
+        document.querySelectorAll('.modal-overlay').forEach(modal => {
+            modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+            modal.querySelector('.close-btn')?.addEventListener('click', () => modal.style.display = 'none');
+            modal.querySelectorAll('.action-btn-secondary:not(.close-btn)').forEach(btn => {
+                btn.addEventListener('click', () => modal.style.display = 'none');
+            });
+        });
+
+        // Specific Modal Buttons
+        bind('btn-create-profile-submit', 'click', this.submitCreateProfile);
+        bind('btn-login-continue', 'click', this.startLoginFlow);
+        bind('btn-login-complete', 'click', this.completeLoginFlow);
+        bind('btn-execute-metadata', 'click', this.executeMetadataSearch);
+        bind('btn-browse-dir', 'click', this.browseForDirectory);
+        bind('btn-save-dir', 'click', this.submitDownloadDir);
+
+        const metaInput = document.getElementById('metadata-search-input');
+        if (metaInput) metaInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.executeMetadataSearch(); });
+
+        // Event Delegation for Metadata Search Results
+        const metaResults = document.getElementById('metadata-search-results');
+        if (metaResults) {
+            metaResults.addEventListener('click', (e) => {
+                const btn = e.target.closest('button');
+                if (btn && btn.dataset.asin) this.applyMetadata(btn.dataset.asin);
+            });
+        }
+
+        // Context Menu
+        ['download', 'match', 'shelf', 'scrape', 'convert', 'cancel', 'remove'].forEach(action => {
+            bind(`ctx-${action}`, 'click', () => this.ctxAction(action));
         });
     }
-    
-    // ------------ Hash-Based Routing ------------
-    
-    const ROUTES = {
-        '#/library': 'library',
-        '#/devices': 'devices',
-        '#/pairing': 'devices',
-        '#/account': 'account'
-    };
-    
-    function showView(viewName) {
+
+    // ==========================================
+    // ROUTING & SIDEBAR
+    // ==========================================
+    initSidebar() {
+        if (!this.dom.sidebarToggle || !this.dom.shell) return;
+        if (localStorage.getItem(this.state.sidebarStateKey) === 'true') this.dom.shell.classList.add('sidebar-collapsed');
+        
+        this.dom.sidebarToggle.addEventListener('click', () => {
+            this.dom.shell.classList.toggle('sidebar-collapsed');
+            localStorage.setItem(this.state.sidebarStateKey, this.dom.shell.classList.contains('sidebar-collapsed'));
+        });
+    }
+
+    initRouting() {
+        window.addEventListener('hashchange', () => this.handleRoute());
+        this.handleRoute();
+    }
+
+    handleRoute() {
+        const hash = window.location.hash || '#/library';
+        const viewName = this.routes[hash] || 'library';
+        this.showView(viewName);
+    }
+
+    showView(viewName) {
         document.querySelectorAll('.nav-item').forEach(item => {
-            // Handle active class for both naming conventions
-            if (item.dataset.view === viewName || 
-               (viewName === 'pairing' && item.dataset.view === 'devices')) {
+            if (item.dataset.view === viewName || (viewName === 'pairing' && item.dataset.view === 'devices')) {
                 item.classList.add('active');
-            } else {
-                item.classList.remove('active');
-            }
+            } else { item.classList.remove('active'); }
         });
         
-        document.querySelectorAll('.view').forEach(view => {
-            view.classList.remove('active');
-        });
-        
-        // Try the new ID first, fallback to the old ID if HTML wasn't updated
+        document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
         let target = document.getElementById(`view-${viewName}`);
-        if (!target && viewName === 'pairing') {
-            target = document.getElementById('view-devices');
-        }
+        if (!target && viewName === 'pairing') target = document.getElementById('view-devices');
+        if (target) target.classList.add('active');
         
-        if (target) {
-            target.classList.add('active');
-        }
-        
-        // Ensure the QR loader triggers for the new pairing route
-        if (viewName === 'pairing' || viewName === 'devices') {
-            loadDevicesView();
-        } else if (viewName === 'account') {
-            loadProfilesView();
-        }
+        if (viewName === 'pairing' || viewName === 'devices') this.loadDevicesView();
+        else if (viewName === 'account') this.loadProfilesView();
     }
-    async function checkFirstRun() {
+
+    async checkFirstRun() {
         try {
-            // Add { cache: 'no-store' } to force the browser to check the live database
             const response = await fetch('/api/library', { cache: 'no-store' });
             if (!response.ok) return;
-            
             const data = await response.json();
-            const libraryIsEmpty = Object.keys(data).length === 0;
-            
-            if (libraryIsEmpty) {
-                // Redirect to account view with a friendly message
+            if (Object.keys(data).length === 0) {
                 window.location.hash = '#/account';
-                
-                // Small banner at the top of the account view
                 setTimeout(() => {
                     const list = document.getElementById('profiles-list');
                     if (list && !document.getElementById('first-run-banner')) {
@@ -95,84 +187,41 @@
                     }
                 }, 200);
             }
-        } catch (error) {
-            console.error('First run check failed:', error);
-        }
+        } catch (error) {}
     }
-    function handleRoute() {
-        const hash = window.location.hash || '#/library';
-        const viewName = ROUTES[hash] || 'library';
-        showView(viewName);
-    }
-    
-    function initRouting() {
-        window.addEventListener('hashchange', handleRoute);
-        handleRoute();
-    }
-    
-    // ------------ Pairing / Devices View ------------
-    
-    let devicesViewLoaded = false;
-    
-    async function loadDevicesView() {
-        if (devicesViewLoaded) return;
-        
-        const qrContainer = document.getElementById('qr-container');
-        const urlElement = document.getElementById('pairing-url');
-        
-        if (!qrContainer || !urlElement) return;
-        
+
+    // ==========================================
+    // PAIRING VIEW
+    // ==========================================
+    async loadDevicesView() {
+        if (this.state.devicesViewLoaded || !this.dom.qrContainer || !this.dom.pairingUrl) return;
         try {
-            // Fetch the pairing URL — server's /pairing endpoint returns a full HTML 
-            // page, so we need a dedicated JSON endpoint for the data
             const response = await fetch('/api/pairing-info');
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             const pairingUrl = data.pairing_url;
+            this.dom.pairingUrl.textContent = pairingUrl;
             
-            urlElement.textContent = pairingUrl;
-            
-            // Generate QR code client-side using a CDN library
-            await loadQRLibrary();
-            
-            qrContainer.innerHTML = '';
-            new QRCode(qrContainer, {
-                text: pairingUrl,
-                width: 240,
-                height: 240,
-                colorDark: '#000000',
-                colorLight: '#ffffff',
-                correctLevel: QRCode.CorrectLevel.H
+            await this.loadQRLibrary();
+            this.dom.qrContainer.innerHTML = '';
+            new QRCode(this.dom.qrContainer, {
+                text: pairingUrl, width: 240, height: 240, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H
             });
             
-            // Click-to-copy on the URL
-            urlElement.addEventListener('click', () => {
+            this.dom.pairingUrl.addEventListener('click', () => {
                 navigator.clipboard.writeText(pairingUrl).then(() => {
-                    const original = urlElement.textContent;
-                    urlElement.textContent = 'Copied to clipboard!';
-                    setTimeout(() => urlElement.textContent = original, 1500);
+                    const original = this.dom.pairingUrl.textContent;
+                    this.dom.pairingUrl.textContent = 'Copied to clipboard!';
+                    setTimeout(() => this.dom.pairingUrl.textContent = original, 1500);
                 });
             });
-            
-            devicesViewLoaded = true;
-            
-        } catch (error) {
-            console.error('Failed to load pairing info:', error);
-            qrContainer.innerHTML = `<p style="color: #ff6b6b;">Failed to load pairing info: ${error.message}</p>`;
-        }
+            this.state.devicesViewLoaded = true;
+        } catch (error) { this.dom.qrContainer.innerHTML = `<p style="color: #ff6b6b;">Failed to load pairing info: ${error.message}</p>`; }
     }
-    
-    function loadQRLibrary() {
+
+    loadQRLibrary() {
         return new Promise((resolve, reject) => {
-            if (window.QRCode) {
-                resolve();
-                return;
-            }
-            
+            if (window.QRCode) return resolve();
             const script = document.createElement('script');
             script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
             script.onload = resolve;
@@ -180,946 +229,550 @@
             document.head.appendChild(script);
         });
     }
-    
-    // ------------ Initialization ------------
-    
-    document.addEventListener('DOMContentLoaded', () => {
-        initSidebar();
-        initRouting();
-        loadActiveProfile();
-        checkFirstRun();
-    });
-    // ------------ Library Refresh ------------
 
-    async function refreshLibrary() {
+    // ==========================================
+    // LIBRARY CORE
+    // ==========================================
+    async refreshLibrary() {
         const btn = document.getElementById('refresh-library-btn');
-        const status = document.getElementById('library-status');
-        
         if (!btn || btn.disabled) return;
-        
         btn.disabled = true;
         btn.classList.add('refreshing');
-        status.textContent = 'Refreshing library from Audible...';
-        status.className = 'library-status';
+        this.setStatus('Refreshing library from Audible...');
         
         try {
             const response = await fetch('/api/library/refresh', { method: 'POST' });
-            
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || `HTTP ${response.status}`);
-            }
-            
+            if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
             const data = await response.json();
-            status.textContent = `Library refreshed — ${data.items_count} items in cloud`;
-            status.classList.add('success');
-            
-            // Trigger the existing library reload from mobile_client.js
-            if (typeof loadLibrary === 'function') {
-                await loadLibrary();
-            }
-            
-            // Clear status after a few seconds
+            this.setStatus(`Library refreshed — ${data.items_count} items in cloud`, 'success', 4000);
+            if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+        } catch (error) { this.setStatus(`Refresh failed: ${error.message}`, 'error'); } 
+        finally { btn.disabled = false; btn.classList.remove('refreshing'); }
+    }
+
+    updateLibraryCountDisplay() {
+        const displayEl = document.getElementById('library-count-display');
+        const libData = window.TomeBoxApp ? window.TomeBoxApp.state.rawLibraryData : null;
+        if (!displayEl || !libData) return;
+
+        const libraryItems = Object.values(libData);
+        const totalBooks = libraryItems.length;
+        const formats = {};
+        
+        libraryItems.forEach(item => {
+            let fmt = "UNKNOWN";
+            if (item.is_playlist) fmt = "PLAYLIST";
+            else if (item.format) fmt = item.format.toUpperCase();
+            else if (item.download_status === 'cloud_only') fmt = "CLOUD ONLY";
+            formats[fmt] = (formats[fmt] || 0) + 1;
+        });
+
+        displayEl.textContent = `Books found: ${totalBooks}`;
+        if (totalBooks > 0) {
+            const tooltipLines = Object.entries(formats)
+                .sort((a, b) => b[1] - a[1])
+                .map(([fmt, count]) => `• ${fmt}: ${count}`);
+            displayEl.title = "Format Breakdown:\n" + tooltipLines.join('\n');
+        } else { displayEl.title = "Library is empty."; }
+    }
+
+    setStatus(message, type = '', clearAfterMs = null) {
+        if (!this.dom.libraryStatus) return;
+        this.dom.libraryStatus.textContent = message;
+        this.dom.libraryStatus.className = `library-status ${type}`;
+        if (clearAfterMs) {
             setTimeout(() => {
-                status.textContent = '';
-                status.className = 'library-status';
-            }, 4000);
-            
-        } catch (error) {
-            status.textContent = `Refresh failed: ${error.message}`;
-            status.classList.add('error');
-        } finally {
-            btn.disabled = false;
-            btn.classList.remove('refreshing');
+                if (this.dom.libraryStatus.textContent === message) {
+                    this.dom.libraryStatus.textContent = '';
+                    this.dom.libraryStatus.className = 'library-status';
+                }
+            }, clearAfterMs);
         }
     }
 
-    // Expose to global scope for the inline onclick handler
-    window.refreshLibrary = refreshLibrary;
-    window.loadActiveProfile = loadActiveProfile;
-
-    // ------------ Profile Loading ------------
-
-    async function loadActiveProfile() {
+    // ==========================================
+    // ACCOUNT & PROFILES
+    // ==========================================
+    async loadActiveProfile() {
         try {
             const response = await fetch('/api/profiles/active');
             if (!response.ok) return;
-            
             const data = await response.json();
-            const select = document.getElementById('profile-selector');
-            if (!select) return;
+            if (!this.dom.profileSelector) return;
             
-            select.innerHTML = '';
+            this.dom.profileSelector.innerHTML = '';
             for (const profileName of data.available) {
                 const option = document.createElement('option');
                 option.value = profileName;
                 option.textContent = profileName;
-                if (profileName === data.active) {
-                    option.selected = true;
-                }
-                select.appendChild(option);
+                if (profileName === data.active) option.selected = true;
+                this.dom.profileSelector.appendChild(option);
+            }
+
+            const divider = document.createElement('option');
+            divider.disabled = true;
+            divider.textContent = "──────────";
+            this.dom.profileSelector.appendChild(divider);
+            
+            const manageOption = document.createElement('option');
+            manageOption.value = "_manage_";
+            manageOption.textContent = "⚙️ Manage Profiles & Auth...";
+            this.dom.profileSelector.appendChild(manageOption);
+        } catch (error) {}
+    }
+
+    handleProfileSelect() {
+        const val = this.dom.profileSelector.value;
+        if (val === '_manage_') {
+            window.location.hash = '#/account';
+            this.loadActiveProfile(); 
+            return;
+        }
+        if (val) this.switchProfile(val);
+    }
+
+    async loadProfilesView() {
+        const list = document.getElementById('profiles-list');
+        if (!list) return;
+        list.innerHTML = '<p style="color: #888;">Loading profiles...</p>';
+        
+        try {
+            const response = await fetch('/api/profiles/list');
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            list.innerHTML = '';
+            
+            for (const profile of data.profiles) {
+                const row = document.createElement('div');
+                row.className = 'profile-row' + (profile.is_active ? ' active' : '');
+                const statusClass = profile.is_authenticated ? 'authenticated' : 'not-authenticated';
+                const statusText = profile.is_authenticated ? 'Signed in' : 'Not signed in';
+                const actions = [];
+                const safeName = this.escapeHtml(profile.name);
+                
+                if (!profile.is_authenticated) actions.push(`<button class="action-btn-secondary" data-action="signin" data-profile="${safeName}">Sign In</button>`);
+                if (!profile.is_active) actions.push(`<button class="action-btn-secondary" data-action="switch" data-profile="${safeName}">Switch To</button>`);
+                if (data.profiles.length > 1) actions.push(`<button class="action-btn-secondary action-btn-danger" data-action="delete" data-profile="${safeName}">Delete</button>`);
+                
+                row.innerHTML = `
+                    <div class="profile-row-icon">👤</div>
+                    <div class="profile-row-info">
+                        <div class="profile-row-name">${safeName}${profile.is_active ? ' <span style="color: var(--accent); font-size: 0.8em;">(Active)</span>' : ''}</div>
+                        <div class="profile-row-status ${statusClass}">${statusText}</div>
+                    </div>
+                    <div class="profile-row-actions">${actions.join('')}</div>
+                `;
+                list.appendChild(row);
+            }
+        } catch (error) { list.innerHTML = `<p style="color: #ff6b6b;">Failed to load profiles: ${error.message}</p>`; }
+    }
+
+    openCreateProfileModal() {
+        document.getElementById('new-profile-name').value = '';
+        document.getElementById('create-profile-modal').style.display = 'flex';
+        setTimeout(() => document.getElementById('new-profile-name').focus(), 100);
+    }
+
+    async submitCreateProfile() {
+        const name = document.getElementById('new-profile-name').value.trim();
+        if (!name) return;
+        try {
+            const response = await fetch('/api/profiles/create', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name}) });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Failed to create profile');
+            
+            document.getElementById('create-profile-modal').style.display = 'none';
+            await this.loadProfilesView();
+            await this.loadActiveProfile();
+            
+            if (confirm(`Profile "${name}" created. Would you like to sign in now?`)) this.openLoginModal(name);
+        } catch (error) { alert(error.message); }
+    }
+
+    async switchProfile(name) {
+        try {
+            const response = await fetch(`/api/profiles/${encodeURIComponent(name)}/activate`, { method: 'POST' });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Failed to switch profile');
+            await this.loadProfilesView();
+            await this.loadActiveProfile();
+            if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+        } catch (error) { alert(`Failed to switch profile: ${error.message}`); }
+    }
+
+    async deleteProfile(name) {
+        if (!confirm(`Delete profile "${name}"? This will remove the saved authentication. Local files won't be affected.`)) return;
+        try {
+            const response = await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Failed to delete profile');
+            await this.loadProfilesView();
+            await this.loadActiveProfile();
+        } catch (error) { alert(`Failed to delete profile: ${error.message}`); }
+    }
+
+    // ==========================================
+    // LOGIN FLOW
+    // ==========================================
+    openLoginModal(profileName) {
+        this.state.pendingLoginProfile = profileName;
+        document.getElementById('login-modal-title').textContent = `Sign in: ${profileName}`;
+        document.getElementById('login-step-1').style.display = 'block';
+        document.getElementById('login-step-2').style.display = 'none';
+        document.getElementById('callback-url-input').value = '';
+        document.getElementById('login-error').style.display = 'none';
+        document.getElementById('login-modal').style.display = 'flex';
+    }
+
+    async startLoginFlow() {
+        this.state.pendingLoginLocale = document.getElementById('login-locale').value;
+        try {
+            const response = await fetch('/api/auth/login-start', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ locale: this.state.pendingLoginLocale, profile: this.state.pendingLoginProfile })
+            });
+            if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
+            
+            const data = await response.json();
+            document.getElementById('login-step-1').style.display = 'none';
+            document.getElementById('login-step-2').style.display = 'block';
+            
+            document.getElementById('login-iframe').style.display = 'none';
+            document.getElementById('login-fallback').style.display = 'block';
+            document.getElementById('login-external-link').href = data.auth_url;
+
+            const loginWindow = window.open(data.auth_url, '_blank', 'width=600,height=800');
+            if (loginWindow) {
+                const linkText = document.querySelector('#login-fallback p');
+                if (linkText) linkText.textContent = 'Audible login opened in a new window. Sign in there, then copy the URL from the address bar after the redirect fails.';
             }
         } catch (error) {
-            console.error('Failed to load active profile:', error);
+            alert(`Failed to start login: ${error.message}`);
+            document.getElementById('login-modal').style.display = 'none';
         }
     }
-})();
 
-// ============================================================
-// Account & Profile Management
-// ============================================================
-
-let pendingLoginProfile = null;
-let pendingLoginLocale = null;
-
-async function loadProfilesView() {
-    const list = document.getElementById('profiles-list');
-    if (!list) return;
-    
-    list.innerHTML = '<p style="color: #888;">Loading profiles...</p>';
-    
-    try {
-        const response = await fetch('/api/profiles/list');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    async completeLoginFlow() {
+        const callbackUrl = document.getElementById('callback-url-input').value.trim();
+        const errorEl = document.getElementById('login-error');
+        if (!callbackUrl) { errorEl.textContent = 'Please paste the URL from your browser'; errorEl.style.display = 'block'; return; }
+        errorEl.style.display = 'none';
         
-        const data = await response.json();
-        
-        list.innerHTML = '';
-        
-        for (const profile of data.profiles) {
-            const row = document.createElement('div');
-            row.className = 'profile-row' + (profile.is_active ? ' active' : '');
+        try {
+            const response = await fetch('/api/auth/login-complete', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ profile: this.state.pendingLoginProfile, callback_url: callbackUrl })
+            });
+            if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
             
-            const statusClass = profile.is_authenticated ? 'authenticated' : 'not-authenticated';
-            const statusText = profile.is_authenticated ? 'Signed in' : 'Not signed in';
-            
-            const actions = [];
-            
-            if (!profile.is_authenticated) {
-                actions.push(`<button class="action-btn-secondary" onclick="openLoginModal('${escapeHtml(profile.name)}')">Sign In</button>`);
-            }
-            
-            if (!profile.is_active) {
-                actions.push(`<button class="action-btn-secondary" onclick="switchProfile('${escapeHtml(profile.name)}')">Switch To</button>`);
-            }
-            
-            if (data.profiles.length > 1) {
-                actions.push(`<button class="action-btn-secondary action-btn-danger" onclick="deleteProfile('${escapeHtml(profile.name)}')">Delete</button>`);
-            }
-            
-            row.innerHTML = `
-                <div class="profile-row-icon">👤</div>
-                <div class="profile-row-info">
-                    <div class="profile-row-name">${escapeHtml(profile.name)}${profile.is_active ? ' <span style="color: var(--accent); font-size: 0.8em;">(Active)</span>' : ''}</div>
-                    <div class="profile-row-status ${statusClass}">${statusText}</div>
-                </div>
-                <div class="profile-row-actions">${actions.join('')}</div>
-            `;
-            
-            list.appendChild(row);
-        }
-    } catch (error) {
-        list.innerHTML = `<p style="color: #ff6b6b;">Failed to load profiles: ${error.message}</p>`;
+            const profileName = this.state.pendingLoginProfile;
+            document.getElementById('login-modal').style.display = 'none';
+            await this.loadProfilesView();
+            await this.loadActiveProfile();
+            if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+            alert(`Successfully signed in to ${profileName}`);
+        } catch (error) { errorEl.textContent = error.message; errorEl.style.display = 'block'; }
     }
-}
 
-function escapeHtml(s) {
-    const div = document.createElement('div');
-    div.textContent = s;
-    return div.innerHTML;
-}
-
-// ------------ Create Profile ------------
-
-function openCreateProfileModal() {
-    document.getElementById('new-profile-name').value = '';
-    document.getElementById('create-profile-modal').style.display = 'flex';
-    setTimeout(() => document.getElementById('new-profile-name').focus(), 100);
-}
-
-function closeCreateProfileModal(event) {
-    if (event && event.target.id !== 'create-profile-modal') return;
-    document.getElementById('create-profile-modal').style.display = 'none';
-}
-
-async function submitCreateProfile() {
-    const name = document.getElementById('new-profile-name').value.trim();
-    if (!name) return;
-    
-    try {
-        const response = await fetch('/api/profiles/create', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({name: name})
+    // ==========================================
+    // CONTEXT MENU & QUEUE
+    // ==========================================
+    bindGlobalEvents() {
+        document.addEventListener('click', () => {
+            const menu = document.getElementById('context-menu');
+            if(menu) menu.style.display = 'none';
         });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            alert(err.detail || 'Failed to create profile');
-            return;
-        }
-        
-        closeCreateProfileModal();
-        await loadProfilesView();
-        await loadActiveProfile();
-        
-        // Offer to immediately log in to the new profile
-        if (confirm(`Profile "${name}" created. Would you like to sign in now?`)) {
-            openLoginModal(name);
-        }
-    } catch (error) {
-        alert(`Failed to create profile: ${error.message}`);
-    }
-}
-
-// ------------ Switch / Delete ------------
-
-async function switchProfile(name) {
-    try {
-        const response = await fetch(`/api/profiles/${encodeURIComponent(name)}/activate`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            alert(err.detail || 'Failed to switch profile');
-            return;
-        }
-        
-        await loadProfilesView();
-        await loadActiveProfile();
-        
-        // Reload library since data is now from a different account
-        if (typeof loadLibrary === 'function') {
-            await loadLibrary();
-        }
-    } catch (error) {
-        alert(`Failed to switch profile: ${error.message}`);
-    }
-}
-
-async function deleteProfile(name) {
-    if (!confirm(`Delete profile "${name}"? This will remove the saved authentication. Local files won't be affected.`)) {
-        return;
-    }
-    
-    try {
-        const response = await fetch(`/api/profiles/${encodeURIComponent(name)}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            alert(err.detail || 'Failed to delete profile');
-            return;
-        }
-        
-        await loadProfilesView();
-        await loadActiveProfile();
-    } catch (error) {
-        alert(`Failed to delete profile: ${error.message}`);
-    }
-}
-
-// ------------ Login Flow ------------
-
-function openLoginModal(profileName) {
-    pendingLoginProfile = profileName;
-    document.getElementById('login-modal-title').textContent = `Sign in: ${profileName}`;
-    document.getElementById('login-step-1').style.display = 'block';
-    document.getElementById('login-step-2').style.display = 'none';
-    document.getElementById('callback-url-input').value = '';
-    document.getElementById('login-error').style.display = 'none';
-    document.getElementById('login-modal').style.display = 'flex';
-}
-
-function closeLoginModal(event) {
-    if (event && event.target.id !== 'login-modal') return;
-    document.getElementById('login-modal').style.display = 'none';
-    pendingLoginProfile = null;
-    pendingLoginLocale = null;
-}
-
-async function startLoginFlow() {
-    pendingLoginLocale = document.getElementById('login-locale').value;
-    
-    try {
-        const response = await fetch('/api/auth/login-start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                locale: pendingLoginLocale,
-                profile: pendingLoginProfile
-            })
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || `HTTP ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        document.getElementById('login-step-1').style.display = 'none';
-        document.getElementById('login-step-2').style.display = 'block';
-        
-        // Try iframe approach first
-        const iframe = document.getElementById('login-iframe');
-        const fallback = document.getElementById('login-fallback');
-        const externalLink = document.getElementById('login-external-link');
-
-        externalLink.href = data.auth_url;
-
-        // Audible always blocks iframe embedding via X-Frame-Options.
-        // Skip the iframe attempt entirely and go straight to the fallback.
-        iframe.style.display = 'none';
-        fallback.style.display = 'block';
-        const loginWindow = window.open(data.auth_url, '_blank', 'width=600,height=800');
-        if (!loginWindow) {
-            // Popup blocker fired — user has to click the link
-            document.getElementById('login-external-link').href = data.auth_url;
-        } else {
-            // Hide the link since we opened it for them, just leave the instructions
-            const linkText = document.querySelector('#login-fallback p');
-            if (linkText) {
-                linkText.textContent = 'Audible login opened in a new window. Sign in there, then copy the URL from the address bar after the redirect fails.';
+        document.addEventListener('contextmenu', (e) => {
+            if (e.target.closest('input, textarea, [contenteditable]')) return;
+            if (e.target.closest('#view-library') || e.target.closest('#sidebar')) e.preventDefault();
+        }, { capture: true });
+        document.addEventListener('mousedown', (e) => {
+            if (e.target.closest('input, textarea, [contenteditable]')) return;
+            if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
+                if (e.target.closest('#view-library') || e.target.closest('#sidebar')) e.preventDefault();
             }
-        }
-        // Audible's CSP frequently blocks iframes — fall back if nothing happens
-        setTimeout(() => {
-            if (!iframeWorked) {
-                iframe.style.display = 'none';
-                fallback.style.display = 'block';
-            }
-        }, 3000);
-        
-    } catch (error) {
-        alert(`Failed to start login: ${error.message}`);
-        closeLoginModal();
+        }, { capture: true });
     }
-}
 
-async function completeLoginFlow() {
-    const callbackUrl = document.getElementById('callback-url-input').value.trim();
-    const errorEl = document.getElementById('login-error');
-    
-    if (!callbackUrl) {
-        errorEl.textContent = 'Please paste the URL from your browser';
-        errorEl.style.display = 'block';
-        return;
-    }
-    
-    errorEl.style.display = 'none';
-    
-    try {
-        const response = await fetch('/api/auth/login-complete', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                profile: pendingLoginProfile,
-                callback_url: callbackUrl
-            })
+    attachContextMenu(cardElement, itemData) {
+        cardElement.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            this.state.currentContextItem = itemData;
+            window.getSelection().removeAllRanges();
+
+            const menu = document.getElementById('context-menu');
+            menu.style.display = 'block';
+            menu.style.left = `${e.pageX}px`;
+            menu.style.top = `${e.pageY}px`;
+
+            const isCloudOnly = itemData.download_status === 'cloud_only';
+            const isAax = itemData.format === 'AAXC' || itemData.format === 'AAX';
+            const isDownloadingOrQueued = this.state.activeTaskAsins.has(itemData.asin);
+            const isDownloaded = !isCloudOnly && !isDownloadingOrQueued;
+
+            document.getElementById('ctx-download').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
+            document.getElementById('ctx-match').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
+            document.getElementById('ctx-shelf').style.display = isDownloaded ? 'block' : 'none';
+            document.getElementById('ctx-scrape').style.display = isDownloaded ? 'block' : 'none';
+            document.getElementById('ctx-remove').style.display = isDownloaded ? 'block' : 'none';
+            document.getElementById('ctx-convert').style.display = (isDownloaded && isAax) ? 'block' : 'none';
+            document.getElementById('ctx-cancel').style.display = isDownloadingOrQueued ? 'block' : 'none';
         });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || `HTTP ${response.status}`);
-        }
-        
-        const profileName = pendingLoginProfile;
-        closeLoginModal();
-        await loadProfilesView();
-        await loadActiveProfile();
-        
-        // If this was the active profile, refresh the library
-        if (typeof loadLibrary === 'function') {
-            await loadLibrary();
-        }
-        
-        alert(`Successfully signed in to ${profileName}`);
-    } catch (error) {
-        errorEl.textContent = error.message;
-        errorEl.style.display = 'block';
     }
-}
-// ============================================================
-// Context Menu & Queue Management
-// ============================================================
 
-let currentContextItem = null;
-let queuePollingInterval = null;
-
-// Initialize context menu listeners
-document.addEventListener('DOMContentLoaded', () => {
-    // Hide context menu on outside click
-    document.addEventListener('click', () => {
+    async ctxAction(action) {
+        if (!this.state.currentContextItem) return;
         document.getElementById('context-menu').style.display = 'none';
-    });
-
-    // Start Polling
-    startQueuePolling();
-});
-
-// Attach this to your library card rendering loop
-function attachContextMenu(cardElement, itemData) {
-    cardElement.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        currentContextItem = itemData;
-        window.getSelection().removeAllRanges();
-
-        const menu = document.getElementById('context-menu');
-        menu.style.display = 'block';
-        menu.style.left = `${e.pageX}px`;
-        menu.style.top = `${e.pageY}px`;
-
-        // 1. Determine State
-        const isCloudOnly = itemData.download_status === 'cloud_only';
-        const isAax = itemData.format === 'AAXC' || itemData.format === 'AAX';
-        const isDownloadingOrQueued = window.activeTaskAsins && window.activeTaskAsins.has(itemData.asin);
-        const isDownloaded = !isCloudOnly && !isDownloadingOrQueued;
-
-        // 2. Apply Display Rules
+        const item = this.state.currentContextItem;
         
-        // Cloud-only rules
-        document.getElementById('ctx-download').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
-        document.getElementById('ctx-match').style.display = (isCloudOnly && !isDownloadingOrQueued) ? 'block' : 'none';
-        
-        // Local/Downloaded rules
-        document.getElementById('ctx-shelf').style.display = isDownloaded ? 'block' : 'none';
-        document.getElementById('ctx-scrape').style.display = isDownloaded ? 'block' : 'none';
-        document.getElementById('ctx-remove').style.display = isDownloaded ? 'block' : 'none';
-        document.getElementById('ctx-convert').style.display = (isDownloaded && isAax) ? 'block' : 'none';
-        
-        // Active queue rules
-        document.getElementById('ctx-cancel').style.display = isDownloadingOrQueued ? 'block' : 'none';
-    });
-}
-
-document.addEventListener('contextmenu', function(e) {
-    if (e.target.closest('input, textarea, [contenteditable]')) return;
-    if (e.target.closest('#view-library') || e.target.closest('#sidebar')) {
-        e.preventDefault();
+        try {
+            if (action === 'download') this.queueSingleDownload(item.asin);
+            else if (action === 'convert') await fetch('/api/conversions/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [item.path] }) });
+            else if (action === 'cancel') await fetch(`/api/downloads/${item.asin}`, { method: 'DELETE' });
+            else if (action === 'match') {
+                const res = await fetch('/api/system/browse-file');
+                const data = await res.json();
+                if (data.path) {
+                    await fetch('/api/library/match', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asin: item.asin, path: data.path }) });
+                    if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                }
+            } else if (action === 'scrape') {
+                document.getElementById('metadata-search-input').value = item.title;
+                document.getElementById('metadata-search-results').innerHTML = '';
+                document.getElementById('metadata-search-modal').style.display = 'flex';
+            } else if (action === 'remove') {
+                if (confirm(`Remove "${item.title}" from local library database? (The file on your drive will not be deleted)`)) {
+                    await fetch('/api/library/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: item.path }) });
+                    if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                }
+            } else if (action === 'shelf') {
+                const shelfName = prompt(`Add "${item.title}" to which shelf?`);
+                if (shelfName && shelfName.trim() !== '') {
+                    const response = await fetch('/api/library/shelf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asin: item.asin, shelf: shelfName.trim() }) });
+                    if (response.ok && window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                    else alert(`Failed to add to shelf: ${(await response.json()).detail}`);
+                }
+            }
+        } catch (error) {}
     }
-}, { capture: true });
 
-document.addEventListener('mousedown', (e) => {
-    if (e.target.closest('input, textarea, [contenteditable]')) return;
-    if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
-        if (e.target.closest('#view-library') || e.target.closest('#sidebar')) {
-            e.preventDefault();
-        }
+    startQueuePolling() {
+        if (this.state.queuePollingInterval) clearInterval(this.state.queuePollingInterval);
+        this.state.queuePollingInterval = setInterval(() => this.pollQueues(), 2000);
     }
-}, { capture: true });
-// Handle context menu actions
 
-
-async function ctxAction(action) {
-    if (!currentContextItem) return;
-    
-    // Hide the menu immediately after clicking
-    document.getElementById('context-menu').style.display = 'none';
-    
-    try {
-        if (action === 'download') {
-            if (window.queueSingleDownload) window.queueSingleDownload(currentContextItem.asin);
-        } else if (action === 'convert') {
-            await fetch('/api/conversions/queue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paths: [currentContextItem.path] })
-            });
-        } else if (action === 'cancel') {
-            await fetch(`/api/downloads/${currentContextItem.asin}`, { method: 'DELETE' });
-        } else if (action === 'match') {
-            const res = await fetch('/api/system/browse-file');
+    async pollQueues() {
+        try {
+            const res = await fetch('/api/downloads/queue');
+            if (!res.ok) return;
             const data = await res.json();
-            if (data.path) {
-                await fetch('/api/library/match', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ asin: currentContextItem.asin, path: data.path })
+            
+            this.state.activeTaskAsins.clear();
+            if (data.is_processing && data.active && data.active.active_asin) this.state.activeTaskAsins.add(data.active.active_asin);
+            if (data.queue && data.queue.length > 0) data.queue.forEach(task => this.state.activeTaskAsins.add(task.asin));
+            
+            if (data.is_processing && data.active.active_asin) {
+                this._wasProcessingQueue = true; 
+                const libProgressBar = document.getElementById(`progress-bar-${data.active.active_asin}`);
+                const libProgressText = document.getElementById(`progress-text-${data.active.active_asin}`);
+                if (libProgressBar) libProgressBar.style.width = `${data.active.progress}%`;
+                if (libProgressText) {
+                    let statusMsg = data.active.status;
+                    if (statusMsg.includes("Downloading") && data.active.progress > 0) statusMsg = `Downloading... ${Math.floor(data.active.progress)}%`;
+                    libProgressText.textContent = statusMsg;
+                }
+            } else {
+                if (this._wasProcessingQueue) {
+                    this._wasProcessingQueue = false; 
+                    if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                }
+            }
+            if (data.queue && data.queue.length > 0) {
+                data.queue.forEach(task => {
+                    const pendingText = document.getElementById(`progress-text-${task.asin}`);
+                    if (pendingText && (!data.active || data.active.active_asin !== task.asin)) pendingText.textContent = "Queued...";
                 });
-                if (typeof loadLibrary === 'function') await loadLibrary();
             }
-        } else if (action === 'scrape') {
-            // ONLY open the modal and pre-fill the search box.
-            // The actual fetch happens later when the user clicks "Apply" in the modal.
-            document.getElementById('metadata-search-input').value = currentContextItem.title;
-            document.getElementById('metadata-search-results').innerHTML = '';
-            document.getElementById('metadata-search-modal').style.display = 'flex';
-            
-        } else if (action === 'remove') {
-            if (confirm(`Remove "${currentContextItem.title}" from local library database? (The file on your drive will not be deleted)`)) {
-                await fetch('/api/library/remove', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: currentContextItem.path })
-                });
-                if (typeof loadLibrary === 'function') await loadLibrary();
-            }
-        } else if (action === 'shelf') {
-            const shelfName = prompt(`Add "${currentContextItem.title}" to which shelf?`);
-            
-            if (shelfName && shelfName.trim() !== '') {
-                const response = await fetch('/api/library/shelf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        asin: currentContextItem.asin, 
-                        shelf: shelfName.trim() 
-                    })
-                });
+        } catch (error) {} 
+    }
 
-                if (response.ok) {
-                    // Instantly reload the library so the new shelf appears in the filter dropdown
-                    if (typeof loadLibrary === 'function') {
-                        await loadLibrary();
-                    }
-                } else {
-                    const err = await response.json();
-                    alert(`Failed to add to shelf: ${err.detail}`);
+    // ==========================================
+    // DOWNLOADS & DIRECTORIES
+    // ==========================================
+    async attemptQueueDownloads(asins) {
+        try {
+            const response = await fetch('/api/downloads/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asins: asins }) });
+            if (!response.ok) {
+                const err = await response.json();
+                if (err.detail === 'DOWNLOAD_DIR_NOT_SET') {
+                    this.state.pendingDownloadAsins = asins;
+                    document.getElementById('download-dir-error').style.display = 'none';
+                    document.getElementById('download-dir-modal').style.display = 'flex';
+                    return;
                 }
+                throw new Error(err.detail || "Failed to queue downloads");
             }
-        }
-    } catch (error) {
-        console.error(`Action ${action} failed:`, error);
-    }
-}
-
-// ------------ Queue Polling ------------
-
-function startQueuePolling() {
-    if (queuePollingInterval) clearInterval(queuePollingInterval);
-    queuePollingInterval = setInterval(pollQueues, 2000);
-}
-window.activeTaskAsins = new Set();
-async function pollQueues() {
-    try {
-        const res = await fetch('/api/downloads/queue');
-        if (!res.ok) return;
-        const data = await res.json();
-        window.activeTaskAsins.clear();
-        if (data.is_processing && data.active && data.active.active_asin) {
-            window.activeTaskAsins.add(data.active.active_asin);
-        }
-        if (data.queue && data.queue.length > 0) {
-            data.queue.forEach(task => window.activeTaskAsins.add(task.asin));
-        }
-        if (data.is_processing && data.active.active_asin) {
-            
-            wasProcessingQueue = true; 
-            
-            // 1. Find the active card's UI elements
-            const libProgressBar = document.getElementById(`progress-bar-${data.active.active_asin}`);
-            const libProgressText = document.getElementById(`progress-text-${data.active.active_asin}`);
-            
-            // 2. Inject the status and progress directly into the card
-            if (libProgressBar) {
-                libProgressBar.style.width = `${data.active.progress}%`;
-            }
-            if (libProgressText) {
-                // E.g., "Downloading: The Perfect Run (45%)" or "Decrypting to M4B... (100%)"
-                let statusMsg = data.active.status;
-                if (statusMsg.includes("Downloading") && data.active.progress > 0) {
-                    statusMsg = `Downloading... ${Math.floor(data.active.progress)}%`;
-                }
-                libProgressText.textContent = statusMsg;
-            }
-            
-        } else {
-            // A download just finished!
-            if (wasProcessingQueue) {
-                wasProcessingQueue = false; 
-                if (typeof loadLibrary === 'function') {
-                    await loadLibrary();
-                }
-            }
-        }
-
-        // 3. Update pending queue items so they show a "Queued" status on their cards
-        if (data.queue && data.queue.length > 0) {
-            data.queue.forEach(task => {
-                const pendingText = document.getElementById(`progress-text-${task.asin}`);
-                // Only mark as queued if it's not the actively downloading item
-                if (pendingText && (!data.active || data.active.active_asin !== task.asin)) {
-                    pendingText.textContent = "Queued...";
-                }
-            });
-        }
-
-    } catch (error) {
-        // Fail silently on polling errors
-    }
-}
-
-
-// --- DOWNLOAD ACTIONS & DIRECTORY MANAGEMENT ---
-
-let pendingDownloadAsins = []; // Remembers what you clicked while setting the folder
-
-async function attemptQueueDownloads(asins) {
-    try {
-        const response = await fetch('/api/downloads/queue', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ asins: asins })
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            // INTERCEPT: The backend says we need a folder!
-            if (err.detail === 'DOWNLOAD_DIR_NOT_SET') {
-                pendingDownloadAsins = asins;
-                document.getElementById('download-dir-error').style.display = 'none';
-                document.getElementById('download-dir-modal').style.display = 'flex';
-                return;
-            }
-            throw new Error(err.detail || "Failed to queue downloads");
-        }
-        
-    } catch (error) {
-        alert(error.message);
-    }
-}
-
-window.queueSingleDownload = function(asin) {
-    attemptQueueDownloads([asin]);
-};
-
-window.downloadAllMissing = function() {
-    if (!window.currentLibraryData) return;
-
-    const cloudAsins = Object.values(window.currentLibraryData)
-        .filter(item => item.download_status === 'cloud_only')
-        .map(item => item.asin);
-
-    if (cloudAsins.length === 0) {
-        alert("All books are already downloaded!");
-        return;
+        } catch (error) { alert(error.message); }
     }
 
-    if (confirm(`Queue ${cloudAsins.length} missing books for download?`)) {
-        attemptQueueDownloads(cloudAsins);
-    }
-};
+    queueSingleDownload(asin) { this.attemptQueueDownloads([asin]); }
 
-window.closeDownloadDirModal = function(event) {
-    if (event && event.target.id !== 'download-dir-modal') return;
-    document.getElementById('download-dir-modal').style.display = 'none';
-    pendingDownloadAsins = []; // Clear pending items if they cancel
-};
-window.browseForDirectory = async function() {
-    try {
-        // Temporarily disable the button to prevent spam clicking
+    downloadAllMissing() {
+        const libData = window.TomeBoxApp ? window.TomeBoxApp.state.rawLibraryData : null;
+        if (!libData) return;
+        const cloudAsins = Object.values(libData).filter(item => item.download_status === 'cloud_only').map(item => item.asin);
+        if (cloudAsins.length === 0) return alert("All books are already downloaded!");
+        if (confirm(`Queue ${cloudAsins.length} missing books for download?`)) this.attemptQueueDownloads(cloudAsins);
+    }
+
+    async browseForDirectory() {
         const inputEl = document.getElementById('download-dir-input');
         inputEl.placeholder = "Waiting for system dialog...";
-        
-        const response = await fetch('/api/system/browse-directory');
-        if (!response.ok) throw new Error('Failed to open system dialog');
-        
-        const data = await response.json();
-        
-        // If the user didn't hit cancel, fill the input with the selected path
-        if (data.path) {
-            inputEl.value = data.path;
-        }
-    } catch (error) {
-        console.error("Browse dialog error:", error);
-    } finally {
-        document.getElementById('download-dir-input').placeholder = "e.g., C:\\Audiobooks or /Users/name/Audiobooks";
-    }
-};
-window.submitDownloadDir = async function() {
-    const path = document.getElementById('download-dir-input').value.trim();
-    const errorEl = document.getElementById('download-dir-error');
-    if (!path) return;
-    
-    try {
-        const response = await fetch('/api/settings/download-dir', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ path: path })
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || 'Invalid path');
-        }
-        
-        closeDownloadDirModal();
-        
-        // RETRY: Instantly queue the items the user was trying to download!
-        if (pendingDownloadAsins.length > 0) {
-            attemptQueueDownloads(pendingDownloadAsins);
-            pendingDownloadAsins = [];
-        }
-        
-    } catch (error) {
-        errorEl.textContent = error.message;
-        errorEl.style.display = 'block';
-    }
-};
-window.closeMetadataSearchModal = function(e) {
-    if (e && e.target.id !== 'metadata-search-modal') return;
-    document.getElementById('metadata-search-modal').style.display = 'none';
-};
-
-window.executeMetadataSearch = async function() {
-    const query = document.getElementById('metadata-search-input').value.trim();
-    const resultsContainer = document.getElementById('metadata-search-results');
-    if (!query) return;
-
-    resultsContainer.innerHTML = '<p style="color: #aaa; text-align: center;">Searching Audible catalog...</p>';
-
-    try {
-        const res = await fetch('/api/library/search', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({query: query})
-        });
-        
-        if (!res.ok) throw new Error("Search failed");
-        const data = await res.json();
-
-        resultsContainer.innerHTML = '';
-        if (!data.results || data.results.length === 0) {
-            resultsContainer.innerHTML = '<p style="color: #ff6b6b;">No results found.</p>';
-            return;
-        }
-
-        // Render the results into clickable rows
-        data.results.forEach(item => {
-            const authors = item.authors ? item.authors.map(a => a.name).join(', ') : 'Unknown Author';
-            const source = item.source || 'Audible';
-            const div = document.createElement('div');
-            div.className = 'profile-row'; // Reusing your existing clean row styling
-            div.innerHTML = `
-                <div class="profile-row-info">
-                    <div class="profile-row-name">${escapeHtml(item.title)}</div>
-                    <div class="profile-row-status">${escapeHtml(authors)} | ASIN: ${item.asin}</div>
-                </div>
-                <button class="action-btn-secondary" onclick="applyMetadata('${item.asin}')">Apply</button>
-            `;
-            resultsContainer.appendChild(div);
-        });
-
-    } catch (error) {
-        resultsContainer.innerHTML = `<p style="color: #ff6b6b;">${error.message}</p>`;
-    }
-};
-
-window.applyMetadata = async function(asin) {
-    closeMetadataSearchModal();
-    
-    const statusEl = document.getElementById('library-status');
-    if (statusEl) {
-        statusEl.textContent = 'Downloading covers & embedding metadata...';
-        statusEl.className = 'library-status';
+        try {
+            const response = await fetch('/api/system/browse-directory');
+            if (!response.ok) throw new Error('Failed to open system dialog');
+            const data = await response.json();
+            if (data.path) inputEl.value = data.path;
+        } catch (error) {} 
+        finally { inputEl.placeholder = "e.g., C:\\Audiobooks or /Users/name/Audiobooks"; }
     }
 
-    try {
-        const res = await fetch('/api/library/scrape', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentContextItem.path, asin: asin })
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail);
-        }
-
-        // FFmpeg embedding takes time. Wait 8 seconds before refreshing UI
-        setTimeout(async () => {
-            if (typeof loadLibrary === 'function') await loadLibrary();
-            if (statusEl) {
-                statusEl.textContent = 'Metadata embedded!';
-                statusEl.classList.add('success');
-                setTimeout(() => statusEl.textContent = '', 3000);
+    async submitDownloadDir() {
+        const path = document.getElementById('download-dir-input').value.trim();
+        const errorEl = document.getElementById('download-dir-error');
+        if (!path) return;
+        try {
+            const response = await fetch('/api/settings/download-dir', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ path: path }) });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Invalid path');
+            document.getElementById('download-dir-modal').style.display = 'none';
+            if (this.state.pendingDownloadAsins.length > 0) {
+                this.attemptQueueDownloads(this.state.pendingDownloadAsins);
+                this.state.pendingDownloadAsins = [];
             }
-        }, 8000); 
-    } catch (err) {
-        alert(`Scrape failed: ${err.message}`);
-        if (statusEl) statusEl.textContent = '';
+        } catch (error) { errorEl.textContent = error.message; errorEl.style.display = 'block'; }
     }
-};
-window.cancelActiveDownload = async function() {
-    const titleEl = document.getElementById('active-download-title').textContent;
-    const asin = titleEl.replace('ASIN: ', '');
-    await fetch(`/api/downloads/${asin}`, { method: 'DELETE' });
-};
-window.openCreateProfileModal = openCreateProfileModal;
-window.closeCreateProfileModal = closeCreateProfileModal;
-window.submitCreateProfile = submitCreateProfile;
-window.switchProfile = switchProfile;
-window.deleteProfile = deleteProfile;
-window.openLoginModal = openLoginModal;
-window.closeLoginModal = closeLoginModal;
-window.startLoginFlow = startLoginFlow;
-window.completeLoginFlow = completeLoginFlow;
 
+    // ==========================================
+    // METADATA SCRAPING
+    // ==========================================
+    async executeMetadataSearch() {
+        const query = document.getElementById('metadata-search-input').value.trim();
+        const resultsContainer = document.getElementById('metadata-search-results');
+        if (!query) return;
+        resultsContainer.innerHTML = '<p style="color: #aaa; text-align: center;">Searching Audible catalog...</p>';
 
-window.toggleActionMenu = function() {
-    const menu = document.getElementById('action-menu');
-    if (menu) {
-        menu.classList.toggle('collapsed');
-    }
-};
-
-// --- IMPORT LOCAL FILES & FOLDERS ---
-
-window.addLocalFile = async function() {
-    try {
-        const response = await fetch('/api/system/browse-file');
-        if (!response.ok) throw new Error('Failed to open file dialog');
-        
-        const data = await response.json();
-        if (data.path) {
-            await processImport(data.path);
-        }
-    } catch (error) {
-        console.error("Browse file error:", error);
-    }
-};
-
-window.importFolder = async function() {
-    try {
-        const response = await fetch('/api/system/browse-directory');
-        if (!response.ok) throw new Error('Failed to open folder dialog');
-        
-        const data = await response.json();
-        if (data.path) {
-            // NEW: Consent Warning
-            const proceed = confirm(
-                "Auto-Merge Warning:\n\nTomeBox will scan this folder. If multiple audio files belonging to the same book are found, they will be automatically merged into a new .m4b file on your hard drive.\n\nDo you wish to continue?"
-            );
-            
-            if (proceed) {
-                await processImport(data.path);
+        try {
+            const res = await fetch('/api/library/search', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: query}) });
+            if (!res.ok) throw new Error("Search failed");
+            const data = await res.json();
+            resultsContainer.innerHTML = '';
+            if (!data.results || data.results.length === 0) {
+                resultsContainer.innerHTML = '<p style="color: #ff6b6b;">No results found.</p>';
+                return;
             }
-        }
-    } catch (error) {
-        console.error("Browse folder error:", error);
+            data.results.forEach(item => {
+                const authors = item.authors ? item.authors.map(a => a.name).join(', ') : 'Unknown Author';
+                const div = document.createElement('div');
+                div.className = 'profile-row';
+                div.innerHTML = `
+                    <div class="profile-row-info">
+                        <div class="profile-row-name">${this.escapeHtml(item.title)}</div>
+                        <div class="profile-row-status">${this.escapeHtml(authors)} | ASIN: ${item.asin}</div>
+                    </div>
+                    <button class="action-btn-secondary" data-asin="${item.asin}">Apply</button>
+                `;
+                resultsContainer.appendChild(div);
+            });
+        } catch (error) { resultsContainer.innerHTML = `<p style="color: #ff6b6b;">${error.message}</p>`; }
     }
-};
 
-window.cancelImport = async function() {
-    // Instantly hide the button so it can't be spam-clicked
-    const cancelBtn = document.getElementById('btn-cancel-import');
-    if (cancelBtn) cancelBtn.style.display = 'none';
-
-    try {
-        await fetch('/api/library/import', { method: 'DELETE' });
-        const statusEl = document.getElementById('library-status');
-        
-        if (statusEl) {
-            statusEl.className = 'library-status error';
-            statusEl.textContent = 'Cancelling active task...';
-            
-            // Clear the text and reset styling after 3 seconds
-            setTimeout(() => {
-                // Only wipe it if the user hasn't already started a new import
-                if (statusEl.textContent === 'Cancelling active task...') {
-                    statusEl.textContent = '';
-                    statusEl.classList.remove('error');
-                }
-            }, 3000);
-        }
-    } catch (error) {
-        console.error('Failed to cancel:', error);
+    async applyMetadata(asin) {
+        document.getElementById('metadata-search-modal').style.display = 'none';
+        this.setStatus('Downloading covers & embedding metadata...');
+        try {
+            const res = await fetch('/api/library/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: this.state.currentContextItem.path, asin: asin }) });
+            if (!res.ok) throw new Error((await res.json()).detail);
+            setTimeout(async () => {
+                if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                this.setStatus('Metadata embedded!', 'success', 3000);
+            }, 8000); 
+        } catch (err) { alert(`Scrape failed: ${err.message}`); this.setStatus(''); }
     }
-};
 
-async function processImport(path) {
-    const statusEl = document.getElementById('library-status');
-    const cancelBtn = document.getElementById('btn-cancel-import');
-    
-    statusEl.className = 'library-status'; 
-    statusEl.textContent = 'Initializing import...';
-    
-    // Show the cancel button when the task starts
-    if (cancelBtn) cancelBtn.style.display = 'inline-block';
+    // ==========================================
+    // IMPORTS & LOCAL FILES
+    // ==========================================
+    async addLocalFile() {
+        try {
+            const response = await fetch('/api/system/browse-file');
+            if (!response.ok) throw new Error('Failed to open file dialog');
+            const data = await response.json();
+            if (data.path) await this.processImport(data.path);
+        } catch (error) {}
+    }
 
-    try {
-        // 1. Fire the import request (Python will reply instantly while it works in the background)
-        const response = await fetch('/api/library/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path })
-        });
+    async importFolder() {
+        try {
+            const response = await fetch('/api/system/browse-directory');
+            if (!response.ok) throw new Error('Failed to open folder dialog');
+            const data = await response.json();
+            if (data.path && confirm("Auto-Merge Warning:\n\nTomeBox will scan this folder. If multiple audio files belonging to the same book are found, they will be automatically merged into a new .m4b file on your hard drive.\n\nDo you wish to continue?")) {
+                await this.processImport(data.path);
+            }
+        } catch (error) {}
+    }
 
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || 'Import failed');
-        }
-
-        // 2. Start polling the background thread
-        const pollInterval = setInterval(async () => {
-            try {
-                const res = await fetch('/api/system/status');
-                if (res.ok) {
-                    const data = await res.json();
-                    
-                    if (data.task) {
-                        // Update the UI with the live text from Python
-                        statusEl.textContent = data.task;
-                    } else {
-                        // The backend cleared the status string, meaning it finished (or cancelled)!
-                        clearInterval(pollInterval);
-                        
-                        statusEl.textContent = 'Task completed.';
-                        statusEl.classList.add('success');
-                        
-                        // Hide the cancel button
-                        if (cancelBtn) cancelBtn.style.display = 'none';
-                        
-                        if (typeof loadLibrary === 'function') await loadLibrary();
-                        window.location.hash = '#/library';
-                        
-                        setTimeout(() => {
-                            statusEl.textContent = '';
-                            statusEl.classList.remove('success');
-                            statusEl.classList.remove('error');
-                        }, 3000);
-                    }
-                }
-            } catch (e) {} 
-        }, 1000);
-
-    } catch (error) {
-        statusEl.textContent = `Error: ${error.message}`;
-        statusEl.classList.add('error');
-        // Hide the cancel button on error
+    async cancelImport() {
+        const cancelBtn = document.getElementById('btn-cancel-import');
         if (cancelBtn) cancelBtn.style.display = 'none';
+        try {
+            await fetch('/api/library/import', { method: 'DELETE' });
+            this.setStatus('Cancelling active task...', 'error', 3000);
+        } catch (error) {}
+    }
+
+    async processImport(path) {
+        const cancelBtn = document.getElementById('btn-cancel-import');
+        this.setStatus('Initializing import...');
+        if (cancelBtn) cancelBtn.style.display = 'inline-block';
+
+        try {
+            const response = await fetch('/api/library/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: path }) });
+            if (!response.ok) throw new Error((await response.json()).detail || 'Import failed');
+
+            const pollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/system/status');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.task) this.setStatus(data.task);
+                        else {
+                            clearInterval(pollInterval);
+                            this.setStatus('Task completed.', 'success', 3000);
+                            if (cancelBtn) cancelBtn.style.display = 'none';
+                            if (window.TomeBoxApp) await window.TomeBoxApp.loadLibrary();
+                            window.location.hash = '#/library';
+                        }
+                    }
+                } catch (e) {} 
+            }, 1000);
+        } catch (error) {
+            this.setStatus(`Error: ${error.message}`, 'error');
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        }
+    }
+
+    toggleActionMenu() {
+        const menu = document.getElementById('action-menu');
+        if (menu) menu.classList.toggle('collapsed');
+    }
+
+    escapeHtml(unsafe) {
+        if (unsafe == null) return "";
+        const div = document.createElement('div');
+        div.textContent = unsafe;
+        return div.innerHTML;
     }
 }
 
-window.updateLibraryCountDisplay = function() {
-    const displayEl = document.getElementById('library-count-display');
-    if (!displayEl || !window.currentLibraryData) return;
-
-    const libraryItems = Object.values(window.currentLibraryData);
-    const totalBooks = libraryItems.length;
-    
-    // Tally formats
-    const formats = {};
-    libraryItems.forEach(item => {
-        // Cloud-only items might not have a format yet
-        const fmt = item.format ? item.format.toUpperCase() : (item.download_status === 'cloud_only' ? 'CLOUD' : 'UNKNOWN');
-        formats[fmt] = (formats[fmt] || 0) + 1;
-    });
-
-    // Update the visible text
-    displayEl.textContent = `Books found: ${totalBooks}`;
-
-    // Build and set the hover tooltip
-    if (totalBooks > 0) {
-        const tooltipLines = Object.entries(formats)
-            .sort((a, b) => b[1] - a[1]) // Sort by count descending
-            .map(([fmt, count]) => `${fmt}: ${count}`);
-        displayEl.title = "Format Breakdown:\n" + tooltipLines.join('\n');
-    } else {
-        displayEl.title = "Library is empty.";
-    }
-};
+document.addEventListener('DOMContentLoaded', () => {
+    // We strictly expose one API point for cross-class communication (mobile_client triggering desktop downloads)
+    window.DesktopApp = new TomeBoxDesktop();
+});

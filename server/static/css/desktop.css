@@ -2,10 +2,14 @@
    Desktop UI — additive overrides on mobile styles
    ======================================== */
 
-body.desktop {
-    padding-bottom: 0;
-    overflow: hidden;
+html, body.desktop {
+    margin: 0;
+    padding: 0;
     height: 100vh;
+    width: 100vw;
+    max-height: 100vh;
+    overflow: hidden !important; /* Kills the phantom outer scrollbar */
+    box-sizing: border-box;
 }
 
 #app-shell {
@@ -16,8 +20,9 @@ body.desktop {
         "sidebar main"
         "player player";
     height: 100vh;
+    max-height: 100vh; /* Forces the grid to respect the exact window height */
     width: 100%;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
 #app-shell.sidebar-collapsed {
@@ -176,6 +181,27 @@ body.desktop {
     height: 100%;
     min-height: 0;
     padding-bottom: 0;
+}
+
+/* ========================================
+   Player Bar Animation
+   ======================================== */
+body.desktop #player-bar {
+    max-height: 200px; /* Safe upper bound for the bar */
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                opacity 0.2s ease;
+    transform: translateY(0);
+    opacity: 1;
+    overflow: hidden; /* Prevents text from spilling out while shrinking */
+}
+
+body.desktop #player-bar.hidden {
+    display: block; /* Overrides our old fix so it stays in the DOM to animate */
+    max-height: 0;
+    transform: translateY(100%);
+    opacity: 0;
+    border-top-color: transparent; /* Hides the harsh 1px top border line instantly */
 }
 
 .view {
