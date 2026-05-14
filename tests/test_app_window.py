@@ -43,7 +43,8 @@ def app_instance(MockCloud, MockLibPres, MockAuth, MockPlayPres, MockPal, MockIm
          patch("ui.app_window.setup_library_view"), \
          patch("ui.app_window.setup_sidebar"), \
          patch("ui.app_window.UiState"), \
-         patch("os.makedirs"):  
+         patch("ui.app_window.setup_logger"), \
+         patch("os.makedirs"): 
          
         app = AAXManagerApp(root, "/mock/base/dir")
         
