@@ -58,6 +58,7 @@ from ui.palette_controller import PaletteController
 from ui.playback_presenter import PlaybackPresenter
 from ui.auth_controller import AuthController
 from ui.library_presenter import LibraryPresenter
+from ui.cloud_server_controller import CloudServerController
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -124,6 +125,7 @@ class AAXManagerApp:
         self.playback_presenter = PlaybackPresenter(self)
         self.auth_controller = AuthController(self)
         self.library_presenter = LibraryPresenter(self)
+        self.cloud_server_controller = CloudServerController(self)
 
         self.root.dnd_bind('<<Drop>>', self.import_session.on_file_drop)
         self.base_dir = base_dir  
@@ -273,7 +275,7 @@ class AAXManagerApp:
 
         self.setup_tray_icon()
         self.root.after(500, self.auth_controller.auto_load_auth)
-        self.root.after(900000, self.run_background_sync)
+        self.root.after(900000, self.cloud_server_controller.run_background_sync)
         self.root.after(3000, lambda: self.library_manager.run_background_library_scan(
             self.converter, self.active_profile, self.logger, self.thread_pool, 
             on_refresh_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
@@ -395,76 +397,6 @@ class AAXManagerApp:
                 self.root.after(60000, lambda: self.ui_state.api_health.set("API: Online"))
         self.root.after(0, update)
 
-    def toggle_web_server(self):
-        def on_started():
-            self.server_running = True
-            # Toggle the start/stop label
-            self.root.after(0, lambda: self.file_menu.entryconfigure("Enable Web Server", label="Disable Web Server"))
-            # Enable the pairing info button
-            self.root.after(0, lambda: self.file_menu.entryconfigure("Show Pairing Info", state=tk.NORMAL))
-            # Auto-show the pairing window on start
-            self.root.after(0, lambda: open_pairing_window(self))
-            
-        def on_stopped():
-            self.server_running = False
-            # Toggle the start/stop label back
-            self.root.after(0, lambda: self.file_menu.entryconfigure("Disable Web Server", label="Enable Web Server"))
-            # Disable the pairing info button
-            self.root.after(0, lambda: self.file_menu.entryconfigure("Show Pairing Info", state=tk.DISABLED))
-            
-            self.root.after(0, lambda: messagebox.showinfo("Server Stopped", "The companion server has been safely disabled."))
-            
-        def on_error(title, msg):
-            self.root.after(0, lambda: messagebox.showerror(title, msg))
-
-        self.system_manager.toggle_web_server(
-            app_instance=self,
-            on_started_cb=on_started,
-            on_stopped_cb=on_stopped,
-            on_error_cb=on_error
-        )
-        
-    def add_firewall_rule_prompt(self):
-        import os
-        if os.name != 'nt':
-            messagebox.showinfo("Not Applicable", "Firewall management is only automated on Windows.")
-            return
-            
-        # Check if it's already there before bothering them with a UAC prompt
-        if self.system_manager._is_firewall_rule_installed():
-            messagebox.showinfo("Already Installed", "The 'TomeBox Web Server' firewall rule is already active on your system.")
-            return
-            
-        if messagebox.askyesno(
-            "Add Firewall Rule", 
-            "This will require Administrator privileges to add the 'TomeBox Web Server' rule to Windows Defender Firewall.\n\n"
-            "This allows your mobile device to communicate with the TomeBox companion server over your local Wi-Fi network.\n\n"
-            "Do you want to continue?"
-        ):
-            success = self.system_manager._add_firewall_rule()
-            if success:
-                messagebox.showinfo("Success", "Firewall rule added successfully.")
-            else:
-                messagebox.showerror("Action Failed", "Failed to add the firewall rule. You may have declined the admin prompt.")
-
-    def remove_firewall_rule_prompt(self):
-        import os
-        if os.name != 'nt':
-            messagebox.showinfo("Not Applicable", "Firewall management is only automated on Windows.")
-            return
-            
-        if messagebox.askyesno(
-            "Remove Firewall Rule", 
-            "This will require Administrator privileges to remove the 'TomeBox Web Server' rule from Windows Defender Firewall.\n\n"
-            "If you restart the Web Server later, you will be prompted to approve the rule again.\n\n"
-            "Do you want to continue?"
-        ):
-            success = self.system_manager.remove_firewall_rule()
-            if success:
-                messagebox.showinfo("Success", "Firewall rule removed successfully.")
-            else:
-                messagebox.showerror("Action Failed", "Failed to remove the firewall rule. You may have declined the admin prompt, or the rule did not exist.")
-
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
         self.root.deiconify()
@@ -581,16 +513,6 @@ class AAXManagerApp:
             if user_wants_link:
                 self.logger.info("Opening FFmpeg download page in browser...")
                 webbrowser.open("https://ffmpeg.org/download.html")
-
-    def run_background_sync(self):
-        self.thread_pool.submit(
-            self.library_manager.silent_cloud_sync, 
-            self.logger, 
-            lambda msg: self.root.after(0, lambda: self.ui_state.dl_status.set(msg)), 
-            lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
-        )
-        # Schedule the next check in 15 minutes (900000 milliseconds)
-        self.root.after(900000, self.run_background_sync)
 
     def build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -998,9 +920,8 @@ class AAXManagerApp:
         
         # Auto-start the server if it's not already running
         if not getattr(self, 'server_running', False):
-            self.toggle_web_server()
+            self.cloud_server_controller.toggle_web_server()
         
-        # Small delay to give the server a moment to bind the port before browser opens
         self.root.after(500, lambda: webbrowser.open("http://127.0.0.1:8000/desktop"))
         
     def export_csv_worker(self):
@@ -1105,50 +1026,6 @@ class AAXManagerApp:
         self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui))
         self.library_presenter.refresh_library_ui()
         messagebox.showinfo("Match Successful", f"Successfully linked '{title}' to:\n\n{filepath}")
-
-    def fetch_cloud_library(self):
-        self.logger.info("DEBUG: fetch_cloud_library method started executing.")
-        
-        if not self.api_client.auth:
-            self.logger.info("DEBUG: fetch_cloud_library aborted - self.api_client.auth is missing or None.")
-            messagebox.showwarning("Not Logged In", "Please login via the Settings tab first.")
-            return
-
-        self.logger.info("DEBUG: self.api_client.auth verified. Launching fetch_library_worker thread...")
-        
-        self.ui_state.dl_status.set("Fetching data from Amazon... Please wait.")
-        
-        self.thread_pool.submit(self.fetch_library_worker)
-
-    def fetch_library_worker(self):
-        try:
-            self.logger.info("Querying Audible Library API...")
-            
-            # 1. Delegate entirely to the LibraryManager (this handles the API call AND saving the cache)
-            self.library_manager.fetch_cloud_library()
-            
-            self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
-
-            self.root.after(0, self.library_presenter.refresh_library_ui)
-            self.root.after(0, lambda: self.action_router.reset_ui_if_idle())
-
-            self.metadata_manager.sync_missing_covers(
-                on_complete_cb=lambda: self.root.after(0, lambda: self.library_presenter.refresh_library_ui() if self.current_view_mode == 'grid' else None)
-            )
-            
-        except httpx.ConnectError:
-            self.logger.error("Network offline during library sync.")
-            self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to Audible servers. Check your internet connection."))
-        except Exception as e:
-            # 2. Safely catch auth/API errors without relying on a specific audible package exception
-            if "401" in str(e) or "unauthorized" in str(e).lower() or "Not authenticated" in str(e):
-                self.logger.error(f"Audible API rejected the request: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Audible API Error", "Your session may have expired. Please log in again via Settings."))
-            else:
-                self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
-                self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
-        finally:
-            self.root.after(0, self.action_router.reset_ui_if_idle)
 
     def remove_local_file(self):
         selected_items = self.library_tree.selection()

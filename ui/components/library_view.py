@@ -208,7 +208,7 @@ def setup_library_view(app, parent):
     
     btn_frame = ttk.Frame(lib_frame)
     btn_frame.pack(fill="x", pady=2)
-    ttk.Button(btn_frame, text="Refresh Cloud", command=app.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="Refresh Cloud", command=app.cloud_server_controller.fetch_cloud_library).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Download Selected", command=lambda: app.handle_action_on_selected("download")).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Split into Chapters", command=lambda: app.handle_action_on_selected("convert")).pack(side=tk.LEFT, padx=5)
     # ttk.Button(btn_frame, text="Convert All", command=app.start_convert_all_thread).pack(side=tk.LEFT, padx=5)

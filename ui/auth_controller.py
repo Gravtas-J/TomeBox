@@ -21,7 +21,7 @@ class AuthController:
             self.app.ui_state.shelf_filter.set("All Shelves")
             self.app.ui_state.search.set("")
             
-            self.app.fetch_cloud_library()
+            self.app.cloud_server_controller.fetch_cloud_library()
         else:
             self.app.logger.info("No saved session found. Please log in.")
 
@@ -38,7 +38,7 @@ class AuthController:
                 self.app.api_client.save_auth_to_file(self.app.auth_save_path)
                 
                 messagebox.showinfo("Success", "Auth file loaded! You can now fetch your library.")
-                self.app.fetch_cloud_library()
+                self.app.cloud_server_controller.fetch_cloud_library()
         except Exception as e:
             self.app.logger.error(f"ERROR: {traceback.format_exc()}")
             messagebox.showerror("Error", "Could not load auth file. Check the log.")
