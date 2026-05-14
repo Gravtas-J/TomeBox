@@ -193,10 +193,12 @@ class AudibleClient:
             "1.0/catalog/products", 
             keywords=query, 
             num_results=num_results, 
-            response_groups="product_desc,product_attrs,contributors,media"
+            response_groups="product_desc,product_attrs,contributors,media,series",
+            timeout=15
+
         )
         return resp.get("products", [])
-
+    
     def get_download_license(self, asin):
         clean_asin = str(asin).zfill(10)
         if not self.auth:

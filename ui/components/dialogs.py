@@ -307,6 +307,71 @@ def open_sleep_menu(app):
     app.sleep_menu_popup.bind("<FocusOut>", on_focus_out)
     app.sleep_menu_popup.focus_set()
 
+def open_library_folders_window(app):
+    """Opens a UI dialog to manage the background scanner's watched folders."""
+    import tkinter as tk
+    from tkinter import ttk, filedialog
+    import os
+
+    win = tk.Toplevel(app.root)
+    win.title("Manage Library Folders")
+    win.geometry("500x350")
+    win.transient(app.root)
+    
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    win.configure(bg=bg_color)
+    
+    main_frame = ttk.Frame(win, padding=15)
+    main_frame.pack(fill="both", expand=True)
+    
+    ttk.Label(main_frame, text="Watched Library Folders", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 5))
+    ttk.Label(main_frame, text="TomeBox will automatically scan these folders for new audiobooks.", font=("Segoe UI", 9, "italic")).pack(anchor="w", pady=(0, 10))
+    
+    list_frame = ttk.Frame(main_frame)
+    list_frame.pack(fill="both", expand=True, pady=(0, 10))
+    
+    folder_listbox = tk.Listbox(list_frame, bg="#2b2b2b", fg="white", selectbackground="#4a90e2")
+    folder_listbox.pack(side=tk.LEFT, fill="both", expand=True)
+    
+    scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=folder_listbox.yview)
+    scrollbar.pack(side=tk.RIGHT, fill="y")
+    folder_listbox.config(yscrollcommand=scrollbar.set)
+    
+    current_folders = app.settings.get("library_folders", [])
+    for f in current_folders:
+        folder_listbox.insert(tk.END, f)
+        
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(fill="x")
+    
+    def add_folder():
+        folder = filedialog.askdirectory(parent=win, title="Select Library Folder")
+        if folder and folder not in folder_listbox.get(0, tk.END):
+            folder_listbox.insert(tk.END, os.path.normpath(folder))
+            
+    def remove_folder():
+        selected = folder_listbox.curselection()
+        if selected:
+            folder_listbox.delete(selected[0])
+            
+    def save_folders():
+        folders = list(folder_listbox.get(0, tk.END))
+        app.settings["library_folders"] = folders
+        if hasattr(app, 'db'):
+            app.db.save_settings(app.settings)
+        
+        app.library_manager.run_background_library_scan(
+            app.converter, app.active_profile, app.logger, app.thread_pool, 
+            on_refresh_cb=lambda: app.root.after(0, app.library_presenter.refresh_library_ui)
+        )
+        win.destroy()
+        
+    ttk.Button(btn_frame, text="Add Folder", command=add_folder).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(btn_frame, text="Remove Selected", command=remove_folder).pack(side=tk.LEFT)
+    ttk.Button(btn_frame, text="Save & Scan", command=save_folders).pack(side=tk.RIGHT)
+    ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(0, 5))
+
 def open_achievements_window(app):
     if getattr(app, 'ach_window', None) and app.ach_window.winfo_exists():
         app.ach_window.lift()
@@ -737,6 +802,9 @@ def open_match_to_audible_window(app, filepath):
         win.update_idletasks()
 
         def capture_results(filepath=None, products=None, **kwargs):
+            # NEW DEBUG LINE
+            print(f"[Scraper] API returned {len(products) if products else 0} results for query: {query}")
+            
             app.root.after(0, lambda: search_btn.config(state=tk.NORMAL))
             app.root.after(0, lambda: populate_results(products))
             app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)

@@ -1,5 +1,4 @@
 import os
-import threading
 import subprocess
 import requests
 import shutil
@@ -64,8 +63,15 @@ class MetadataManager:
         import requests
         results = []
         try:
-            url = f"https://www.googleapis.com/books/v1/volumes?q={requests.utils.quote(query)}&maxResults=5"
-            resp = requests.get(url, timeout=5)
+            # FIX: Added langRestrict and formatted query to improve accuracy
+            params = {
+                "q": query,
+                "maxResults": 5,
+                "printType": "books",
+                "langRestrict": "en" 
+            }
+            url = "https://www.googleapis.com/books/v1/volumes"
+            resp = requests.get(url, params=params, timeout=5)
             
             if resp.status_code == 200:
                 for item in resp.json().get("items", []):
@@ -93,16 +99,17 @@ class MetadataManager:
         return results
 
     def search_catalog(self, filepath, query):
-        """Searches Audible -> Google Books -> Local tags in a strict fallback cascade."""
-        import threading
+        print(f"[SC] entered, query={query!r}")  # ← A
         def worker():
+            print("[SC] worker started")          # ← B
             products = []
             audible_failed = False
             
-            # 1. Try Audible (if logged in)
             if getattr(self, 'api', None) and self.api.auth:
                 try:
+                    print("[SC] calling self.api.search_catalog")  # ← C
                     raw_products = self.api.search_catalog(query, num_results=5)
+                    print(f"[SC] api returned {len(raw_products)} items")
                     seen_asins = set()
                     for p in raw_products:
                         # ASIN Parsing Update: Check 'asin', fallback to 'id' if storefront structure changed
@@ -145,8 +152,7 @@ class MetadataManager:
                 except Exception as e:
                     if hasattr(self, 'logger'): self.logger(f"Local tag extraction failed: {e}")
 
-            if hasattr(self, 'on_search_complete') and self.on_search_complete:
-                self.event_bus.publish("metadata.search_complete", filepath=filepath, products=products)
+            self.event_bus.publish("metadata.search_complete", filepath=filepath, products=products)
             pass
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")
@@ -314,7 +320,6 @@ class MetadataManager:
                             except OSError:
                                 pass
 
-                if hasattr(self, 'on_apply_complete') and self.on_apply_complete:
                     self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=title)
 
             except Exception as e:

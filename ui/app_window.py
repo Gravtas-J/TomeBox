@@ -961,7 +961,7 @@ class AAXManagerApp:
 
             if getattr(self, '_was_zoomed', False):
                 self.root.state('zoomed')
-                
+
     def setup_ui(self):
         setup_menu_bar(self)
         self.player_bar = PlayerBarView(
@@ -1167,69 +1167,6 @@ class AAXManagerApp:
             self._selected_local_path = None
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
-
-    def manage_library_folders_prompt(self):
-        """Opens a UI dialog to manage the background scanner's watched folders."""
-        win = tk.Toplevel(self.root)
-        win.title("Manage Library Folders")
-        win.geometry("500x350")
-        win.transient(self.root)
-        
-        style = ttk.Style()
-        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
-        win.configure(bg=bg_color)
-        
-        main_frame = ttk.Frame(win, padding=15)
-        main_frame.pack(fill="both", expand=True)
-        
-        ttk.Label(main_frame, text="Watched Library Folders", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 5))
-        ttk.Label(main_frame, text="TomeBox will automatically scan these folders for new audiobooks in the background.", font=("Segoe UI", 9, "italic")).pack(anchor="w", pady=(0, 10))
-        
-        list_frame = ttk.Frame(main_frame)
-        list_frame.pack(fill="both", expand=True, pady=(0, 10))
-        
-        folder_listbox = tk.Listbox(list_frame, bg="#2b2b2b", fg="white", selectbackground="#4a90e2")
-        folder_listbox.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=folder_listbox.yview)
-        scrollbar.pack(side=tk.RIGHT, fill="y")
-        folder_listbox.config(yscrollcommand=scrollbar.set)
-        
-        # Load current folders
-        current_folders = self.settings.get("library_folders", [])
-        for f in current_folders:
-            folder_listbox.insert(tk.END, f)
-            
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill="x")
-        
-        def add_folder():
-            folder = filedialog.askdirectory(parent=win, title="Select Library Folder")
-            if folder and folder not in folder_listbox.get(0, tk.END):
-                folder_listbox.insert(tk.END, os.path.normpath(folder))
-                
-        def remove_folder():
-            selected = folder_listbox.curselection()
-            if selected:
-                folder_listbox.delete(selected[0])
-                
-        def save_folders():
-            folders = list(folder_listbox.get(0, tk.END))
-            self.settings["library_folders"] = folders
-            self.db.save_settings(self.settings)
-            
-            # Trigger an immediate scan of the new folders!
-            self.library_manager.run_background_library_scan(
-                self.converter, self.active_profile, self.logger, self.thread_pool, 
-                on_refresh_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui)
-            )
-            win.destroy()
-            
-        ttk.Button(btn_frame, text="Add Folder", command=add_folder).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="Remove Selected", command=remove_folder).pack(side=tk.LEFT)
-        
-        ttk.Button(btn_frame, text="Save & Scan", command=save_folders).pack(side=tk.RIGHT)
-        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(0, 5))
         
     def start_convert_thread(self, target_path=None):
         # Fallback for backwards compatibility

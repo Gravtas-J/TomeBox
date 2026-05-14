@@ -52,14 +52,10 @@ class LibraryManager:
         """Silently scans all user-defined library folders for new audiobooks using the AppThreadPool."""
         def worker():
             import time
+            import os
             settings = self.db.load_settings()
             folders = settings.get("library_folders", [])
             
-            # Always include the default download directory as a watched folder
-            dl_dir = settings.get("download_folder")
-            if dl_dir and dl_dir not in folders:
-                folders.append(dl_dir)
-                
             if not folders: 
                 return
                 
@@ -68,21 +64,39 @@ class LibraryManager:
             
             logger.info(f"Background scanner checking {len(folders)} library folders...")
             
+            # 1. Build a normalized lookup of every file currently in the database
             tracked_files = set()
             for path, data in self.local_library.items():
                 if data.get("is_playlist"):
                     for ch in data.get("chapters", []):
-                        tracked_files.add(ch.get("file_path"))
+                        ch_path = ch.get("file_path")
+                        if ch_path:
+                            tracked_files.add(os.path.normpath(os.path.abspath(ch_path)))
                 else:
-                    tracked_files.add(path)
+                    if path:
+                        tracked_files.add(os.path.normpath(os.path.abspath(path)))
             
+            # 2. Scan folders
             for folder in folders:
                 if not os.path.exists(folder): continue
                 for root_dir, _, files in os.walk(folder):
+                    
+                    # Guard: If this folder already contains a tracked M4B/AAX, we will ignore loose MP3s
+                    has_tracked_primary = any(
+                        f.lower().endswith(('.m4b', '.aax', '.aaxc')) and 
+                        os.path.normpath(os.path.abspath(os.path.join(root_dir, f))) in tracked_files
+                        for f in files
+                    )
+                    
                     for f in files:
+                        ext = f.lower().split('.')[-1]
                         if f.lower().endswith(valid_exts):
-                            full_path = os.path.normpath(os.path.join(root_dir, f))
+                            full_path = os.path.normpath(os.path.abspath(os.path.join(root_dir, f)))
+                            
                             if full_path not in tracked_files:
+                                # Shield against adding a folder just because it has split MP3s next to an M4B
+                                if ext == 'mp3' and has_tracked_primary:
+                                    continue
                                 untracked_dirs.add(root_dir)
             
             if untracked_dirs:
@@ -93,14 +107,13 @@ class LibraryManager:
                         folder_path=directory, 
                         converter=converter, 
                         active_profile=active_profile,
-                        on_status_cb=None, # Keep it silent to avoid disrupting the UI
+                        on_status_cb=None, # Keep it silent
                         on_complete_cb=lambda c, t: on_refresh_cb() if on_refresh_cb else None,
                         logger=logger,
                         task_id=f"auto_scan_{time.time()}_{os.path.basename(directory)}",
-                        import_mode='playlist'  # Force playlist mode for split files!
+                        import_mode='playlist'  # Force playlist mode for split files
                     )
         
-        # Dispatch to the background thread pool
         thread_pool.submit(worker)
 
     def trigger_rate_limit(self, cooldown_seconds=60):
