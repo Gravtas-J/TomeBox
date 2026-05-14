@@ -1,6 +1,7 @@
 import threading
 from core.events import default_bus
 
+# -- The Achievements are intentionally falvoured for style and personality of the application --
 ACHIEVEMENTS = {
     "first_dl": {"title": "System Integration Complete", "desc": "Download your first audiobook.", "type": "books_downloaded", "threshold": 1},
     "hoarder_1": {"title": "Spatial Expansion", "desc": "Download 10 audiobooks.", "type": "books_downloaded", "threshold": 10},

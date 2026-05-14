@@ -98,9 +98,10 @@ const BreakoutEngine = {
         this.isActive = false;
         if (this.animationId) cancelAnimationFrame(this.animationId);
         if (this.canvas) {
-            this.canvas.removeEventListener('pointerdown', this.pointerHandler);
+            this.canvas.removeEventListener('pointermove', this.moveHandler);
+            this.canvas.removeEventListener('pointerdown', this.downHandler);
             window.removeEventListener('resize', this.resizeHandler);
-            this.canvas = null; // <-- ADD THIS LINE
+            this.canvas = null;
         }
     },
 
