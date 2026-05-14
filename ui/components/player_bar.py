@@ -33,8 +33,7 @@ def setup_player_bar(app):
     app.progress_bar = ttk.Progressbar(app.play_frame, variable=app.ui_state.playback_progress, maximum=100)
     app.progress_bar.pack(fill="x", padx=5, pady=5)
     
-    if hasattr(app, 'on_progress_click'):
-        app.progress_bar.bind("<Button-1>", app.on_progress_click)
+    app.progress_bar.bind("<Button-1>", app.playback_presenter.on_progress_click)
 
     # --- Controls Container ---
     app.controls_frame = ttk.Frame(app.play_frame)
@@ -47,22 +46,22 @@ def setup_player_bar(app):
     app.playback_btns_frame = ttk.Frame(center_wrapper)
     app.playback_btns_frame.pack(side=tk.LEFT)
 
-    app.btn_prev = ttk.Button(app.playback_btns_frame, text="<< Prev Chapter", width=14, command=app.prev_chapter)
+    app.btn_prev = ttk.Button(app.playback_btns_frame, text="<< Prev Chapter", width=14, command=app.playback_presenter.prev_chapter)
     app.btn_prev.pack(side=tk.LEFT, padx=2)
     
-    app.btn_m30 = ttk.Button(app.playback_btns_frame, text="-30s", width=5, command=lambda: app.seek_audio(-30))
+    app.btn_m30 = ttk.Button(app.playback_btns_frame, text="-30s", width=5, command=lambda: app.playback_presenter.seek_audio(-30))
     app.btn_m30.pack(side=tk.LEFT, padx=2)
     
-    app.btn_play = ttk.Button(app.playback_btns_frame, text="Play", width=8, command=app.master_play)
+    app.btn_play = ttk.Button(app.playback_btns_frame, text="Play", width=8, command=app.playback_presenter.master_play)
     app.btn_play.pack(side=tk.LEFT, padx=2)
     
-    app.btn_pause = ttk.Button(app.playback_btns_frame, text="Pause", width=8, command=app.pause_audio)
+    app.btn_pause = ttk.Button(app.playback_btns_frame, text="Pause", width=8, command=app.playback_presenter.pause_audio)
     app.btn_pause.pack(side=tk.LEFT, padx=2)
     
-    app.btn_p30 = ttk.Button(app.playback_btns_frame, text="+30s", width=5, command=lambda: app.seek_audio(30))
+    app.btn_p30 = ttk.Button(app.playback_btns_frame, text="+30s", width=5, command=lambda: app.playback_presenter.seek_audio(30))
     app.btn_p30.pack(side=tk.LEFT, padx=2)
     
-    app.btn_next = ttk.Button(app.playback_btns_frame, text="Next Chapter >>", width=14, command=app.next_chapter)
+    app.btn_next = ttk.Button(app.playback_btns_frame, text="Next Chapter >>", width=14, command=app.playback_presenter.next_chapter)
     app.btn_next.pack(side=tk.LEFT, padx=2)
 
     # 2. Extra Controls (Hidden in Compact Mode)
@@ -74,13 +73,13 @@ def setup_player_bar(app):
 
     speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]
     speed_menu = ttk.Combobox(app.extras_frame, textvariable=app.ui_state.playback_speed, values=speed_options, state="readonly", width=5)
-    speed_menu.bind("<<ComboboxSelected>>", app.on_speed_change)
+    speed_menu.bind("<<ComboboxSelected>>", app.playback_presenter.on_speed_change)
     speed_menu.pack(side=tk.LEFT, padx=10)
 
     vol_frame = ttk.Frame(app.extras_frame)
     vol_frame.pack(side=tk.LEFT, padx=5)
     ttk.Label(vol_frame, text="Vol:").pack(side=tk.LEFT)
-    app.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app.ui_state.volume, command=app.on_volume_change, length=80)
+    app.vol_slider = ttk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app.ui_state.volume, command=app.playback_presenter.on_volume_change, length=80)
     app.vol_slider.pack(side=tk.LEFT)
 
     timer_frame = ttk.Frame(app.extras_frame)

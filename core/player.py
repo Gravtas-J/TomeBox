@@ -65,6 +65,9 @@ class AudioPlayer:
 
         run_env = os.environ.copy()
         if audio_device and audio_device != "System Default":
+            if os.name == 'nt':
+                run_env["SDL_AUDIODRIVER"] = "wasapi"
+                
             run_env["SDL_AUDIO_DEVICE_NAME"] = audio_device
             self.logger(f"Routing audio to hardware device: {audio_device}")
 

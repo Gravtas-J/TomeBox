@@ -78,56 +78,71 @@ def open_error_log_window(app):
     ttk.Button(btn_frame, text="Clear All", command=clear_all).pack(side=tk.RIGHT, padx=5)
 
 def open_audio_device_settings(app):
-        """Queries the OS for audio hardware and displays a selection menu."""
-        try:
-            import sounddevice as sd
-            devices = []
-            # Query the OS and filter out inputs (microphones)
-            for d in sd.query_devices():
-                if d['max_output_channels'] > 0 and d['name'] not in devices:
-                    devices.append(d['name'])
-        except ImportError:
-            messagebox.showerror("Dependency Missing", "Please run 'pip install sounddevice' to enable hardware scanning.")
-            return
-        except Exception as e:
-            messagebox.showerror("Device Error", f"Could not query audio devices:\n{e}")
-            return
+    """Queries the OS for audio hardware and displays a selection menu."""
+    try:
+        import sounddevice as sd
+        import os
+        devices = []
+        
+        # Find the WASAPI host API index on Windows
+        wasapi_idx = None
+        if os.name == 'nt':
+            try:
+                wasapi_idx = next(i for i, hostapi in enumerate(sd.query_hostapis()) if 'WASAPI' in hostapi['name'])
+            except StopIteration:
+                pass
 
-        devices.insert(0, "System Default")
-        current_device = app.settings.get("audio_device", "System Default")
-
-        popup = tk.Toplevel(app.root)
-        popup.title("Playback Device Settings")
-        popup.geometry("450x150")
-        popup.transient(app.root)
-        
-        # Theme matching
-        style = ttk.Style()
-        bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
-        popup.configure(bg=bg_color)
-        
-        ttk.Label(popup, text="Select Hardware Output:").pack(pady=(20, 5))
-        
-        device_var = tk.StringVar(value=current_device)
-        combo = ttk.Combobox(popup, textvariable=device_var, values=devices, state="readonly", width=50)
-        combo.pack(pady=5)
-        
-        def apply():
-            selected = device_var.get()
-            app.settings["audio_device"] = selected
-            app.db.save_settings(app.settings)
-            
-            app.playback.set_audio_device(selected)
-            
-            # If audio is actively playing, bounce the stream so the change takes effect immediately
-            if app.is_playing:
-                app.pause_audio()
-                app.is_paused = False
-                app.resume_playback()
+        # Query all devices and filter manually
+        for d in sd.query_devices():
+            # If we are on Windows and found WASAPI, skip devices using older APIs
+            if wasapi_idx is not None and d.get('hostapi') != wasapi_idx:
+                continue
                 
-            popup.destroy()
+            if d['max_output_channels'] > 0 and d['name'] not in devices:
+                devices.append(d['name'])
+                
+    except ImportError:
+        messagebox.showerror("Dependency Missing", "Please run 'pip install sounddevice' to enable hardware scanning.")
+        return
+    except Exception as e:
+        messagebox.showerror("Device Error", f"Could not query audio devices:\n{e}")
+        return
+
+    devices.insert(0, "System Default")
+    current_device = app.settings.get("audio_device", "System Default")
+
+    popup = tk.Toplevel(app.root)
+    popup.title("Playback Device Settings")
+    popup.geometry("450x150")
+    popup.transient(app.root)
+    
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
+    popup.configure(bg=bg_color)
+    
+    ttk.Label(popup, text="Select Hardware Output:").pack(pady=(20, 5))
+    
+    device_var = tk.StringVar(value=current_device)
+    combo = ttk.Combobox(popup, textvariable=device_var, values=devices, state="readonly", width=50)
+    combo.pack(pady=5)
+    
+    def apply():
+        selected = device_var.get()
+        app.settings["audio_device"] = selected
+        if hasattr(app, 'db'):
+            app.db.save_settings(app.settings)
+        
+        app.playback.set_audio_device(selected)
+        
+        # If audio is actively playing, bounce the stream so the change takes effect immediately
+        if app.playback.is_playing:
+            app.playback_presenter.pause_audio()
+            app.playback.is_paused = False
+            app.playback_presenter.resume_playback()
             
-        ttk.Button(popup, text="Apply", command=apply).pack(pady=(10, 0))
+        popup.destroy()
+        
+    ttk.Button(popup, text="Apply", command=apply).pack(pady=(10, 0))
 
 def open_auth_window(app):
     if getattr(app, 'auth_window', None) and app.auth_window.winfo_exists():
@@ -186,7 +201,7 @@ def open_auth_window(app):
 
 def open_chapter_window(app):
     from tkinter import messagebox
-    if not hasattr(app, 'chapters') or not app.chapters:
+    if not app.playback.chapters:
         messagebox.showinfo("Chapters", "No chapter data available. Please load an audiobook first.")
         return
 
@@ -227,7 +242,7 @@ def open_chapter_window(app):
     tree.pack(side=tk.LEFT, fill="both", expand=True)
     scrollbar.pack(side=tk.RIGHT, fill="y")
 
-    for i, chap in enumerate(app.chapters):
+    for i, chap in enumerate(app.playback.chapters):
         start_sec = float(chap.get('start_time', 0))
         h, m = divmod(start_sec, 3600)
         m, s = divmod(m, 60)
@@ -256,10 +271,10 @@ def open_sleep_menu(app):
     inner = tk.Frame(app.sleep_menu_popup, bg=bg_color, padx=5, pady=5)
     inner.pack(fill="both", expand=True)
 
-    ttk.Button(inner, text="Turn Off Timer", command=lambda: app.set_sleep_timer("off")).pack(fill="x", pady=(0,5))
-    ttk.Button(inner, text="15 Minutes", command=lambda: app.set_sleep_timer("time", 15)).pack(fill="x", pady=1)
-    ttk.Button(inner, text="30 Minutes", command=lambda: app.set_sleep_timer("time", 30)).pack(fill="x", pady=1)
-    ttk.Button(inner, text="End of Chapter", command=lambda: app.set_sleep_timer("chapters", 1)).pack(fill="x", pady=1)
+    ttk.Button(inner, text="Turn Off Timer", command=lambda: app.playback_presenter.set_sleep_timer("off")).pack(fill="x", pady=(0,5))
+    ttk.Button(inner, text="15 Minutes", command=lambda: app.playback_presenter.set_sleep_timer("time", 15)).pack(fill="x", pady=1)
+    ttk.Button(inner, text="30 Minutes", command=lambda: app.playback_presenter.set_sleep_timer("time", 30)).pack(fill="x", pady=1)
+    ttk.Button(inner, text="End of Chapter", command=lambda: app.playback_presenter.set_sleep_timer("chapters", 1)).pack(fill="x", pady=1)
 
     ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
 
@@ -268,14 +283,14 @@ def open_sleep_menu(app):
     ttk.Label(custom_time_frame, text="Mins:").pack(side=tk.LEFT)
     min_var = tk.StringVar(value="60")
     ttk.Entry(custom_time_frame, textvariable=min_var, width=5).pack(side=tk.LEFT, padx=(5, 2))
-    ttk.Button(custom_time_frame, text="Set", width=4, command=lambda: app.set_sleep_timer("time", min_var.get())).pack(side=tk.LEFT)
+    ttk.Button(custom_time_frame, text="Set", width=4, command=lambda: app.playback_presenter.set_sleep_timer("time", min_var.get())).pack(side=tk.LEFT)
 
     custom_chap_frame = ttk.Frame(inner)
     custom_chap_frame.pack(fill="x", pady=2)
     ttk.Label(custom_chap_frame, text="Chaps:").pack(side=tk.LEFT)
     chap_var = tk.StringVar(value="2")
     ttk.Entry(custom_chap_frame, textvariable=chap_var, width=5).pack(side=tk.LEFT, padx=(1, 2))
-    ttk.Button(custom_chap_frame, text="Set", width=4, command=lambda: app.set_sleep_timer("chapters", chap_var.get())).pack(side=tk.LEFT)
+    ttk.Button(custom_chap_frame, text="Set", width=4, command=lambda: app.playback_presenter.set_sleep_timer("chapters", chap_var.get())).pack(side=tk.LEFT)
 
     app.sleep_menu_popup.update_idletasks()
     popup_height = app.sleep_menu_popup.winfo_reqheight()

@@ -433,7 +433,7 @@ def create_server_app(tomebox):
                 # Sync the playhead to the desktop UI if the book is actively open there
                 if getattr(tomebox, 'file_path', None) == path:
                     if getattr(tomebox, 'root', None): 
-                        tomebox.root.after(0, lambda: tomebox.sync_playhead_from_remote(position))
+                        tomebox.root.after(0, lambda: tomebox.playback_presenter.sync_playhead_from_remote(position))
                     
         except Exception as e: 
             print(f"Web Server Sync Error: {e}")

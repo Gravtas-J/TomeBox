@@ -40,9 +40,9 @@ class PlaybackController:
         self.is_playing = False
         self.is_paused = False
         
-        # Internal Threading
+        # Internal Threading (Using Session IDs to prevent Zombie Threads)
         self._last_tick_time = 0
-        self._monitor_active = False
+        self._tick_session = 0
 
     def set_audio_device(self, device_name):
         self.audio_device = device_name
@@ -62,31 +62,27 @@ class PlaybackController:
             self.chapter_duration = 0.0
 
     def play(self, voice_boost, skip_silence, drm_flags=None):
-        """Starts or resumes playback of the currently loaded file."""
-        if not self.file_path or not self.chapters:
-            return
-
-        if self.current_chapter_idx >= len(self.chapters):
-            return
+        if not self.file_path or not self.chapters: return
+        if self.current_chapter_idx >= len(self.chapters): return
 
         chapter = self.chapters[self.current_chapter_idx]
-        
         base_start = float(chapter.get("start_time", 0))
         base_end = float(chapter.get("end_time", 0))
         self.chapter_duration = base_end - base_start
         
-        # Playlist vs M4B Time Offset
         if getattr(self, 'is_playlist', False):
             actual_start_time = self.current_play_time
         else:
             actual_start_time = base_start + self.current_play_time
             
         remaining_duration = self.chapter_duration - self.current_play_time
+        if remaining_duration <= 0: remaining_duration = 999999
         
-        # Failsafe: If duration math somehow hits 0, just play the whole file
-        if remaining_duration <= 0:
-            remaining_duration = 999999
-        
+        # --- THE SHIELD ---
+        # Drop the flag BEFORE spawning the new process to protect against overlap
+        if self.is_playing:
+            self.is_playing = False
+
         success = self.player.play(
             filepath=self.file_path,
             start_time=actual_start_time,
@@ -99,23 +95,71 @@ class PlaybackController:
             audio_device=self.audio_device
         )
         
-        if not success:
-            return 
+        if not success: return 
             
         self.is_playing = True
         self.is_paused = False
         self._last_tick_time = time.time()
+        self._play_start_time = time.time()
         
-        if not self._monitor_active:
-            self._monitor_active = True
-            threading.Thread(target=self._tick_loop, daemon=True).start()
+        self._tick_session += 1
+        threading.Thread(target=self._tick_loop, args=(self._tick_session,), daemon=True).start()
+
+    def pause(self):
+        if self.is_playing:
+            self.is_playing = False # Shield Up
+            self.player.stop()
+            self.is_paused = True
+            self._tick_session += 1
+            self.current_play_time = max(0.0, self.current_play_time - 1.5)
+
+    def stop(self):
+        self.is_playing = False # Shield Up
+        self.is_paused = False
+        self._tick_session += 1
+        self.player.stop()
+
+    def seek(self, offset_seconds):
+        if not self.file_path or not self.chapters: return False
+
+        new_time = self.current_play_time + offset_seconds
+        
+        if new_time < 0:
+            deficit = abs(new_time)
+            while deficit > 0 and self.current_chapter_idx > 0:
+                self.current_chapter_idx -= 1
+                ch = self.chapters[self.current_chapter_idx]
+                self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
+                
+                if deficit >= self.chapter_duration:
+                    deficit -= self.chapter_duration
+                    if deficit == 0: self.current_play_time = 0.0
+                else:
+                    self.current_play_time = self.chapter_duration - deficit
+                    deficit = 0
+            if deficit > 0: self.current_play_time = 0.0
+                
+        elif new_time >= self.chapter_duration:
+            return "NEXT_CHAPTER" 
+        else:
+            self.current_play_time = new_time
+            
+        was_playing = self.is_playing
+        if was_playing:
+            self.is_playing = False # Shield Up
+            self.player.stop()
+            self.is_paused = False
+            self._tick_session += 1
+            return "RESTART_PLAYBACK" 
+            
+        return "SUCCESS"
 
     def pause(self):
         if self.is_playing:
             self.player.stop()
             self.is_playing = False
             self.is_paused = True
-            self._monitor_active = False
+            self._tick_session += 1
             
             # Rewind slightly on pause to catch context on resume
             self.current_play_time = max(0.0, self.current_play_time - 1.5)
@@ -123,7 +167,7 @@ class PlaybackController:
     def stop(self):
         self.is_playing = False
         self.is_paused = False
-        self._monitor_active = False
+        self._tick_session += 1
         self.player.stop()
 
     def seek(self, offset_seconds):
@@ -143,7 +187,6 @@ class PlaybackController:
                     
                     if deficit >= self.chapter_duration:
                         deficit -= self.chapter_duration
-                        # ---> FIX: Ensure time resets to start of chapter on a perfect boundary hit
                         if deficit == 0:
                             self.current_play_time = 0.0
                     else:
@@ -165,7 +208,7 @@ class PlaybackController:
             self.player.stop()
             self.is_playing = False
             self.is_paused = False
-            self._monitor_active = False
+            self._tick_session += 1
             return "RESTART_PLAYBACK" # Signal UI to call play() again with current flags
             
         return "SUCCESS"
@@ -178,32 +221,41 @@ class PlaybackController:
         if os.name == 'nt':
             self.player.set_volume(volume_int)
 
-    def _tick_loop(self):
+    def _tick_loop(self, session_id):
         """Background thread updating the time."""
-        while getattr(self, '_monitor_active', False) and self.is_playing:
+        # The thread will auto-terminate if is_playing is False, OR if the session ID is no longer the active one
+        while self.is_playing and getattr(self, '_tick_session', None) == session_id:
             now = time.time()
             dt = (now - self._last_tick_time) * self.playback_speed
             self._last_tick_time = now
             self.current_play_time += dt
             
-            # Fire event instead of manual callback
+            # Fire event with the CORRECT payloads mapped to the ActionRouter UI receiver
             self.event_bus.publish(
                 "playback.tick", 
                 current_time=self.current_play_time, 
-                total_time=100.0, # Or whatever logic you use for total 
-                duration=self.chapter_duration
+                total_time=self.chapter_duration, 
+                duration=dt
             )
             time.sleep(0.1)
 
     def _handle_player_complete(self):
         """Called automatically when FFplay finishes the current chunk."""
+        if not self.is_playing:
+            return
+        if time.time() - getattr(self, '_play_start_time', 0) < 1.5:
+            self.is_playing = False
+            self.logger.error("Playback engine crashed instantly. Halting to prevent infinite loop.")
+            self.event_bus.publish("playback.error", error_msg="Audio engine failed to start. Check your audio device settings or file integrity.")
+            return
+
         self.is_playing = False
-        self._monitor_active = False
+        self._tick_session += 1
         self.event_bus.publish("playback.chapter_end")
 
     def _handle_error(self, msg):
         self.is_playing = False
-        self._monitor_active = False
+        self._tick_session += 1
         self.event_bus.publish("playback.error", error_msg=msg)
         
     def next_chapter(self):

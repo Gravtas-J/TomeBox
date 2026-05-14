@@ -12,7 +12,7 @@ class BookmarksPresenter:
 
         was_playing = self.app.playback.is_playing
         if was_playing:
-            self.app.pause_audio()
+            self.app.playback_presenter.pause_audio()
 
         current_time = self.app.playback.current_play_time
         chapter_idx = self.app.playback.current_chapter_idx
@@ -21,11 +21,11 @@ class BookmarksPresenter:
         if self.app.playback.chapters:
             abs_time += float(self.app.playback.chapters[chapter_idx].get("start_time", 0))
 
-        note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.app.format_time(current_time)}:")
+        note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.app.playback_presenter.format_time(current_time)}:")
 
         if was_playing:
             self.app.playback.is_paused = False
-            self.app.resume_playback()
+            self.app.playback_presenter.resume_playback()
             
         if not note: return 
 
@@ -64,7 +64,7 @@ class BookmarksPresenter:
             if target_path == self.app.file_path and self.app.playback.chapters and chap_idx < len(self.app.playback.chapters):
                 chap_title = self.app.playback.chapters[chap_idx].get("tags", {}).get("title", chap_title)
                 
-            t_str = self.app.format_time(bm.get("time", 0))
+            t_str = self.app.playback_presenter.format_time(bm.get("time", 0))
             display_time = f"{chap_title} - {t_str}"
 
             self.app.bm_tree.insert("", "end", iid=str(idx), values=(display_time, bm.get("note", "")))
@@ -85,11 +85,11 @@ class BookmarksPresenter:
             if target_path != self.app.file_path:
                 self.app.load_specific_file(target_path)
             
-            self.app.stop_audio()
+            self.app.playback_presenter.stop_audio()
             self.app.playback.current_chapter_idx = bm.get("chapter_idx", 0)
             self.app.playback.current_play_time = bm.get("time", 0.0)
             
-            self.app.play_chapter()
+            self.app.playback_presenter.play_chapter()
 
     def delete_bookmark(self):
         selected = self.app.bm_tree.focus()

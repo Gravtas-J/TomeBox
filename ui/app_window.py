@@ -50,10 +50,12 @@ from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
+
 from ui.bookmarks_presenter import BookmarksPresenter
 from ui.action_router import ActionRouter
 from ui.import_session import ImportSession
 from ui.palette_controller import PaletteController
+from ui.playback_presenter import PlaybackPresenter
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -117,6 +119,7 @@ class AAXManagerApp:
         self.bookmarks_presenter = BookmarksPresenter(self)
         self.import_session = ImportSession(self)
         self.palette_controller = PaletteController(self)
+        self.playback_presenter = PlaybackPresenter(self)
 
         self.root.dnd_bind('<<Drop>>', self.import_session.on_file_drop)
         self.base_dir = base_dir  
@@ -197,9 +200,9 @@ class AAXManagerApp:
         )
         self.playback = PlaybackController(
             logger=self.logger,
-            on_tick_cb=self._on_playback_tick,
-            on_chapter_end_cb=lambda: self.root.after(0, self.next_chapter),
-            on_error_cb=self._on_playback_error
+            on_tick_cb=self.playback_presenter.on_playback_tick, 
+            on_chapter_end_cb=lambda: self.root.after(0, self.playback_presenter.next_chapter), 
+            on_error_cb=self.playback_presenter.on_playback_error 
         )
         # Load saved audio device
         saved_device = self.settings.get("audio_device", "System Default")
@@ -305,23 +308,6 @@ class AAXManagerApp:
         self.achievements = ACHIEVEMENTS
         self.root.after(1500, self.import_session._prompt_resume_imports)
 
-    def _on_playback_error(self, error_code):
-        """Catches player thread crashes and pushes a visible alert to the user."""
-        def update():
-            self.stop_audio()
-            
-            if error_code == "NO_AUDIO":
-                messagebox.showerror(
-                    "Playback Failed", 
-                    "No audio stream found in this title.\n\nThe file may be corrupted, or the DRM decryption failed during download. Try deleting and re-downloading the file."
-                )
-            else:
-                messagebox.showerror(
-                    "Playback Error", 
-                    f"An unexpected playback error occurred.\nError Code: {error_code}"
-                )
-        self.root.after(0, update)
-
     def cancel_task(self, task_id):
         """Unified method to cancel either an active import OR an active download from the queue drawer."""
         if str(task_id).startswith("import_"):
@@ -410,46 +396,6 @@ class AAXManagerApp:
             if is_error:
                 # Auto-reset the health indicator back to Online after the 60s cooldown expires
                 self.root.after(60000, lambda: self.ui_state.api_health.set("API: Online"))
-        self.root.after(0, update)
-
-    def _on_playback_tick(self, current_time, total_time, real_time_delta):
-        """Called twice a second by the PlaybackController."""
-        def update_ui():
-            # Update Progress Bar & Labels
-            percent = (current_time / total_time) * 100 if total_time > 0 else 0
-            self.ui_state.playback_progress.set(percent)
-            
-            curr_str = self.format_time(current_time)
-            dur_str = self.format_time(total_time)
-            self.time_label.config(text=f"{curr_str} / {dur_str}")
-
-            # Achievement Tracking
-            self.session_listen_buffer += real_time_delta
-            if self.session_listen_buffer >= 60.0:
-                self.stats_manager.add_stat("seconds_listened", self.session_listen_buffer)
-                self.session_listen_buffer = 0.0
-
-            # Database Saving (Every ~10 seconds)
-            now = time.time()
-            if now - self._last_disk_save_time > 10:
-                self.save_playback_state()
-                self._last_disk_save_time = now
-                
-        # Push the update to the main Tkinter thread safely
-        self.root.after(0, update_ui)
-
-    def _on_import_complete(self, added_count, total_found=0):
-        def update():
-            try:
-                self.refresh_library_ui()
-            except Exception as e:
-                import traceback; traceback.print_exc()
-            if added_count > 0:
-                self.ui_state.dl_status.set(f"Successfully imported {added_count} files.")
-            elif total_found > 0:
-                self.ui_state.dl_status.set("Files already in library.")
-            else:
-                self.ui_state.dl_status.set("No valid audiobooks found to import.")
         self.root.after(0, update)
 
     def toggle_web_server(self):
@@ -680,7 +626,7 @@ class AAXManagerApp:
         self.context_menu = tk.Menu(self.root, tearoff=0)
         
         # Playback Controls
-        self.context_menu.add_command(label="▶ Play", command=self.master_play)
+        self.context_menu.add_command(label="▶ Play", command=self.playback_presenter.master_play)
         self.context_menu.add_separator()
 
 
@@ -721,13 +667,13 @@ class AAXManagerApp:
                 self.chapter_win.destroy()
             
             # Stop current playback and save state
-            self.stop_audio()
+            self.playback_presenter.stop_audio()
                 
             # Set the new target
             self.playback.current_chapter_idx = target_idx
             self.playback.current_play_time = 0.0
             
-            self.play_chapter()
+            self.playback_presenter.play_chapter()
 
     def on_item_select(self, event=None):
         if self.current_view_mode == "list":
@@ -829,9 +775,9 @@ class AAXManagerApp:
     def on_filter_change(self):
 
         if self.playback.is_playing:
-            self.pause_audio()
+            self.playback_presenter.pause_audio()
             self.playback.is_paused = False
-            self.resume_playback()
+            self.playback_presenter.resume_playback()
 
     def handle_window_close(self):
         if self.ui_state.minimize_to_tray.get():
@@ -846,7 +792,7 @@ class AAXManagerApp:
             self.logger.info("Initiating shutdown sequence...")
             
             # 1. Save our place in the audiobook and database
-            self.save_playback_state()
+            self.playback_presenter.save_playback_state()
 
             # 2. Trigger the aggressive stop command on our playback controller
             if self.playback:
@@ -881,33 +827,6 @@ class AAXManagerApp:
             else:
                 # Mac/Linux immediate hard exit
                 os._exit(0)
-
-    def save_playback_state(self):
-        state = self.playback.get_current_state()
-        if state:
-            state["file_path"] = self.file_path
-            self.library_manager.save_playback_state(state, self.active_profile)
-    
-    def sync_playhead_from_remote(self, abs_position):
-        """Called by the web server when the phone updates the current book's time."""
-        try:
-            # Let the playback controller handle the chapter/time math
-            if self.playback.seek_to_absolute(abs_position):
-                
-                
-                # Visually move the progress bar on the PC screen
-                if hasattr(self, 'progress_var') and self.playback.chapters:
-                    total_duration = float(self.playback.chapters[-1].get("end_time", 0))
-                    if total_duration > 0:
-                        self.ui_state.playback_progress.set((abs_position / total_duration) * 100)
-                        
-        except Exception as e:
-            self.logger.error(f"Failed to sync remote playhead: {e}")
-            
-    def cue_last_played(self):
-        last_path = self.settings.get(f"last_played_{self.active_profile}")
-        if last_path and last_path in self.library_manager.local_library and os.path.exists(last_path):
-            self.load_specific_file(last_path)
     
     def set_download_folder(self):
         self.root.attributes('-topmost', True)
@@ -1082,7 +1001,7 @@ class AAXManagerApp:
                 
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
                 on_card_click(e, oc, t, a, s)
-                self.master_play()
+                self.playback_presenter.master_play()
 
             outer_card.bind("<Button-1>", on_card_click)
             outer_card.bind("<Double-1>", on_card_double_click)
@@ -1249,9 +1168,9 @@ class AAXManagerApp:
                 self.start_convert_thread(target_path=local_path)
                 return
                 
-            self.load_specific_file(local_path)
+            self.playback_presenter.load_specific_file(local_path)
             if action_type == "play":
-                self.play_chapter()
+                self.playback_presenter.play_chapter()
             elif action_type == "convert":
                 self.start_convert_thread()
         else:
@@ -1666,73 +1585,6 @@ class AAXManagerApp:
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
 
-    def set_sleep_timer(self, mode, value=0):
-
-        if self._sleep_timer_id is not None:
-            self.root.after_cancel(self._sleep_timer_id)
-            
-        if hasattr(self, 'sleep_menu_popup') and self.sleep_menu_popup.winfo_exists():
-            self.sleep_menu_popup.destroy()
-
-        try:
-            val = int(value)
-        except ValueError:
-            return
-
-        if mode == "off" or val <= 0:
-            self.sleep_mode = None
-            self.timer_btn.config(text="Sleep: Off")
-            return
-            
-        self.sleep_mode = mode
-        
-        if mode == "time":
-            self.sleep_timer_seconds = val * 60
-            self.timer_btn.config(text=f"Sleep: {self.format_time(self.sleep_timer_seconds)}")
-            self.sleep_timer_tick()
-            
-        elif mode == "chapters":
-            self.sleep_chapters_remaining = val
-            text = "End of Chapter" if val == 1 else f"Sleep: {val} ch"
-            self.timer_btn.config(text=text)
-
-    def sleep_timer_tick(self):
-        if self.sleep_mode != "time":
-            return
-            
-        if self.sleep_timer_seconds <= 0:
-            self.sleep_mode = None
-            self.timer_btn.config(text="Sleep: Off")
-            
-            if self.playback.is_playing:
-                self.logger.info("Sleep timer (minutes) finished. Pausing playback.")
-                self.pause_audio()
-            return
-            
-        self.sleep_timer_seconds -= 1
-        self.timer_btn.config(text=f"Sleep: {self.format_time(self.sleep_timer_seconds)}")
-        
-        self._sleep_timer_id = self.root.after(1000, self.sleep_timer_tick)
-
-    def on_sleep_timer_set(self, event=None):
-        val = self.sleep_time_var.get()
-
-        if self._sleep_timer_id is not None:
-            self.root.after_cancel(self._sleep_timer_id)
-            
-        if val == "Off":
-            self.sleep_timer_active = False
-            self.ui_state.timer_countdown.set("")
-            return
-            
-        mins = int(val.replace("m", ""))
-        self.sleep_timer_seconds = mins * 60
-        self.sleep_timer_active = True
-
-        self.ui_state.timer_countdown.set(self.format_time(self.sleep_timer_seconds))
-        
-        self.sleep_timer_tick()
-
     def _on_global_scroll(self, event):
         """A universal scroll handler that intelligently scrolls whatever canvas the mouse is hovering over."""
         widget = event.widget
@@ -1777,58 +1629,6 @@ class AAXManagerApp:
             target_canvas.yview_scroll(-1, "units")
         elif num == 5 or delta < 0:
             target_canvas.yview_scroll(1, "units")
-
-    def master_play(self, event=None):
-        if self.current_view_mode == "list":
-            selected = self.library_tree.focus()
-            if not selected:
-                if self.file_path:
-                    self.play_chapter()
-                else:
-                    messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
-                return
-            item = self.library_tree.item(selected)
-        else:
-            if not self._selected_grid_item or not self._selected_grid_item:
-                if self.file_path:
-                    self.play_chapter()
-                else:
-                    messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
-                return
-            item = self._selected_grid_item
-
-        title = item['values'][0]
-        status = item['values'][5]  
-
-        if "Downloaded" not in status:
-            messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")
-            return
-
-        is_playlist = False
-        local_path = None
-        for path, data in self.library_manager.local_library.items():
-            if data.get("title") == title:
-                local_path = path
-                is_playlist = data.get("is_playlist", False)
-                break
-
-        if not local_path:
-            messagebox.showerror("File Error", "The audio file could not be found on your disk.")
-            return
-
-        if not is_playlist and not os.path.exists(local_path):
-            messagebox.showerror("File Error", "The audio file could not be found on your disk.")
-            return
-
-        if self.file_path == local_path:
-            self.play_chapter()
-            return
-
-        self.stop_audio()
-
-        self.metadata_manager.fetch_display_metadata(local_path) # Use local_path in master_play
-        
-        self.handle_action_on_selected("play")
 
     def manage_library_folders_prompt(self):
         """Opens a UI dialog to manage the background scanner's watched folders."""
@@ -1892,165 +1692,6 @@ class AAXManagerApp:
         
         ttk.Button(btn_frame, text="Save & Scan", command=save_folders).pack(side=tk.RIGHT)
         ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(0, 5))
-
-    def load_file_prompt(self):
-        filepath = filedialog.askopenfilename(filetypes=[("Audiobooks", "*.aax *.m4b")])
-        if filepath:
-            self.load_specific_file(filepath)
-
-    def load_specific_file(self, filepath):
-        self.file_path = filepath
-        is_encrypted = filepath.endswith(".aax") or filepath.endswith(".aaxc")
-        
-        # --- 1. Clear ghost state immediately to prevent UI hanging on the old book ---
-        self.playback.chapters = []
-        self.playback.current_chapter_idx = 0
-        self.playback.current_play_time = 0.0
-        self.playback.chapter_duration = 0.0
-        self.update_info() 
-        
-        self.ui_state.dl_status.set("Analyzing...")
-        self.root.update()
-        
-        local_data = self.library_manager.local_library.get(filepath, {})
-        
-        if hasattr(self, 'player_cover_lbl'):
-            asin = local_data.get("asin")
-            cover_path = None
-            if asin:
-                cp = os.path.join(self.covers_dir, f"{asin}.jpg")
-                if os.path.exists(cp):
-                    cover_path = cp
-                    
-            if cover_path:
-                try:
-                    from PIL import Image, ImageTk
-                    thumb = Image.open(cover_path)
-                    thumb.thumbnail((45, 45), Image.Resampling.LANCZOS)
-                    thumb_photo = ImageTk.PhotoImage(thumb)
-                    self.player_cover_lbl.config(image=thumb_photo, width=45, height=45)
-                    self.player_cover_lbl.image = thumb_photo # Prevent garbage collection
-                except Exception:
-                    self.player_cover_lbl.config(image="", width=0, height=0)
-            else:
-                self.player_cover_lbl.config(image="", width=0, height=0)
-            if hasattr(self, 'btn_compact'):
-                self.btn_compact.config(state=tk.NORMAL)
-        if is_encrypted:
-            success, error_msg = self.verify_bytes(self.file_path)
-            if not success:
-                self.ui_state.dl_status.set("Verification Failed")
-                messagebox.showerror("Audio Processing Error", f"Failed to process the file. Reason:\n\n{error_msg}")
-                self.file_path = ""
-                return
-
-        # --- 2. Database Chapter Caching ---
-        cached_chapters = local_data.get("chapters")
-        
-        if cached_chapters:
-            # Instant load from cache
-            self.playback.chapters = cached_chapters
-        else:
-            # First time load: Run ffprobe and cache the result
-            self.ui_state.dl_status.set(f"Extracting chapters: {os.path.basename(self.file_path)}")
-            self.root.update()
-            
-            self.playback.chapters = self.extract_chapters(self.file_path)
-            
-            local_data["chapters"] = self.playback.chapters
-            self.library_manager.local_library[filepath] = local_data
-            self.library_manager.db.save_local_db(self.library_manager.local_library)
-
-        self.ui_state.dl_status.set(f"Ready: {os.path.basename(self.file_path)}")
-        
-        # --- 3. Moved dummy chapter generation here so it evaluates properly ---
-        if not self.playback.chapters:
-            self.logger.info("No chapters found in file. Generating dummy master chapter.")
-            duration_sec = local_data.get("duration_min", 0) * 60
-            
-            if duration_sec <= 0:
-                try:
-                    duration_sec = self.converter.get_duration(self.file_path)
-                except Exception:
-                    duration_sec = 86400 
-                    
-            self.playback.chapters = [{
-                "id": 0,
-                "start_time": "0.000000",
-                "end_time": str(duration_sec),
-                "tags": {"title": "Full Audiobook"}
-            }]
-            
-        # --- 4. Resume time-syncing logic ---
-        abs_pos = None
-        if "progress" in local_data and self.active_profile in local_data["progress"]:
-            abs_pos = local_data["progress"][self.active_profile]
-        elif "last_position" in local_data:
-            abs_pos = local_data["last_position"]
-            
-        if abs_pos is not None:
-            found_chap = 0
-            for i, chap in enumerate(self.playback.chapters):
-                start = float(chap.get("start_time", 0))
-                end = float(chap.get("end_time", 0))
-                if start <= abs_pos < end:
-                    found_chap = i
-                    break
-                if i == len(self.playback.chapters) - 1 and abs_pos >= end:
-                    found_chap = i
-                    
-            self.playback.current_chapter_idx = found_chap
-            self.playback.current_play_time = max(0.0, abs_pos - float(self.playback.chapters[found_chap].get("start_time", 0)))
-        else:
-            self.playback.current_chapter_idx = local_data.get("last_chapter", 0)
-            self.playback.current_play_time = local_data.get("last_time", 0.0)
-        
-        if self.playback.current_chapter_idx >= len(self.playback.chapters):
-            self.playback.current_chapter_idx = 0
-            self.playback.current_play_time = 0.0
-            
-        self.update_info()
-        
-        chapter = self.playback.chapters[self.playback.current_chapter_idx]
-        self.playback.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
-        
-        curr_str = self.format_time(self.playback.current_play_time)
-        dur_str = self.format_time(self.playback.chapter_duration)
-        self.time_label.config(text=f"{curr_str} / {dur_str}")
-        percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
-        self.ui_state.playback_progress.set(percent)
-
-        self.metadata_manager.fetch_display_metadata(filepath)
-        self.bookmarks_presenter.refresh_bookmarks_ui()
-
-    def verify_bytes(self, filepath):
-        cmd = ["ffmpeg", "-v", "error"]
-        
-        
-        local_data = self.library_manager.local_library.get(filepath, {})
-        auth_bytes = self.ui_state.auth_bytes.get().strip()
-        
-        drm_flags = self.api_client.get_drm_flags(
-            filepath=filepath, 
-            local_data=local_data, 
-            active_profile=self.active_profile, 
-            auth_bytes=auth_bytes, 
-            data_dir=self.db.data_dir, 
-            logger=self.logger
-        )
-        cmd.extend(drm_flags)
-        
-        
-        cmd.extend(["-i", filepath, "-t", "0.1", "-f", "null", "-"])
-        try:
-            result = ProcessRunner.run_blocking(cmd)
-            if result.returncode != 0:
-                return False, result.stderr if result.stderr else "FFmpeg rejected the file."
-            return True, ""
-        except FileNotFoundError:
-            return False, "FFmpeg is missing!"
-        except Exception as e:
-            return False, str(e)
         
     def start_convert_thread(self, target_path=None):
         # Fallback for backwards compatibility
@@ -2119,68 +1760,6 @@ class AAXManagerApp:
             
         self.conversion_manager.convert_batch(to_convert)
 
-    def extract_chapters(self, filepath):
-        metadata = self.converter.get_metadata_and_chapters(filepath)
-        return metadata.get("chapters", [])
-
-    def play_chapter(self):
-        if not self.file_path or not self.playback.chapters: return
-        
-        # 1. Update UI Info
-        chapter = self.playback.chapters[self.playback.current_chapter_idx]
-        self.playback.chapter_duration = float(chapter.get("end_time", 0)) - float(chapter.get("start_time", 0))
-        self.update_info()
-        
-        # 2. Resume playback
-        self.playback.is_paused = False
-        self.resume_playback()
-
-    def resume_playback(self):
-        local_data = self.library_manager.local_library.get(self.file_path, {})
-        is_playlist = local_data.get("is_playlist", False)
-        
-        if is_playlist and self.playback.chapters:
-            chapter = self.playback.chapters[self.playback.current_chapter_idx]
-            physical_file = chapter.get("file_path", self.file_path)
-            self.playback.file_path = physical_file
-            self.playback.is_playlist = True
-        else:
-            self.playback.file_path = self.file_path
-            self.playback.is_playlist = False
-
-        drm_flags = self.api_client.get_drm_flags(self.file_path, local_data, self.active_profile, self.ui_state.auth_bytes.get().strip(), self.db.data_dir) if self.file_path.endswith((".aax", ".aaxc")) else None
-        
-        # Make sure the controller has the latest UI settings before playing
-        self.playback.set_speed(float(self.ui_state.playback_speed.get().replace("x", "")))
-        self.playback.set_volume(int(self.ui_state.volume.get()))
-        
-        # Tell the controller to spin up FFplay
-        self.playback.play(
-            voice_boost=self.ui_state.voice_boost.get(),
-            skip_silence=self.ui_state.skip_silence.get(),
-            drm_flags=drm_flags
-        )
-        
-        self.playback.is_playing = True
-
-    def pause_audio(self):
-        if self.playback.is_playing:
-            self.playback.pause()
-            self.playback.is_playing = False
-            self.playback.is_paused = True
-            
-            curr_str = self.format_time(self.playback.current_play_time)
-            dur_str = self.format_time(self.playback.chapter_duration)
-            self.time_label.config(text=f"{curr_str} / {dur_str}")
-            
-            self.save_playback_state()
-
-    def stop_audio(self):
-        self.playback.stop()
-        self.playback.is_playing = False
-        self.playback.is_paused = False
-        self.save_playback_state()
-
     def cancel_active_task(self):
         """Global button: Cancels all active imports, conversions, and downloads."""
         self.converter.cancel()
@@ -2198,112 +1777,3 @@ class AAXManagerApp:
             
         self.root.after(2000, lambda: self.action_router.update_global_status("All tasks cancelled."))
         self.root.after(5000, self.action_router.reset_ui_if_idle)
-
-    def seek_audio(self, offset):
-        result = self.playback.seek(offset)
-        
-        if result == "NEXT_CHAPTER":
-            self.next_chapter()
-            return # next_chapter handles playback and UI resumption natively
-        
-        # Update the Title/Info label in case the chapter changed
-        self.update_info() 
-        
-        if result == "RESTART_PLAYBACK":
-            self.resume_playback()
-            
-        # If paused, update the UI visually (if playing, the background tick will handle it)
-        if self.playback.is_paused:
-            curr_str = self.format_time(self.playback.current_play_time)
-            dur_str = self.format_time(self.playback.chapter_duration)
-            self.time_label.config(text=f"{curr_str} / {dur_str}")
-            percent = (self.playback.current_play_time / self.playback.chapter_duration) * 100 if self.playback.chapter_duration > 0 else 0
-            self.ui_state.playback_progress.set(percent)
-
-    def on_progress_click(self, event):
-        if not hasattr(self, 'chapter_duration') or self.playback.chapter_duration <= 0:
-            return
-            
-        # Calculate percentage based on where the mouse clicked relative to the width
-        click_x = event.x
-        bar_width = self.progress_bar.winfo_width()
-        
-        if bar_width > 0:
-            percent = click_x / bar_width
-            target_time = self.playback.chapter_duration * percent
-            
-            # Since your seek method takes an offset, we calculate the difference
-            offset = target_time - self.playback.current_play_time
-            self.seek_audio(offset)
-
-    def on_speed_change(self, event=None):
-        speed_val = float(self.ui_state.playback_speed.get().replace("x", ""))
-        self.playback.set_speed(speed_val)
-        
-        # FFplay requires a restart to change speed mid-stream
-        if self.playback.is_playing:
-            self.pause_audio()
-            self.playback.is_paused = False
-            self.resume_playback()
-
-    def on_volume_change(self, event=None):
-        self.playback.set_volume(int(self.ui_state.volume.get()))
-        # Only restart if we are on Mac/Linux (Windows changes it dynamically via pycaw)
-        if os.name != 'nt' and self.playback.is_playing:
-            self.pause_audio()
-            self.playback.is_paused = False
-            self.resume_playback()
-
-    def format_time(self, seconds):
-        m, s = divmod(int(seconds), 60)
-        h, m = divmod(m, 60)
-        if h > 0: return f"{h:02d}:{m:02d}:{s:02d}"
-        return f"{m:02d}:{s:02d}"
-
-    def next_chapter(self):
-        self.save_playback_state()
-        
-        if self.playback.next_chapter():
-            if self.sleep_mode == "chapters":
-                self.sleep_chapters_remaining -= 1
-                if self.sleep_chapters_remaining <= 0:
-                    self.sleep_mode = None
-                    self.timer_btn.config(text="Sleep: Off")
-                    self.logger.info("Sleep timer (chapters) finished. Pausing playback.")
-                    
-                    self.playback.is_paused = True
-                    self.update_info()
-                    curr_str = self.format_time(self.playback.current_play_time)
-                    dur_str = self.format_time(self.playback.chapter_duration)
-                    self.time_label.config(text=f"{curr_str} / {dur_str}")
-                    self.ui_state.playback_progress.set(0)
-                    return
-                else:
-                    self.timer_btn.config(text=f"Sleep: {self.sleep_chapters_remaining} ch")
-
-            self.playback.is_paused = False
-            self.update_info()
-            self.resume_playback()
-            
-        else:
-            # Controller reported False (we were on the last chapter)
-            self.stop_audio()
-            self.stats_manager.add_stat("books_finished", 1)
-            self.info_label.config(text="Finished Book")
-
-    def prev_chapter(self):
-        self.save_playback_state()
-        
-        # 1. Ask the controller to revert its state
-        self.playback.prev_chapter()
-
-        
-        # 3. Resume playing
-        self.playback.is_paused = False
-        self.update_info()
-        self.resume_playback()
-
-    def update_info(self):
-        if self.playback.chapters:
-            title = self.playback.chapters[self.playback.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.playback.current_chapter_idx + 1}")
-            self.info_label.config(text=f"Playing:\n{title}")
