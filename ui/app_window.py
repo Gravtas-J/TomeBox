@@ -53,7 +53,7 @@ from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
 from ui.bookmarks_presenter import BookmarksPresenter
 from ui.action_router import ActionRouter
 from ui.import_session import ImportSession
-
+from ui.palette_controller import PaletteController
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
@@ -116,6 +116,7 @@ class AAXManagerApp:
         self.action_router = ActionRouter(self)
         self.bookmarks_presenter = BookmarksPresenter(self)
         self.import_session = ImportSession(self)
+        self.palette_controller = PaletteController(self)
 
         self.root.dnd_bind('<<Drop>>', self.import_session.on_file_drop)
         self.base_dir = base_dir  
@@ -951,9 +952,6 @@ class AAXManagerApp:
                 self.add_queue_ui_row(item["asin"], item["title"])
                 
             self.download_manager.queue_batch(missing_items, save_dir)
-
-    def apply_classic_palette(self, palette_name):
-        apply_theme(self, palette_name)
 
     def toggle_library_view(self):
         if self.current_view_mode == "list":

@@ -220,7 +220,7 @@ def run_gui(base_dir):
     # 2. Run the heavy initializations
     app = AAXManagerApp(root, base_dir)
     saved_palette = app.settings.get("classic_palette", "dark")
-    app.apply_classic_palette(saved_palette)
+    app.palette_controller.apply_palette(saved_palette)
     
     # 3. Tear down the splash and reveal the main app
     if splash:
