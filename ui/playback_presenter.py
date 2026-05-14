@@ -7,7 +7,9 @@ from core.utils.process_runner import ProcessRunner
 class PlaybackPresenter:
     def __init__(self, app):
         self.app = app
-
+        self.view = None
+    def set_view(self, view):
+        self.view = view
     # --- Callbacks ---
     def on_playback_error(self, error_code):
         def update():
@@ -28,7 +30,7 @@ class PlaybackPresenter:
             
             curr_str = self.format_time(current_time)
             dur_str = self.format_time(total_time)
-            self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+            self.view.time_label.config(text=f"{curr_str} / {dur_str}")
 
             self.app.session_listen_buffer += real_time_delta
             if self.app.session_listen_buffer >= 60.0:
@@ -75,7 +77,7 @@ class PlaybackPresenter:
                     self.update_info()
                     curr_str = self.format_time(self.app.playback.current_play_time)
                     dur_str = self.format_time(self.app.playback.chapter_duration)
-                    self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+                    self.view.time_label.config(text=f"{curr_str} / {dur_str}")
                     
                     percent = (self.app.playback.current_play_time / self.app.playback.chapter_duration) * 100 if self.app.playback.chapter_duration > 0 else 0
                     self.app.ui_state.playback_progress.set(percent)
@@ -108,7 +110,7 @@ class PlaybackPresenter:
         
         local_data = self.app.library_manager.local_library.get(filepath, {})
         
-        if hasattr(self.app, 'player_cover_lbl'):
+        if hasattr(self.view, 'player_cover_lbl'):
             asin = local_data.get("asin")
             cover_path = None
             if asin:
@@ -121,14 +123,14 @@ class PlaybackPresenter:
                     thumb = Image.open(cover_path)
                     thumb.thumbnail((45, 45), Image.Resampling.LANCZOS)
                     thumb_photo = ImageTk.PhotoImage(thumb)
-                    self.app.player_cover_lbl.config(image=thumb_photo, width=45, height=45)
-                    self.app.player_cover_lbl.image = thumb_photo 
+                    self.view.player_cover_lbl.config(image=thumb_photo, width=45, height=45)
+                    self.view.player_cover_lbl.image = thumb_photo 
                 except Exception:
-                    self.app.player_cover_lbl.config(image="", width=0, height=0)
+                    self.view.player_cover_lbl.config(image="", width=0, height=0)
             else:
-                self.app.player_cover_lbl.config(image="", width=0, height=0)
-            if hasattr(self.app, 'btn_compact'):
-                self.app.btn_compact.config(state=tk.NORMAL)
+                self.view.player_cover_lbl.config(image="", width=0, height=0)
+            if hasattr(self.view, 'btn_compact'):
+                self.view.btn_compact.config(state=tk.NORMAL)
                 
         if is_encrypted:
             success, error_msg = self.verify_bytes(self.app.file_path)
@@ -194,7 +196,7 @@ class PlaybackPresenter:
         
         curr_str = self.format_time(self.app.playback.current_play_time)
         dur_str = self.format_time(self.app.playback.chapter_duration)
-        self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+        self.view.time_label.config(text=f"{curr_str} / {dur_str}")
         percent = (self.app.playback.current_play_time / self.app.playback.chapter_duration) * 100 if self.app.playback.chapter_duration > 0 else 0
         self.app.ui_state.playback_progress.set(percent)
 
@@ -317,7 +319,7 @@ class PlaybackPresenter:
             
             curr_str = self.format_time(self.app.playback.current_play_time)
             dur_str = self.format_time(self.app.playback.chapter_duration)
-            self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+            self.view.time_label.config(text=f"{curr_str} / {dur_str}")
             self.save_playback_state()
 
     def stop_audio(self):
@@ -341,17 +343,17 @@ class PlaybackPresenter:
         if self.app.playback.is_paused:
             curr_str = self.format_time(self.app.playback.current_play_time)
             dur_str = self.format_time(self.app.playback.chapter_duration)
-            self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+            self.view.time_label.config(text=f"{curr_str} / {dur_str}")
             percent = (self.app.playback.current_play_time / self.app.playback.chapter_duration) * 100 if self.app.playback.chapter_duration > 0 else 0
             self.app.ui_state.playback_progress.set(percent)
 
     def on_progress_click(self, event):
-        if not hasattr(self.app, 'progress_bar') or self.app.playback.chapter_duration <= 0: 
+        if not hasattr(self.view, 'progress_bar') or self.app.playback.chapter_duration <= 0: 
             return
         
         # Calculate true X relative to the widget's absolute screen position
-        click_x = event.x_root - self.app.progress_bar.winfo_rootx()
-        bar_width = self.app.progress_bar.winfo_width()
+        click_x = event.x_root - self.view.progress_bar.winfo_rootx()
+        bar_width = self.view.progress_bar.winfo_width()
         
         if bar_width > 0:
             percent = click_x / bar_width
@@ -389,25 +391,25 @@ class PlaybackPresenter:
                 self.app.sleep_chapters_remaining -= 1
                 if self.app.sleep_chapters_remaining <= 0:
                     self.app.sleep_mode = None
-                    self.app.timer_btn.config(text="Sleep: Off")
+                    self.view.timer_btn.config(text="Sleep: Off")
                     self.app.logger.info("Sleep timer (chapters) finished. Pausing playback.")
                     
                     self.app.playback.is_paused = True
                     self.update_info()
                     curr_str = self.format_time(self.app.playback.current_play_time)
                     dur_str = self.format_time(self.app.playback.chapter_duration)
-                    self.app.time_label.config(text=f"{curr_str} / {dur_str}")
+                    self.view.time_label.config(text=f"{curr_str} / {dur_str}")
                     self.app.ui_state.playback_progress.set(0)
                     return
                 else:
-                    self.app.timer_btn.config(text=f"Sleep: {self.app.sleep_chapters_remaining} ch")
+                    self.view.timer_btn.config(text=f"Sleep: {self.app.sleep_chapters_remaining} ch")
 
             self.app.playback.is_paused = False
             self.update_info()
             self.app.root.after(200, self.resume_playback)
         else:
             self.app.stats_manager.add_stat("books_finished", 1)
-            self.app.info_label.config(text="Finished Book")
+            self.view.info_label.config(text="Finished Book")
 
     def prev_chapter(self):
         self.save_playback_state()
@@ -421,7 +423,7 @@ class PlaybackPresenter:
     def update_info(self):
         if self.app.playback.chapters:
             title = self.app.playback.chapters[self.app.playback.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.app.playback.current_chapter_idx + 1}")
-            self.app.info_label.config(text=f"Playing:\n{title}")
+            self.view.info_label.config(text=f"Playing:\n{title}")
 
     # --- Sleep Timer ---
     def set_sleep_timer(self, mode, value=0):
@@ -435,31 +437,31 @@ class PlaybackPresenter:
 
         if mode == "off" or val <= 0:
             self.app.sleep_mode = None
-            self.app.timer_btn.config(text="Sleep: Off")
+            self.view.timer_btn.config(text="Sleep: Off")
             return
             
         self.app.sleep_mode = mode
         if mode == "time":
             self.app.sleep_timer_seconds = val * 60
-            self.app.timer_btn.config(text=f"Sleep: {self.format_time(self.app.sleep_timer_seconds)}")
+            self.view.timer_btn.config(text=f"Sleep: {self.format_time(self.app.sleep_timer_seconds)}")
             self.sleep_timer_tick()
         elif mode == "chapters":
             self.app.sleep_chapters_remaining = val
             text = "End of Chapter" if val == 1 else f"Sleep: {val} ch"
-            self.app.timer_btn.config(text=text)
+            self.view.timer_btn.config(text=text)
 
     def sleep_timer_tick(self):
         if self.app.sleep_mode != "time": return
         if self.app.sleep_timer_seconds <= 0:
             self.app.sleep_mode = None
-            self.app.timer_btn.config(text="Sleep: Off")
+            self.view.timer_btn.config(text="Sleep: Off")
             if self.app.playback.is_playing:
                 self.app.logger.info("Sleep timer finished. Pausing.")
                 self.pause_audio()
             return
             
         self.app.sleep_timer_seconds -= 1
-        self.app.timer_btn.config(text=f"Sleep: {self.format_time(self.app.sleep_timer_seconds)}")
+        self.view.timer_btn.config(text=f"Sleep: {self.format_time(self.app.sleep_timer_seconds)}")
         self.app._sleep_timer_id = self.app.root.after(1000, self.sleep_timer_tick)
 
     def on_sleep_timer_set(self, event=None):

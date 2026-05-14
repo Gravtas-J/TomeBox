@@ -31,7 +31,8 @@ from api.audible_client import AudibleClient
 from ui.components.dialogs import open_auth_window, show_achievement_toast, open_pairing_window, open_error_log_window, open_cover_modal
 from ui.components.theme import apply_theme
 from ui.components.menu_bar import setup_menu_bar
-from ui.components.player_bar import setup_player_bar
+from ui.components.player_bar import PlayerBarView
+from ui.components.dialogs import open_sleep_menu, open_chapter_window
 from ui.components.library_view import setup_library_view
 from ui.components.sidebar import setup_sidebar
 
@@ -866,9 +867,116 @@ class AAXManagerApp:
         from ui.components.dialogs import open_match_to_audible_window
         open_match_to_audible_window(self, filepath)
 
+    def toggle_compact_mode(self):
+        if not getattr(self, 'file_path', None): return
+        is_compact = self.settings.get("compact_player", False)
+        new_state = not is_compact
+        self.settings["compact_player"] = new_state
+        if hasattr(self, 'db'): self.db.save_settings(self.settings)
+        self._apply_compact_state(new_state)
+
+    def _apply_compact_state(self, is_compact):
+        import os
+        from PIL import Image, ImageTk, ImageOps
+
+        if is_compact:
+            self._saved_menu = self.root.cget("menu")
+            self.root.config(menu="")
+
+            self._was_zoomed = (self.root.state() == 'zoomed')
+            if self._was_zoomed: self.root.state('normal')
+            self.root.resizable(False, False)
+            if not getattr(self, '_booting_compact', False):
+                self._pre_compact_geom = self.root.geometry()
+
+            self._hidden_pack_slaves = []
+            self._hidden_grid_slaves = []
+
+            for widget in self.root.pack_slaves():
+                if widget != self.player_bar.play_frame and widget != getattr(self, 'compact_cover_lbl', None):
+                    self._hidden_pack_slaves.append((widget, widget.pack_info()))
+                    widget.pack_forget()
+
+            for widget in self.root.grid_slaves():
+                if widget != self.player_bar.play_frame and widget != getattr(self, 'compact_cover_lbl', None):
+                    self._hidden_grid_slaves.append((widget, widget.grid_info()))
+                    widget.grid_forget()
+
+            style = ttk.Style()
+            bg_color = style.lookup("TFrame", "background") or "#2b2b2b"
+            if bg_color == "": bg_color = "#2b2b2b" 
+            
+            if not hasattr(self, 'compact_cover_lbl'):
+                self.compact_cover_lbl = tk.Label(self.root, bg=bg_color)
+            else:
+                self.compact_cover_lbl.config(bg=bg_color)
+
+            self.compact_cover_lbl.pack(side=tk.TOP, fill="both", expand=True)
+
+            self.player_bar.apply_compact_layout()
+
+            cover_path = None
+            if hasattr(self, 'file_path') and self.file_path:
+                local_data = self.library_manager.local_library.get(self.file_path, {})
+                asin = local_data.get("asin")
+                if asin:
+                    cp = os.path.join(self.covers_dir, f"{asin}.jpg")
+                    if os.path.exists(cp): cover_path = cp
+
+            if cover_path:
+                try:
+                    img = Image.open(cover_path).convert("RGB")
+                    img = ImageOps.fit(img, (450, 450), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+                    photo = ImageTk.PhotoImage(img)
+                    self.compact_cover_lbl.config(image=photo)
+                    self.compact_cover_lbl.image = photo 
+                except Exception:
+                    self.compact_cover_lbl.config(image="")
+            else:
+                self.compact_cover_lbl.config(image="")
+
+            self.root.geometry("450x610")
+
+        else:
+            if hasattr(self, '_saved_menu') and self._saved_menu:
+                self.root.config(menu=self._saved_menu)
+            self.root.resizable(True, True)
+
+            if hasattr(self, 'compact_cover_lbl'):
+                self.compact_cover_lbl.pack_forget()
+
+            if hasattr(self, '_hidden_pack_slaves'):
+                for widget, info in self._hidden_pack_slaves:
+                    try: widget.pack(**info)
+                    except Exception: pass
+            if hasattr(self, '_hidden_grid_slaves'):
+                for widget, info in self._hidden_grid_slaves:
+                    try: widget.grid(**info)
+                    except Exception: pass
+
+            self.player_bar.apply_standard_layout()
+
+            if hasattr(self, '_pre_compact_geom'):
+                self.root.geometry(self._pre_compact_geom)
+
+            if getattr(self, '_was_zoomed', False):
+                self.root.state('zoomed')
+                
     def setup_ui(self):
         setup_menu_bar(self)
-        setup_player_bar(self)
+        self.player_bar = PlayerBarView(
+            parent_root=self.root,
+            ui_state=self.ui_state,
+            playback_presenter=self.playback_presenter,
+            bookmarks_presenter=self.bookmarks_presenter,
+            settings=self.settings,
+            callbacks={
+                'toggle_compact': self.toggle_compact_mode,
+                'open_chapter': lambda: open_chapter_window(self),
+                'open_sleep': lambda: open_sleep_menu(self),
+                'on_filter_change': self.on_filter_change
+            }
+        )
         import sys
         if sys.platform == 'darwin':
             try:
