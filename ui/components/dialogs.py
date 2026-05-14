@@ -58,7 +58,7 @@ def open_error_log_window(app):
             tree.delete(iid)
         
         # Update button count on the main window
-        app.error_btn_var.set(f"Errors ({len(app.failed_tasks)})")
+        app.ui_state.error_btn.set(f"Errors ({len(app.failed_tasks)})")
         if not app.failed_tasks:
             app.error_btn.config(state=tk.DISABLED)
             win.destroy()
@@ -71,7 +71,7 @@ def open_error_log_window(app):
     
     def clear_all():
         app.failed_tasks.clear()
-        app.error_btn_var.set("Errors (0)")
+        app.ui_state.error_btn.set("Errors (0)")
         app.error_btn.config(state=tk.DISABLED)
         win.destroy()
         
@@ -155,7 +155,7 @@ def open_auth_window(app):
     reg_frame.pack(fill="x", pady=5)
     ttk.Label(reg_frame, text="Region:").pack(side=tk.LEFT, padx=5)
     
-    reg_combo = ttk.Combobox(reg_frame, textvariable=app.locale, values=["us", "uk", "au", "ca", "de", "fr", "jp"], state="readonly", width=5)
+    reg_combo = ttk.Combobox(reg_frame, textvariable=app.ui_state.locale, values=["us", "uk", "au", "ca", "de", "fr", "jp"], state="readonly", width=5)
     reg_combo.pack(side=tk.LEFT)
 
     btn_frame = ttk.Frame(auth_frame)
@@ -180,7 +180,7 @@ def open_auth_window(app):
 
     bytes_frame = ttk.LabelFrame(main_frame, text="Decryption Bytes", padding=10)
     bytes_frame.pack(fill="x", pady=10)
-    ttk.Entry(bytes_frame, textvariable=app.auth_bytes, justify="center").pack(fill="x", pady=5)
+    ttk.Entry(bytes_frame, textvariable=app.ui_state.auth_bytes, justify="center").pack(fill="x", pady=5)
     
     ttk.Button(main_frame, text="Close", command=app.auth_window.destroy).pack(pady=(10, 0))
 

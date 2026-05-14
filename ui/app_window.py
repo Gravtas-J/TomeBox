@@ -51,6 +51,8 @@ from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
 
+from ui.action_router import ActionRouter
+
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}{os.pathsep}{mac_paths}"
 bundled_bin_dir = get_resource_path("bin")
@@ -118,8 +120,6 @@ class AAXManagerApp:
         self.api_client = AudibleClient()
         self.library_manager = LibraryManager(self.db, self.api_client, self.base_dir)
 
-        self.library_manager.on_queue_empty_cb = self._on_import_queue_empty
-
         # 2. Setup Assets (Icons are in the ui folder)
         icon_ico = get_resource_path("ui", "tomebox.ico")
         icon_png = get_resource_path("ui", "tomebox.png")
@@ -165,13 +165,8 @@ class AAXManagerApp:
             api_client=self.api_client,
             logger=self.logger,
             library_manager=self.library_manager,
-            thread_pool=self.thread_pool,  
-            callbacks={
-                "on_status": self._on_dl_status,
-                "on_progress": self._on_dl_progress,
-                "on_complete": self._on_dl_complete,
-                "on_batch_finish": self._on_dl_batch_finish
-            }
+            thread_pool=self.thread_pool,
+            callbacks={}
         )
         self.metadata_manager = MetadataManager(
             api_client=self.api_client,
@@ -179,12 +174,7 @@ class AAXManagerApp:
             logger=self.logger,
             covers_dir=self.covers_dir,
             thread_pool=self.thread_pool,
-            callbacks={
-                "on_search_complete": self._on_scrape_search_results,
-                "on_apply_complete": self._on_scrape_apply_complete,
-                "on_display_ready": self._on_display_metadata_ready,
-                "on_error": self._on_scrape_error
-            }
+            callbacks={}
         )
         self.conversion_manager = ConversionManager(
             converter=self.converter,
@@ -195,13 +185,7 @@ class AAXManagerApp:
             get_drm_flags_cb=lambda path: self.api_client.get_drm_flags(
                 path, self.library_manager.local_library.get(path, {}), self.active_profile, self.ui_state.auth_bytes.get().strip(), self.db.data_dir, self.logger
             ),
-            callbacks={
-                "on_status": lambda msg: self.root.after(0, self.update_global_status, msg),
-                "on_progress": lambda pct: self.root.after(0, self.update_global_progress, pct),
-                "on_complete": lambda msg: self.root.after(0, lambda: messagebox.showinfo("Conversion Success", msg)),
-                "on_error": self._on_task_error, 
-                "on_refresh_required": lambda: self.root.after(0, self.refresh_library_ui)
-            }
+            callbacks={}
         )
         self.playback = PlaybackController(
             logger=self.logger,
@@ -269,6 +253,8 @@ class AAXManagerApp:
         self.tray_icon = None
         self.browser_login_btn = None
 
+        self.action_router = ActionRouter(self)
+
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
 
@@ -330,26 +316,6 @@ class AAXManagerApp:
                 )
         self.root.after(0, update)
 
-    def _on_import_status(self, task_id, msg):
-        self.root.after(0, lambda tid=task_id, m=msg: self._on_dl_status(tid, m, is_global=False))
-        self.root.after(0, lambda m=msg: self.update_global_status(m))
-
-    def _on_import_progress(self, task_id, pct):
-        self.root.after(0, lambda tid=task_id, p=pct: self._on_dl_progress(tid, p, is_global=False))
-        self.root.after(0, lambda p=pct: self.update_global_progress(p))
-
-    def remove_queue_ui_row(self, task_id):
-        if task_id in self.queue_ui_elements:
-            self.queue_ui_elements[task_id]["frame"].destroy()
-            del self.queue_ui_elements[task_id]
-        
-        # If the queue is entirely empty, naturally close the drawer
-        if not self.queue_ui_elements:
-            self.toggle_queue_drawer(False)
-
-    def _schedule_row_removal(self, task_id):
-        self.root.after(3000, lambda: self.remove_queue_ui_row(task_id))
-
     def cancel_task(self, task_id):
         """Unified method to cancel either an active import OR an active download from the queue drawer."""
         if str(task_id).startswith("import_"):
@@ -359,7 +325,7 @@ class AAXManagerApp:
             if getattr(self.library_manager, 'active_task_id', None) == task_id:
                 self.converter.cancel()
                 
-            self._on_dl_status(task_id, "Canceling...", is_global=False)
+            self.action_router.on_dl_status(task_id, "Canceling...", is_global=False)
         else:
             self.download_manager.cancel_download(task_id)
 
@@ -384,14 +350,14 @@ class AAXManagerApp:
                     self.library_manager.import_folder(
                         folder_path=path, converter=self.converter, active_profile=self.active_profile,
                         on_status_cb=lambda msg: self.root.after(0, self.ui_state.dl_status.set, msg),
-                        on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                        on_complete_cb=lambda c, t=0, p=path: self.action_router.on_import_finished(p, c, t),
                         logger=self.logger, on_progress_cb=lambda pct: self.root.after(0, lambda: self.ui_state.dl_progress.set(pct))
                     )
                 else:
                     self.library_manager.import_files(
                         file_paths=[path], converter=self.converter, active_profile=self.active_profile,
                         on_status_cb=lambda msg: self.root.after(0, self.ui_state.dl_status.set, msg),
-                        on_complete_cb=lambda c, t=0, p=path: self._on_import_finished(p, c, t),
+                        on_complete_cb=lambda c, t=0, p=path: self.action_router.on_import_finished(p, c, t),
                         logger=self.logger
                         # Removed on_progress_cb here too!
                     )
@@ -409,43 +375,6 @@ class AAXManagerApp:
         if hasattr(self, 'bm_tree'):
             for row in self.bm_tree.get_children():
                 self.bm_tree.delete(row)
-
-    def _on_import_finished(self, path, added_count, total_found=0, task_id=None):
-        self.system_manager.remove_pending_import(self.db.data_dir, path)
-        self._on_import_complete(added_count, total_found)
-        if task_id:
-            if task_id in getattr(self.library_manager, 'canceled_tasks', set()):
-                status = "Canceled"
-            else:
-                status = "Complete" if added_count > 0 else "Finished"
-            self._on_dl_status(task_id, status, is_global=False)
-            self._schedule_row_removal(task_id)
-        
-    def _on_import_queue_empty(self):
-        """Triggered only when the entire import queue is finished."""
-        def update():
-            self.update_global_status("All queued imports completed.")
-            self.root.bell()
-            self.root.after(3000, self.reset_ui_if_idle)
-        self.root.after(0, update)
-        
-    def _on_task_error(self, filepath, action_type, error_msg):
-        """Catches errors from background threads and pushes them to the log."""
-        def update():
-            self.failed_tasks.append({
-                "path": filepath, 
-                "action": action_type, 
-                "error": error_msg
-            })
-            
-            # Wake up the Error button
-            self.ui_state.error_btn.set(f"Errors ({len(self.failed_tasks)})")
-            self.error_btn.config(state=tk.NORMAL)
-            
-            # Bounce the status text momentarily so they notice
-            self.ui_state.dl_status.set(f"Task failed: {os.path.basename(filepath)}")
-            self.root.after(4000, lambda: self.reset_ui_if_idle())
-        self.root.after(0, update)
 
     def open_error_log(self):
         """Bridge method to open the Error Log popup from dialogs.py"""
@@ -502,36 +431,6 @@ class AAXManagerApp:
         self.db.save_settings(self.settings)
         return folder
 
-    def _on_scrape_search_results(self, filepath, products):
-        """Called when the Audible search returns results."""
-        def update():
-            self.reset_ui_if_idle()
-            # We no longer call a global UI method here because 
-            # the unified Match dialog in dialogs.py handles its own search results!
-        self.root.after(0, update)
-
-    def _on_scrape_apply_complete(self, filepath, title):
-        """Called when FFmpeg finishes embedding tags."""
-        def update():
-            self.reset_ui_if_idle()
-            
-            # 1. Clear the image cache so Grid View is forced to load the new cover from disk
-            self.cover_cache.clear()
-            
-            # 2. Refresh the list/grid views with the new ASINs and Titles
-            self.refresh_library_ui()
-            
-            # 3. Force the right-hand side panel to immediately load the new cover and author data
-            self.metadata_manager.fetch_display_metadata(filepath)
-            
-            # 4. Reload the player if the user is currently listening to the file we just tagged
-            if self.file_path == filepath:
-                self.load_specific_file(filepath)
-                
-            messagebox.showinfo("Success", "Metadata scraped and applied!")
-            
-        self.root.after(0, update)
-
     def update_api_health(self, message, is_error=False):
         """Thread-safe update of the API health status label."""
         def update():
@@ -540,83 +439,6 @@ class AAXManagerApp:
             if is_error:
                 # Auto-reset the health indicator back to Online after the 60s cooldown expires
                 self.root.after(60000, lambda: self.ui_state.api_health.set("API: Online"))
-        self.root.after(0, update)
-
-    def _on_scrape_error(self, err_msg):
-        """Catches metadata scrape errors, maps them to plain text, and updates the UI."""
-        def update():
-            self.reset_ui_if_idle()
-            
-            err_lower = err_msg.lower()
-            
-            # Map technical errors to user-friendly messages
-            if "rate limit" in err_lower or "429" in err_lower:
-                user_msg = "Audible API rate limit reached. Pausing scrape for 60s."
-                self.update_api_health("Rate Limited", is_error=True)
-                
-            elif "timeout" in err_lower or "unavailable" in err_lower:
-                user_msg = "Metadata server unresponsive. Using local tags."
-                self.update_api_health("Offline", is_error=True)
-                
-            else:
-                user_msg = "Failed to fetch metadata. Using local tags."
-                self.update_api_health("Error", is_error=True)
-                
-            # Update the main task status bar to ensure the user sees it, 
-            # rather than throwing a disruptive messagebox popup.
-            self.ui_state.dl_status.set(user_msg)
-            
-            # Optionally, log the error trace silently to the log file via our new logger method
-            if hasattr(self, 'logger'):
-                self.logger.error(f"UI caught scrape error: {err_msg}")
-                
-        self.root.after(0, update)
-
-    def _on_dl_status(self, asin, status_text, is_global=False):
-        """Routes status text updates to either the global header or the specific queue row."""
-        def update():
-            if is_global:
-                self.update_global_status(status_text)
-            elif asin in self.queue_ui_elements:
-                self.queue_ui_elements[asin]["status_var"].set(status_text)
-        self.root.after(0, update)
-
-    def _on_dl_progress(self, asin, percent, is_global=False):
-        """Routes progress bar updates."""
-        def update():
-            if is_global:
-                self.update_global_progress(percent)
-            if asin in self.queue_ui_elements:
-                self.queue_ui_elements[asin]["prog_var"].set(percent)
-                self.queue_ui_elements[asin]["status_var"].set(f"{int(percent)}%")
-        self.root.after(0, update)
-
-    def _on_dl_complete(self, filepath, title, post_action):
-        """Called when a file successfully finishes saving to disk."""
-        def update():
-            self.stats_manager.add_stat("books_downloaded", 1)
-            self.refresh_library_ui()
-            
-            if post_action in ["play", "convert"]:
-                self.load_specific_file(filepath)
-                if post_action == "play":
-                    self.root.after(500, self.play_chapter)
-                elif post_action == "convert":
-                    self.root.after(500, self.start_convert_thread)
-        self.root.after(0, update)
-
-    def _on_dl_batch_finish(self):
-        """Called when the entire queue goes idle."""
-        def update():
-            self.update_global_status("All downloads completed.")
-            if hasattr(self, 'dl_all_btn'):
-                self.dl_all_btn.config(state=tk.NORMAL)
-            self.root.after(3000, self.reset_ui_if_idle)
-            
-            # Cleanup download rows when the batch finishes
-            for task_id in list(self.queue_ui_elements.keys()):
-                if not str(task_id).startswith("import_"):
-                    self.remove_queue_ui_row(task_id)
         self.root.after(0, update)
 
     def _on_playback_tick(self, current_time, total_time, real_time_delta):
@@ -775,10 +597,10 @@ class AAXManagerApp:
                     folder_path=path, 
                     converter=self.converter, 
                     active_profile=self.active_profile,
-                    on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                    on_status_cb=lambda msg, tid=task_id: self.action_router.on_import_status(tid, msg),
+                    on_complete_cb=lambda c, t=0, p=path, tid=task_id: self.action_router.on_import_finished(p, c, t, tid),
                     logger=self.logger, 
-                    on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+                    on_progress_cb=lambda pct, tid=task_id: self.action_router.on_import_progress(tid, pct),
                     task_id=task_id,
                     import_mode=import_mode
                 )
@@ -794,8 +616,8 @@ class AAXManagerApp:
                         file_paths=[path], 
                         converter=self.converter, 
                         active_profile=self.active_profile,
-                        on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-                        on_complete_cb=lambda c, t, p=path, tid=task_id: self._on_import_finished(p, c, t, tid),
+                        on_status_cb=lambda msg, tid=task_id: self.action_router.on_import_status(tid, msg),
+                        on_complete_cb=lambda c, t, p=path, tid=task_id: self.action_router.on_import_finished(p, c, t, tid),
                         logger=self.logger,
                         task_id=task_id
                     )
@@ -816,8 +638,8 @@ class AAXManagerApp:
         
         self.library_manager.import_files(
             file_paths=[filepath], converter=self.converter, active_profile=self.active_profile,
-            on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),
-            on_complete_cb=lambda c, t=0, p=filepath, tid=task_id: self._on_import_finished(p, c, t, tid),
+            on_status_cb=lambda msg, tid=task_id: self.action_router.on_import_status(tid, msg),
+            on_complete_cb=lambda c, t=0, p=filepath, tid=task_id: self.action_router.on_import_finished(p, c, t, tid),
             logger=self.logger,
             task_id=task_id
         )
@@ -858,30 +680,18 @@ class AAXManagerApp:
                 folder_path=folder, 
                 converter=self.converter, 
                 active_profile=self.active_profile,
-                on_status_cb=lambda msg, tid=task_id: self._on_import_status(tid, msg),  # parent header only
-                on_complete_cb=lambda c, t=0, p=folder, tid=task_id: self._on_import_finished(p, c, t, tid),
+                on_status_cb=lambda msg, tid=task_id: self.action_router.on_import_status(tid, msg),  # parent header only
+                on_complete_cb=lambda c, t=0, p=folder, tid=task_id: self.action_router.on_import_finished(p, c, t, tid),
                 logger=self.logger, 
-                on_progress_cb=lambda pct, tid=task_id: self._on_import_progress(tid, pct),
+                on_progress_cb=lambda pct, tid=task_id: self.action_router.on_import_progress(tid, pct),
                 task_id=task_id,
                 import_mode=import_mode,
-                on_book_start_cb=self._on_book_start,
-                on_book_progress_cb=self._on_book_progress,
-                on_book_complete_cb=self._on_book_complete,
+                on_book_start_cb=self.action_router.on_book_start,
+                on_book_progress_cb=self.action_router.on_book_progress,
+                on_book_complete_cb=self.action_router.on_book_complete,
             )
         except Exception as e:
             import traceback; traceback.print_exc()
-    def _on_book_start(self, sub_task_id, title):
-        self.root.after(0, lambda: self.add_queue_ui_row(sub_task_id, title))
-
-    def _on_book_progress(self, sub_task_id, pct):
-        self._on_dl_progress(sub_task_id, pct, is_global=False)
-
-    def _on_book_complete(self, sub_task_id, success):
-        status = "Complete" if success else "Failed"
-        self._on_dl_status(sub_task_id, status, is_global=False)
-        self._schedule_row_removal(sub_task_id)
-        if success:
-            self.root.after(0, self.refresh_library_ui)
     def bring_to_front(self):
         # 1. Un-hide it if it was minimized to the system tray
         self.root.deiconify()
@@ -1934,7 +1744,7 @@ class AAXManagerApp:
     def start_browser_login_thread(self):
         if self.browser_login_btn and self.browser_login_btn.winfo_exists():
             self.browser_login_btn.config(text="Connecting...", state=tk.DISABLED)
-        self.thread_pool.submit(self.browser_login_worker, self.locale.get())
+        self.thread_pool.submit(self.browser_login_worker, self.ui_state.locale.get())
 
     def browser_login_worker(self, locale):
         self.logger.info(f"Starting external browser login for region: {locale}")
@@ -2019,7 +1829,7 @@ class AAXManagerApp:
             self.logger.info(f"Successfully retrieved {len(self.library_manager.cloud_items)} library items.")
 
             self.root.after(0, self.refresh_library_ui)
-            self.root.after(0, lambda: self.reset_ui_if_idle())
+            self.root.after(0, lambda: self.action_router.reset_ui_if_idle())
 
             self.metadata_manager.sync_missing_covers(
                 on_complete_cb=lambda: self.root.after(0, lambda: self.refresh_library_ui() if self.current_view_mode == 'grid' else None)
@@ -2037,7 +1847,7 @@ class AAXManagerApp:
                 self.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
                 self.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
         finally:
-            self.root.after(0, self.reset_ui_if_idle)
+            self.root.after(0, self.action_router.reset_ui_if_idle)
 
     def remove_local_file(self):
         selected_items = self.library_tree.selection()
@@ -2071,37 +1881,6 @@ class AAXManagerApp:
             self._selected_local_path = None
         else:
             messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
-
-    def _on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
-        """Updates the side panel when the user clicks a book or a background scrape finishes."""
-        def update():
-            if getattr(self, '_selected_local_path', None) != filepath:
-                return
-                
-            self.author_label.config(text=authors)
-
-            local_data = self.library_manager.local_library.get(filepath, {})
-            asin = local_data.get("asin", "Unknown")
-            title = local_data.get("title", "Unknown")
-            
-            if cover_path and os.path.exists(cover_path):
-                try:
-                    img = Image.open(cover_path)
-                    img.thumbnail((400, 400))
-                    photo = ImageTk.PhotoImage(img)
-                    self.current_cover_photo = photo
-                    self.cover_label.config(image=photo, text="")
-                    
-                    self.cover_label.bind("<Button-1>", lambda e, a=asin, t=title, p=cover_path: open_cover_modal(self, a, t, explicit_path=p))
-                    
-                except Exception:
-                    self.cover_label.config(image="", text="Image Error")
-                    self.cover_label.unbind("<Button-1>")
-            else:
-                self.cover_label.config(image="", text=error_text)
-                self.cover_label.unbind("<Button-1>")
-                
-        self.root.after(0, update)
 
     def set_sleep_timer(self, mode, value=0):
 
@@ -2729,16 +2508,16 @@ class AAXManagerApp:
         self.system_manager.clear_all_pending_imports(self.db.data_dir)
         self.download_manager.cancel_all()
         
-        self.update_global_status("Cancelling all tasks...")
-        self.update_global_progress(0)
+        self.action_router.update_global_status("Cancelling all tasks...")
+        self.action_router.update_global_progress(0)
         
         # Mark all UI rows as Canceling
         for task_id in list(self.queue_ui_elements.keys()):
-            self._on_dl_status(task_id, "Canceling...", is_global=False)
-            self._schedule_row_removal(task_id)
+            self.action_router.on_dl_status(task_id, "Canceling...", is_global=False)
+            self.action_router._schedule_row_removal(task_id)
             
-        self.root.after(2000, lambda: self.update_global_status("All tasks cancelled."))
-        self.root.after(5000, self.reset_ui_if_idle)
+        self.root.after(2000, lambda: self.action_router.update_global_status("All tasks cancelled."))
+        self.root.after(5000, self.action_router.reset_ui_if_idle)
 
     def seek_audio(self, offset):
         result = self.playback.seek(offset)
@@ -2805,8 +2584,6 @@ class AAXManagerApp:
         self.save_playback_state()
         
         if self.playback.next_chapter():
-            
-            
             if self.sleep_mode == "chapters":
                 self.sleep_chapters_remaining -= 1
                 if self.sleep_chapters_remaining <= 0:
@@ -2850,25 +2627,3 @@ class AAXManagerApp:
         if self.playback.chapters:
             title = self.playback.chapters[self.playback.current_chapter_idx].get("tags", {}).get("title", f"Chapter {self.playback.current_chapter_idx + 1}")
             self.info_label.config(text=f"Playing:\n{title}")
-
-    def reset_ui_if_idle(self):
-        """Checks all background workers and only sets Idle if completely inactive."""
-        is_importing = getattr(self.library_manager, '_is_importing', False) or not self.library_manager.import_queue.empty()
-        is_downloading = getattr(self.download_manager, 'is_processing', False)
-        is_converting = getattr(self.converter, 'current_process', None) is not None
-        
-        if not is_importing and not is_downloading and not is_converting:
-            self.ui_state.dl_status.set("Idle")
-            self.ui_state.dl_progress.set(0)
-
-    def update_global_status(self, msg):
-        if msg in ["Idle", ""]:
-            self.reset_ui_if_idle()
-        else:
-            self.ui_state.dl_status.set(msg)
-
-    def update_global_progress(self, pct):
-        if pct == 0:
-            self.reset_ui_if_idle()
-        else:
-            self.ui_state.dl_progress.set(pct)    
