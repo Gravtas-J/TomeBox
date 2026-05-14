@@ -6,6 +6,8 @@ try:
     import audible
 except ImportError:
     pass
+
+import hashlib
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list
 from core.events import default_bus
@@ -162,7 +164,6 @@ class MetadataManager:
         if fields_to_apply is None:
             fields_to_apply = {"title": True, "author": True, "series": True, "cover": True}
             
-        import threading
         def worker():
             import requests
             import os
@@ -445,14 +446,6 @@ class MetadataManager:
     
     def fetch_display_metadata(self, filepath):
         """Fetches the cover art and author info for the side panel."""
-        import os
-        import threading
-        import requests
-        import hashlib
-        try:
-            import audible
-        except ImportError:
-            pass
 
         def worker():
             local_data = self.library_manager.local_library.get(filepath, {})

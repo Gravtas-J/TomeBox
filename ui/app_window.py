@@ -38,8 +38,6 @@ from ui.components.sidebar import setup_sidebar
 
 from core.utils.paths import get_resource_path, parse_dnd_paths
 
-from core.utils.paths import get_resource_path
-
 from core.database import DatabaseManager
 from core.converter import AudioConverter
 from core.player import AudioPlayer
