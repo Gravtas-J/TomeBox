@@ -69,7 +69,7 @@ def setup_player_bar(app):
     app.extras_frame = ttk.Frame(center_wrapper)
     app.extras_frame.pack(side=tk.LEFT)
 
-    ttk.Button(app.extras_frame, text="🔖 Bookmark", width=12, command=app.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
+    ttk.Button(app.extras_frame, text="🔖 Bookmark", width=12, command=app.bookmarks_presenter.add_bookmark).pack(side=tk.LEFT, padx=(10, 2))
     ttk.Button(app.extras_frame, text="📑 Chapters", command=lambda: open_chapter_window(app)).pack(side=tk.LEFT, padx=(5, 2))
 
     speed_options = ["0.8x", "1.0x", "1.1x", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x"]

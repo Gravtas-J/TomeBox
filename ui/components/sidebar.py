@@ -34,11 +34,11 @@ def setup_sidebar(app, parent):
     scroll.config(command=app.bm_tree.yview)
 
     # Double click to jump to the bookmark
-    app.bm_tree.bind("<Double-1>", app.jump_to_bookmark)
+    app.bm_tree.bind("<Double-1>", app.bookmarks_presenter.jump_to_bookmark)
     
     btn_frame = ttk.Frame(app.bm_frame)
     btn_frame.pack(fill="x", pady=(5, 0))
-    ttk.Button(btn_frame, text="Delete Selected", command=app.delete_bookmark).pack(side=tk.RIGHT)
+    ttk.Button(btn_frame, text="Delete Selected", command=app.bookmarks_presenter.delete_bookmark).pack(side=tk.RIGHT)
 
     # --- EVENT BUBBLING SHIELD ---
     def block_context_menu(event):

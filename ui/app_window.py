@@ -50,7 +50,7 @@ from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
-
+from ui.bookmarks_presenter import BookmarksPresenter
 from ui.action_router import ActionRouter
 
 mac_paths = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
@@ -254,6 +254,7 @@ class AAXManagerApp:
         self.browser_login_btn = None
 
         self.action_router = ActionRouter(self)
+        self.bookmarks_presenter = BookmarksPresenter(self)
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
@@ -967,7 +968,7 @@ class AAXManagerApp:
             self.cover_label.config(image="", text=title)
             self.cover_label.unbind("<Button-1>") # Unbind if there is no cover
             
-        self.refresh_bookmarks_ui()
+        self.bookmarks_presenter.refresh_bookmarks_ui()
 
     def manage_shelves_prompt(self):
         if self.current_view_mode == "list":
@@ -2237,111 +2238,7 @@ class AAXManagerApp:
         self.ui_state.playback_progress.set(percent)
 
         self.metadata_manager.fetch_display_metadata(filepath)
-        self.refresh_bookmarks_ui()
-
-    def add_bookmark(self):
-        if not self.file_path:
-            messagebox.showwarning("No File", "Please load an audiobook first.")
-            return
-
-        was_playing = self.playback.is_playing
-        if was_playing:
-            self.pause_audio()
-
-        current_time = self.playback.current_play_time
-        chapter_idx = self.playback.current_chapter_idx
-
-        abs_time = current_time
-        if self.playback.chapters:
-            abs_time += float(self.playback.chapters[chapter_idx].get("start_time", 0))
-
-        note = simpledialog.askstring("Add Bookmark", f"Add a note for {self.format_time(current_time)}:")
-
-        if was_playing:
-            self.playback.is_paused = False
-            self.resume_playback()
-            
-        if not note: return 
-
-        local_data = self.library_manager.local_library.get(self.file_path, {})
-        if "bookmarks" not in local_data:
-            local_data["bookmarks"] = []
-            
-        local_data["bookmarks"].append({
-            "chapter_idx": chapter_idx,
-            "time": current_time,
-            "abs_time": abs_time,
-            "note": note
-        })
-        
-        self.db.save_local_db(self.library_manager.local_library)
-        self.refresh_bookmarks_ui()
-
-    def refresh_bookmarks_ui(self):
-        if not hasattr(self, 'bm_tree'): return
-        
-        for row in self.bm_tree.get_children():
-            self.bm_tree.delete(row)
-            
-        target_path = getattr(self, '_selected_local_path', None)
-        if not target_path: return
-        
-        local_data = self.library_manager.local_library.get(target_path, {})
-        bookmarks = local_data.get("bookmarks", [])
-
-        bookmarks.sort(key=lambda x: x.get("abs_time", 0))
-        
-        for idx, bm in enumerate(bookmarks):
-            chap_idx = bm.get("chapter_idx", 0)
-
-            chap_title = f"Chapter {chap_idx + 1}"
-            
-            # Use loaded chapters if it's the active file, otherwise use generic title
-            if target_path == self.file_path and self.playback.chapters and chap_idx < len(self.playback.chapters):
-                chap_title = self.playback.chapters[chap_idx].get("tags", {}).get("title", chap_title)
-                
-            t_str = self.format_time(bm.get("time", 0))
-            display_time = f"{chap_title} - {t_str}"
-
-            self.bm_tree.insert("", "end", iid=str(idx), values=(display_time, bm.get("note", "")))
-
-    def jump_to_bookmark(self, event=None):
-        selected = self.bm_tree.focus()
-        if not selected: return
-        
-        idx = int(selected)
-        target_path = getattr(self, '_selected_local_path', None)
-        if not target_path: return
-        
-        bookmarks = self.library_manager.local_library.get(target_path, {}).get("bookmarks", [])
-        
-        if 0 <= idx < len(bookmarks):
-            bm = bookmarks[idx]
-            
-            # Load the file if jumping to a bookmark for a book not currently playing
-            if target_path != self.file_path:
-                self.load_specific_file(target_path)
-            
-            self.stop_audio()
-            self.playback.current_chapter_idx = bm.get("chapter_idx", 0)
-            self.playback.current_play_time = bm.get("time", 0.0)
-            
-            self.play_chapter()
-
-    def delete_bookmark(self):
-        selected = self.bm_tree.focus()
-        if not selected: return
-        
-        idx = int(selected)
-        target_path = getattr(self, '_selected_local_path', None)
-        if not target_path: return
-        
-        bookmarks = self.library_manager.local_library.get(target_path, {}).get("bookmarks", [])
-        
-        if 0 <= idx < len(bookmarks):
-            del bookmarks[idx]
-            self.db.save_local_db(self.library_manager.local_library)
-            self.refresh_bookmarks_ui()
+        self.bookmarks_presenter.refresh_bookmarks_ui()
 
     def verify_bytes(self, filepath):
         cmd = ["ffmpeg", "-v", "error"]
