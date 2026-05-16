@@ -98,8 +98,7 @@ def test_search_fallback_to_local_tags(manager, monkeypatch):
         "format": {"tags": {"title": "Embedded Title", "artist": "Embedded Author"}}
     }
     
-    # ---> FIX: Patch the source module, not the metadata manager
-    monkeypatch.setattr("core.converter.AudioConverter", mock_converter)
+    monkeypatch.setattr("core.controllers.metadata_manager.AudioConverter", mock_converter)
 
     manager.search_catalog("/fake/audiobook.m4b", "Test Query")
 
@@ -109,7 +108,6 @@ def test_search_fallback_to_local_tags(manager, monkeypatch):
     assert results[0]["title"] == "Embedded Title"
     assert results[0]["authors"][0]["name"] == "Embedded Author"
     assert results[0]["source"] == "Local File Tags"
-
 # --- Scraping & Apply Logic ---
 
 def test_apply_scraped_metadata_google_books(manager, monkeypatch):
