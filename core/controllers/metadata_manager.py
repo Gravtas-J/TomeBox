@@ -11,6 +11,8 @@ import hashlib
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list
 from core.events import default_bus
+from core.converter import AudioConverter
+from PIL import Image
 class MetadataManager:
     def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool, start_workers=True, event_bus=None):
         self.api = api_client
@@ -40,8 +42,6 @@ class MetadataManager:
 
     def extract_embedded_cover(self, filepath, output_path):
         """Extracts embedded cover art from an audio file using FFmpeg."""
-        import os
-        from core.utils.process_runner import ProcessRunner
 
         cmd = [
             "ffmpeg", "-y",
@@ -62,7 +62,7 @@ class MetadataManager:
 
     def search_google_books(self, query):
         """Helper to fetch search results from Google Books."""
-        import requests
+        
         results = []
         try:
             # FIX: Added langRestrict and formatted query to improve accuracy
@@ -136,7 +136,7 @@ class MetadataManager:
             # 3. Strict Fallback: Local Tag Extraction via converter.py/ffprobe
             if not products:
                 try:
-                    from core.converter import AudioConverter
+                    
                     converter = AudioConverter(self.logger)
                     data = converter.get_metadata_and_chapters(filepath)
                     tags = data.get("format", {}).get("tags", {})
@@ -164,11 +164,7 @@ class MetadataManager:
         if fields_to_apply is None:
             fields_to_apply = {"title": True, "author": True, "series": True, "cover": True}
             
-        def worker():
-            import requests
-            import os
-            from core.utils.process_runner import ProcessRunner
-            
+        def worker():            
             local_data = self.library_manager.local_library.get(filepath, {})
             
             # Read existing values
@@ -207,7 +203,6 @@ class MetadataManager:
                                 
                 # --- AUDIBLE ROUTING ---
                 elif getattr(self, 'api', None) and self.api.auth:
-                    import audible
                     client = audible.Client(auth=self.api.auth)
                     
                     resp = client.get(f"1.0/catalog/products/{selected_asin}", response_groups="media,product_attrs,series")
@@ -333,8 +328,7 @@ class MetadataManager:
     def apply_manual_metadata(self, filepath, new_data, embed_to_file=False, new_cover_path=None):
         """Applies manual user edits to the database, processes custom covers, and optionally embeds via FFmpeg."""
         def worker():
-            import os
-            from core.utils.process_runner import ProcessRunner
+
 
             local_data = self.library_manager.local_library.get(filepath, {})
             old_asin = local_data.get("asin")
@@ -343,7 +337,7 @@ class MetadataManager:
             dest_cover = os.path.join(self.covers_dir, f"{new_asin}.jpg")
 
             if new_cover_path and os.path.exists(new_cover_path):
-                from PIL import Image
+                
                 try:
                     img = Image.open(new_cover_path)
                     # Strip alpha channels/transparency before saving as JPEG
@@ -417,7 +411,6 @@ class MetadataManager:
 
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""
-        import requests
         try:
             query = requests.utils.quote(title)
             url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults=1"
