@@ -188,13 +188,17 @@ def test_book_start_and_complete(router, mock_app):
     status_mock.set.assert_called_with("Complete")
     assert "sub_task_1" not in mock_app.queue_ui_elements
 
-def test_scrape_apply_complete_reloads_cover(router, mock_app):
+def test_scrape_apply_complete_reloads_cover(router, mock_app, monkeypatch):
+    # Mock messagebox to prevent Tkinter from crashing the test!
+    monkeypatch.setattr("ui.action_router.messagebox", MagicMock())
+    
     # Simulate the user currently listening to the book being scraped
     mock_app.file_path = "C:/audio/book.m4b"
     
-    router.event_bus.publish("metadata.apply_complete", filepath="C:/audio/book.m4b", title="New Title")
+    # Publish the event (is_manual=False will trigger our mock instead of a real popup)
+    router.event_bus.publish("metadata.apply_complete", filepath="C:/audio/book.m4b", title="New Title", is_manual=False)
     
-    mock_app.cover_cache.clear.assert_called_once()
+    mock_app.library_presenter.cover_cache.clear.assert_called_once()
     mock_app.library_presenter.refresh_library_ui.assert_called()
     mock_app.metadata_manager.fetch_display_metadata.assert_called_with("C:/audio/book.m4b")
     # Because they are listening to it, it should auto-reload the specific file

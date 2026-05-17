@@ -143,6 +143,8 @@ def test_apply_scraped_metadata_google_books(manager, monkeypatch):
     mock_open = MagicMock()
     monkeypatch.setattr("builtins.open", mock_open)
     monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
     monkeypatch.setattr(os, "replace", MagicMock())
     
     # Mock FFmpeg execution
@@ -173,7 +175,7 @@ def test_apply_scraped_metadata_google_books(manager, monkeypatch):
     assert "artist=New GB Author" in cmd
     
     # 4. Verify the completion callback fired
-    manager.on_apply_complete.assert_called_once_with(filepath, "New GB Title")
+    manager.on_apply_complete.assert_called_once_with(filepath, "New GB Title", False)
 
 def test_extract_embedded_cover(manager, monkeypatch):
     """Verifies FFmpeg is correctly called to extract embedded cover art."""
@@ -256,6 +258,7 @@ def test_apply_scraped_metadata_audible_route(manager, monkeypatch):
     # Mock OS to pretend the new cover exists, and the old cover gets deleted
     def mock_exists(path): return "AUD_123" in str(path) or "OLD_ASIN" in str(path)
     monkeypatch.setattr(os.path, "exists", mock_exists)
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
     mock_remove = MagicMock()
     monkeypatch.setattr(os, "remove", mock_remove)
     monkeypatch.setattr(os, "replace", MagicMock())
@@ -365,7 +368,7 @@ def test_apply_manual_metadata_custom_cover_and_embed(manager, monkeypatch):
     
     # Mock OS existence so it triggers the custom cover flow
     monkeypatch.setattr("os.path.exists", lambda p: True)
-    
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
     # --- FIXED MOCKING LOGIC ---
     mock_img_instance = MagicMock()
     mock_img_instance.mode = "RGBA" # Simulate a PNG with transparency
@@ -412,4 +415,4 @@ def test_apply_manual_metadata_custom_cover_and_embed(manager, monkeypatch):
     assert "series=Manual Series" in cmd
     
     # 4. Verify EventBus Notification fired for the UI
-    manager.on_apply_complete.assert_called_once_with(filepath, "Manual Title")
+    manager.on_apply_complete.assert_called_once_with(filepath, "Manual Title", True)
