@@ -13,6 +13,7 @@ from core.utils.text import format_series_list
 from core.events import default_bus
 from core.converter import AudioConverter
 from PIL import Image
+
 class MetadataManager:
     def __init__(self, api_client, library_manager, logger, covers_dir, callbacks, thread_pool, start_workers=True, event_bus=None):
         self.api = api_client
@@ -34,7 +35,7 @@ class MetadataManager:
         if callbacks.get("on_search_complete"):
             self.event_bus.subscribe("metadata.search_complete", lambda **kw: callbacks["on_search_complete"](kw.get("filepath"), kw.get("products")))
         if callbacks.get("on_apply_complete"):
-            self.event_bus.subscribe("metadata.apply_complete", lambda **kw: callbacks["on_apply_complete"](kw.get("filepath"), kw.get("title")))
+            self.event_bus.subscribe("metadata.apply_complete", lambda **kw: callbacks["on_apply_complete"](kw.get("filepath"), kw.get("title"), kw.get("is_manual", False)))
         if callbacks.get("on_display_ready"):
             self.event_bus.subscribe("metadata.display_ready", lambda **kw: callbacks["on_display_ready"](kw.get("filepath"), kw.get("cover_path"), kw.get("authors"), kw.get("msg")))
         if callbacks.get("on_error"):
@@ -65,7 +66,6 @@ class MetadataManager:
         
         results = []
         try:
-            # FIX: Added langRestrict and formatted query to improve accuracy
             params = {
                 "q": query,
                 "maxResults": 5,
@@ -101,20 +101,19 @@ class MetadataManager:
         return results
 
     def search_catalog(self, filepath, query):
-        print(f"[SC] entered, query={query!r}")  # ← A
+        print(f"[SC] entered, query={query!r}")
         def worker():
-            print("[SC] worker started")          # ← B
+            print("[SC] worker started")
             products = []
             audible_failed = False
             
             if getattr(self, 'api', None) and self.api.auth:
                 try:
-                    print("[SC] calling self.api.search_catalog")  # ← C
+                    print("[SC] calling self.api.search_catalog")
                     raw_products = self.api.search_catalog(query, num_results=5)
                     print(f"[SC] api returned {len(raw_products)} items")
                     seen_asins = set()
                     for p in raw_products:
-                        # ASIN Parsing Update: Check 'asin', fallback to 'id' if storefront structure changed
                         asin = p.get("asin") or p.get("id")
                         if asin and asin not in seen_asins:
                             seen_asins.add(asin)
@@ -269,23 +268,20 @@ class MetadataManager:
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
                 # 4. Embed into file using FFmpeg
-                if filepath.endswith(('.m4b', '.mp3')):
-                    temp_out = filepath + ".tmp.m4b"
+                # SAFEGUARD: Verify it's a file (not a folder playlist) and match the original extension
+                if os.path.isfile(filepath) and filepath.lower().endswith(('.m4b', '.mp3', '.m4a')):
+                    ext = os.path.splitext(filepath)[1].lower()
+                    temp_out = filepath + f".tmp{ext}"
                     
-                    cmd = [
-                        "ffmpeg", "-y", "-i", filepath
-                    ]
+                    cmd = ["ffmpeg", "-y", "-i", filepath]
                     
-                    # Only map new cover if we applied a new cover and it exists
                     if fields_to_apply.get("cover", True) and os.path.exists(cover_path):
-                        # Map audio from file 0 (0:a), map cover from file 1 (1:v)
                         cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c", "copy", "-disposition:v", "attached_pic"])
                     else:
-                        # Map audio from file 0, and cover from file 0 if it has one (0:v?)
                         cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
                         
                     cmd.extend([
-                        "-map_chapters", "0", # Explicitly retain chapter markers
+                        "-map_chapters", "0", 
                         "-metadata", f"title={title}",
                         "-metadata", f"artist={authors}"
                     ])
@@ -309,14 +305,14 @@ class MetadataManager:
                             raise Exception(f"FFmpeg tagging failed with code {res.returncode}.\nDetails: {err_msg}")
                             
                     finally:
-                        # Guarantee the temp file is destroyed whether it succeeded, failed, or crashed
                         if os.path.exists(temp_out):
                             try:
                                 os.remove(temp_out)
                             except OSError:
                                 pass
 
-                    self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=title)
+                # Outdented: Publish event even if FFmpeg is skipped (e.g. for folder playlists) so UI refreshes immediately
+                self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=title, is_manual=False)
 
             except Exception as e:
                 if hasattr(self, 'logger'): self.logger(f"Apply Metadata Error: {e}")
@@ -328,8 +324,6 @@ class MetadataManager:
     def apply_manual_metadata(self, filepath, new_data, embed_to_file=False, new_cover_path=None):
         """Applies manual user edits to the database, processes custom covers, and optionally embeds via FFmpeg."""
         def worker():
-
-
             local_data = self.library_manager.local_library.get(filepath, {})
             old_asin = local_data.get("asin")
             new_asin = new_data.get("asin")
@@ -337,24 +331,20 @@ class MetadataManager:
             dest_cover = os.path.join(self.covers_dir, f"{new_asin}.jpg")
 
             if new_cover_path and os.path.exists(new_cover_path):
-                
                 try:
                     img = Image.open(new_cover_path)
-                    # Strip alpha channels/transparency before saving as JPEG
                     if img.mode in ("RGBA", "P"): 
                         img = img.convert("RGB")
                     img.save(dest_cover, "JPEG")
                 except Exception as e:
                     if hasattr(self, 'logger'): self.logger(f"Error saving custom cover: {e}")
             
-            # Or safely rename the existing cover art file if only the ASIN changed
             elif old_asin and new_asin and old_asin != new_asin:
                 old_cover = os.path.join(self.covers_dir, f"{old_asin}.jpg")
                 if os.path.exists(old_cover) and not os.path.exists(dest_cover):
                     try: os.rename(old_cover, dest_cover)
                     except OSError: pass
 
-            # Update DB Dictionary
             local_data["title"] = new_data.get("title", "")
             local_data["authors"] = new_data.get("authors", "")
             local_data["series"] = new_data.get("series", "")
@@ -363,9 +353,10 @@ class MetadataManager:
             self.library_manager.local_library[filepath] = local_data
             self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-            # Optional FFmpeg Embed
-            if embed_to_file and filepath.endswith(('.m4b', '.mp3')):
-                temp_out = filepath + ".tmp.m4b"
+            # Optional FFmpeg Embed - with Directory Safeguards
+            if embed_to_file and os.path.isfile(filepath) and filepath.lower().endswith(('.m4b', '.mp3', '.m4a')):
+                ext = os.path.splitext(filepath)[1].lower()
+                temp_out = filepath + f".tmp{ext}"
 
                 cmd = ["ffmpeg", "-y", "-i", filepath]
 
@@ -404,7 +395,8 @@ class MetadataManager:
                         try: os.remove(temp_out)
                         except OSError: pass
 
-            self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=local_data['title'])
+            # In apply_manual_metadata:
+            self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=local_data['title'], is_manual=True)
 
         if self.start_workers:
             self.thread_pool.submit(worker, task_type="api")
@@ -427,7 +419,6 @@ class MetadataManager:
                     cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
                     
                     if cover_url:
-                        # Google Books often returns http. Force https to prevent redirect failures.
                         cover_url = cover_url.replace("http:", "https:")
                     
                     return authors, cover_url
@@ -461,7 +452,7 @@ class MetadataManager:
                 if os.path.exists(test_path):
                     cover_path = test_path
 
-            # 2. Try Audible API (Only if no local cover, real ASIN, and logged in)
+            # 2. Try Audible API
             if not cover_path and asin and not str(asin).startswith("LOCAL_") and getattr(self, 'api', None) and self.api.auth:
                 try:
                     client = audible.Client(auth=self.api.auth)
@@ -515,7 +506,6 @@ class MetadataManager:
                             f.write(img_data)
                         cover_path = dl_path
                         
-                        # Save the new ASIN and authors to the database
                         if not asin or str(asin).startswith("LOCAL_"):
                             local_data["asin"] = safe_id
                             if api_authors and local_data.get("authors") in ["Unknown", "Unknown Author"]:

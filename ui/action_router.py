@@ -179,15 +179,16 @@ class ActionRouter:
     def on_scrape_search_results(self, filepath, products):
         self.app.root.after(0, self.reset_ui_if_idle)
 
-    def on_scrape_apply_complete(self, filepath, title):
+    def on_scrape_apply_complete(self, filepath, title,is_manual=False):
         def update():
             self.reset_ui_if_idle()
-            self.app.cover_cache.clear()
+            self.app.library_presenter.cover_cache.clear()
             self.app.library_presenter.refresh_library_ui()
             self.app.metadata_manager.fetch_display_metadata(filepath)
             if self.app.file_path == filepath:
                 self.app.playback_presenter.load_specific_file(filepath)
-            messagebox.showinfo("Success", "Metadata scraped and applied!")
+        if not is_manual:
+            messagebox.showinfo("Success", f"Metadata applied to {title}")
         self.app.root.after(0, update)
 
     def on_display_metadata_ready(self, filepath, cover_path, authors, error_text):

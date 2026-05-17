@@ -1,21 +1,21 @@
 # --- Core UI & Graphics ---
-Pillow
-tkinterdnd2
-pystray
+Pillow~=12.2.0   
+tkinterdnd2==0.4.3
+pystray==0.19.5
 
 # --- Audible API & Decryption ---
-audible
-requests
-rsa
+audible==0.10.0
+requests==2.34.2
+rsa==4.9
 
 # --- Companion Web Server ---
-fastapi
-uvicorn
-httpx
+fastapi==0.136.1
+uvicorn==0.47.0
+httpx==0.28.1
 
 # --- System Utilities ---
-wakepy
-pycaw
-qrcode
-rapidfuzz
-sounddevice
+wakepy==1.0.0
+pycaw==20251023; platform_system == "Windows"
+qrcode==8.2
+rapidfuzz==3.14.3
+sounddevice==0.5.5

@@ -977,7 +977,7 @@ def open_manual_metadata_window(app, filepath):
         }
 
         def on_done(filepath=None, title=None, **kwargs):
-            app.root.after(0, lambda: app.refresh_library_ui())
+            app.root.after(0, lambda: app.library_presenter.refresh_library_ui())
             # Force the sidebar to fetch the newly updated display metadata
             app.root.after(0, lambda: app.metadata_manager.fetch_display_metadata(filepath))
             app.root.after(0, win.destroy)
