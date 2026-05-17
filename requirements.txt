@@ -18,4 +18,4 @@ wakepy==1.0.0
 pycaw==20251023; platform_system == "Windows"
 qrcode==8.2
 rapidfuzz==3.14.3
-sounddevice==0.5.5
+sounddevice==0.5.5 
