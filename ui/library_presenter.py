@@ -89,7 +89,7 @@ class LibraryPresenter:
             self.app.grid_inner.columnconfigure(i, weight=1)
         
         for idx, row_data in enumerate(self.current_filtered_data):
-            title, authors, series_str, duration_str, asin, status, row_path, date_str = row_data
+            title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row_data
 
             outer_card = tk.Frame(self.app.grid_inner, bg=default_bg)
             outer_card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5)
@@ -237,7 +237,7 @@ class LibraryPresenter:
             sort_pref = self.app.ui_state.sort.get()
             
             def get_sort_key(row):
-                title, authors, series_str, duration_str, asin, status, row_path, date_str = row
+                title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
                 
                 if sort_pref == "Title (A-Z)":
                     return title.lower()
@@ -277,7 +277,7 @@ class LibraryPresenter:
                 self.app.library_tree.tag_configure('error', foreground='#ff4444')   
 
                 for row in filtered_rows:
-                    title, authors, series_str, duration_str, asin, status, row_path, date_str = row
+                    title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
                     
                     tags = ()
                     is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)

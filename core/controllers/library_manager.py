@@ -222,6 +222,9 @@ class LibraryManager:
             raw_authors = item.get("authors") or []
             authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
             
+            raw_narrators = item.get("narrators") or []
+            narrator = ", ".join([n.get("name", "") for n in raw_narrators if isinstance(n, dict)]) or item.get("narrator", "")
+            
             series_str = format_series_list(item.get("series"))
             
             duration_min = item.get("runtime_length_min") or 0
@@ -237,7 +240,8 @@ class LibraryManager:
             date_val = local_data.get("date_added", 0) if local_data else 0
             date_str = datetime.fromtimestamp(date_val).strftime('%Y-%m-%d') if date_val > 0 else "N/A"
 
-            rows.append((title, authors, series_str, duration_str, asin, status, local_path, date_str))
+            # Add narrator to the tuple here
+            rows.append((title, authors, narrator, series_str, duration_str, asin, status, local_path, date_str))
             all_unique_shelves.update(shelves_db.get(asin, []))
 
         for path, data in self.local_library.items():
@@ -249,6 +253,10 @@ class LibraryManager:
                 loc_authors = data.get("authors", "Local File")
                 if meta.get("authors") and loc_authors in ["Unknown", "Unknown Author", "Local File"]:
                     loc_authors = ", ".join([a.get("name", "") for a in meta.get("authors") if isinstance(a, dict)])
+
+                loc_narrator = data.get("narrator", "")
+                if meta.get("narrators") and not loc_narrator:
+                    loc_narrator = ", ".join([n.get("name", "") for n in meta.get("narrators") if isinstance(n, dict)])
 
                 loc_series = data.get("series", "N/A")
                 if meta.get("series") and loc_series == "N/A":
@@ -263,18 +271,19 @@ class LibraryManager:
                 date_val = data.get("date_added", 0)
                 date_str = datetime.fromtimestamp(date_val).strftime('%Y-%m-%d') if date_val > 0 else "N/A"
 
-                rows.append((title, loc_authors, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})", path, date_str))
+                # Add loc_narrator to the tuple here
+                rows.append((title, loc_authors, loc_narrator, loc_series, loc_duration, asin, f"Downloaded ({data.get('format', 'UNKNOWN')})", path, date_str))
                 all_unique_shelves.update(shelves_db.get(asin, []))
 
         filtered_rows = []
         for row in rows:
-            title, authors, series_str, duration_str, asin, status, row_path, date_str = row
+            title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
 
             if filter_type == "Downloaded" and "Downloaded" not in status: continue
             if filter_type == "Cloud Only" and status != "Cloud Only": continue
             if shelf_filter != "All Shelves" and shelf_filter not in shelves_db.get(asin, []): continue
             
-            if search_query and search_query not in f"{title} {authors} {series_str}".lower():
+            if search_query and search_query not in f"{title} {authors} {narrator} {series_str}".lower():
                 continue
 
             filtered_rows.append(row)
