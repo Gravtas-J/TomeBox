@@ -325,6 +325,12 @@ class LibraryManager:
         format_clean = ext.replace(".", "").upper()
         embedded_meta = {}
         extracted_chapters = []
+        
+        # Safely grab the creation date
+        try:
+            creation_date = os.path.getctime(filepath)
+        except OSError:
+            creation_date = time.time()
 
         if format_clean in ["M4B", "MP3"]:
             try:
@@ -343,7 +349,7 @@ class LibraryManager:
                     "narrator": tags.get("composer", ""),
                     "duration_min": int(float(data.get("format", {}).get("duration", 0)) / 60),
                     "chapters": extracted_chapters,
-                    "date_added": time.time()
+                    "date_added": creation_date
                 }
                 
                 series_name = tags.get("series") or tags.get("show") or tags.get("album_sort")
@@ -372,7 +378,7 @@ class LibraryManager:
             "owner": active_profile,
             "duration_min": embedded_meta.get("duration_min", 0),
             "chapters": extracted_chapters,
-            "date_added": embedded_meta.get("date_added", time.time()) # M4B N/A Date Fix
+            "date_added": embedded_meta.get("date_added", creation_date)
         }
 
         if embedded_meta.get("series"): entry["series"] = embedded_meta["series"]
