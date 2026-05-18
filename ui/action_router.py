@@ -134,7 +134,7 @@ class ActionRouter:
     def on_import_queue_empty(self):
         def update():
             self.update_global_status("All queued imports completed.")
-            self.app.root.bell()
+            self.app.root.after(500, self.app.root.bell)
             self.app.root.after(3000, self.reset_ui_if_idle)
         self.app.root.after(0, update)
 
