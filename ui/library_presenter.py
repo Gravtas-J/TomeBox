@@ -346,3 +346,68 @@ class LibraryPresenter:
         elif event.keysym == "Down": target.yview_scroll(1, "units")
         elif event.keysym == "Prior": target.yview_scroll(-1, "pages")
         elif event.keysym == "Next": target.yview_scroll(1, "pages")
+
+    def handle_alpha_jump(self, event):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        # Ensure it's an actual printable character
+        if not getattr(event, 'char', None):
+            return
+            
+        char = event.char.lower()
+        if not char or not char.isalnum():
+            return
+            
+        # Ignore if typing in a text field
+        focused = self.app.root.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+            
+        if self.app.current_view_mode != "list":
+            return
+            
+        tree = getattr(self.app, 'library_tree', None)
+        if not tree:
+            return
+            
+        # Default to Title if current_sort_col isn't set yet
+        sort_col = getattr(self, 'current_sort_col', 'Title')
+        if not sort_col:
+            sort_col = 'Title'
+            
+        children = tree.get_children()
+        if not children:
+            return
+            
+        # Start searching from the item *after* the currently selected one to allow cycling
+        selected = tree.selection()
+        start_idx = 0
+        if selected:
+            try:
+                start_idx = children.index(selected[0]) + 1
+            except ValueError:
+                pass
+                
+        # Create a search sequence that wraps around to the beginning
+        search_sequence = list(children[start_idx:]) + list(children[:start_idx])
+        
+        for item in search_sequence:
+            try:
+                val = str(tree.set(item, sort_col)).lower()
+            except tk.TclError:
+                # Fallback if sort_col isn't a valid column ID
+                values = tree.item(item).get('values', [])
+                val = str(values[0]).lower() if values else ""
+                
+            # Ignore articles for intuitive searching
+            if val.startswith("the "): val = val[4:]
+            elif val.startswith("a "): val = val[2:]
+            elif val.startswith("an "): val = val[3:]
+            
+            if val.startswith(char):
+                tree.selection_set(item)
+                tree.focus(item)
+                tree.see(item)
+                self.app.root.after(10, self.app.on_item_select)
+                return "break"

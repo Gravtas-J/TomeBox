@@ -272,6 +272,7 @@ class AAXManagerApp:
         self.root.bind("<F2>", lambda event: self.handle_action_on_selected("edit"))
         for key in ("<Up>", "<Down>", "<Prior>", "<Next>", "<Home>", "<End>"):
             self.root.bind(key, self.library_presenter.handle_keyboard_scroll)
+        self.root.bind("<Key>", self.library_presenter.handle_alpha_jump, add="+")
 
         def _focus_search():
             self.search_entry.focus_force() 
