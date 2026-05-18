@@ -243,7 +243,7 @@ class PlaybackPresenter:
             item = self.app._selected_grid_item
 
         title = item['values'][0]
-        status = item['values'][5]  
+        status = item['values'][6]  
 
         if "Downloaded" not in status:
             messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")

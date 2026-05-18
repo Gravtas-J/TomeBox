@@ -583,7 +583,7 @@ class AAXManagerApp:
             item = self.library_tree.item(selected)
             title = item['values'][0]
             authors = item['values'][1]
-            asin = item['values'][4]
+            asin = item['values'][5]
         else:
             if not self._selected_grid_item:
                 self.clear_sidebar()
@@ -592,7 +592,7 @@ class AAXManagerApp:
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
-            asin = item['values'][4]
+            asin = item['values'][5]
 
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)
@@ -657,7 +657,7 @@ class AAXManagerApp:
             item = self._selected_grid_item
 
         title = item['values'][0]
-        asin = item['values'][4]
+        asin = item['values'][5]
 
         if not asin or asin == "Unknown":
             messagebox.showerror("Error", "Cannot tag an orphaned file without an ASIN. Please scrape its metadata first.")
@@ -785,7 +785,7 @@ class AAXManagerApp:
             item = self._selected_grid_item
 
         title = item['values'][0]
-        asin = item['values'][4]
+        asin = item['values'][5]
 
         local_path = None
         is_playlist = False

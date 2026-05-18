@@ -108,6 +108,26 @@ class LibraryPresenter:
                 warning_lbl = tk.Label(card, text="⚠️ No Duration", bg="#ffaa00", fg="#000000", font=("Segoe UI", 8, "bold"))
                 warning_lbl.pack(side=tk.TOP, fill="x")
 
+            read_state = "Unread"
+            if row_path and row_path in self.app.library_manager.local_library:
+                local_data = self.app.library_manager.local_library[row_path]
+                prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
+                dur_sec = (local_data.get("duration_min", 0) or 0) * 60
+                if dur_sec > 0:
+                    if prog_sec / dur_sec >= 0.95: read_state = "Finished"
+                    elif prog_sec > 0: read_state = "Started"
+
+            display_title = title[:45] + "..." if len(title) > 45 else title
+            if read_state == "Finished":
+                display_title = "✔ " + display_title
+            elif read_state == "Started":
+                display_title = "◐ " + display_title
+
+            text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
+            if not is_missing_file and not is_missing_duration:
+                if read_state == "Finished": text_color = "#777777"
+                elif read_state == "Started": text_color = "#4a90e2"
+
             img_obj = None
             if asin in self.cover_cache:
                 img_obj = self.cover_cache[asin]
@@ -123,6 +143,9 @@ class LibraryPresenter:
                 
             img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0, cursor="hand2")
             img_label.pack(pady=(5, 0))
+            
+            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
+            text_label.pack(pady=(5, 0))
             display_title = title[:45] + "..." if len(title) > 45 else title
             
             text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
@@ -135,7 +158,7 @@ class LibraryPresenter:
                 
                 oc.config(bg=select_bg)
                 self.last_selected_card_frame = oc 
-                self.app._selected_grid_item = {'values': [t, "", "", "", a, s, ""]} 
+                self.app._selected_grid_item = {'values': [t, "", "", "", "", a, s, "", ""]}
                 self.app.on_item_select()
                 
             def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
@@ -275,6 +298,8 @@ class LibraryPresenter:
 
                 self.app.library_tree.tag_configure('warning', foreground='#ffaa00') 
                 self.app.library_tree.tag_configure('error', foreground='#ff4444')   
+                self.app.library_tree.tag_configure('finished', foreground='#777777')
+                self.app.library_tree.tag_configure('started', foreground='#4a90e2')
 
                 for row in filtered_rows:
                     title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
@@ -283,12 +308,33 @@ class LibraryPresenter:
                     is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
                     is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
 
+                    # Calculate progress
+                    read_state = "Unread"
+                    if row_path and row_path in self.app.library_manager.local_library:
+                        local_data = self.app.library_manager.local_library[row_path]
+                        prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
+                        dur_sec = (local_data.get("duration_min", 0) or 0) * 60
+                        if dur_sec > 0:
+                            if prog_sec / dur_sec >= 0.95: read_state = "Finished"
+                            elif prog_sec > 0: read_state = "Started"
+
+                    # Format the status string visually (e.g. "✔ Finished (M4B)")
+                    # Format the status string visually 
+                    display_status = status
+                    if read_state == "Finished":
+                        display_status = f"✔ {status}"
+                        tags = ('finished',)
+                    elif read_state == "Started":
+                        display_status = f"◐ {status}"
+                        tags = ('started',)
+
                     if is_missing_file:
                         tags = ('error',)
                     elif is_missing_duration:
                         tags = ('warning',)
 
-                    self.app.library_tree.insert("", "end", values=row, tags=tags)
+                    display_row = (title, authors, narrator, series_str, duration_str, asin, display_status, row_path, date_str)
+                    self.app.library_tree.insert("", "end", values=display_row, tags=tags)
 
                 if self.current_sort_col and self.current_sort_descending is not None:
                     self.sort_treeview(self.app.library_tree, self.current_sort_col, self.current_sort_descending)
