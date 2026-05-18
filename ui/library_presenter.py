@@ -314,3 +314,35 @@ class LibraryPresenter:
             
         if hasattr(self.app, 'lib_count_tooltip'):
             self.app.lib_count_tooltip.text = tooltip_text
+    
+    def handle_keyboard_scroll(self, event):
+        import tkinter as tk
+        from tkinter import ttk
+        focused = self.app.root.focus_get()
+        
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+            
+        target = getattr(self.app, 'grid_canvas', None) if self.app.current_view_mode == "grid" else getattr(self.app, 'library_tree', None)
+        if not target: 
+            return
+            
+        # 1. Intercept Home and End to FORCE a visual scroll, and stop native selection jumps
+        if event.keysym == "Home": 
+            target.yview_moveto(0.0)
+            return "break"
+        elif event.keysym == "End": 
+            target.yview_moveto(1.0)
+            return "break"
+            
+        # 2. If the user is navigating the List View natively with arrows, let Treeview 
+        # handle it so the selection changes, but trigger our sidebar update.
+        if self.app.current_view_mode == "list" and focused == getattr(self.app, 'library_tree', None):
+            self.app.root.after(10, self.app.on_item_select)
+            return
+            
+        # 3. Otherwise, manually scroll the Grid Canvas or unfocused List
+        if event.keysym == "Up": target.yview_scroll(-1, "units")
+        elif event.keysym == "Down": target.yview_scroll(1, "units")
+        elif event.keysym == "Prior": target.yview_scroll(-1, "pages")
+        elif event.keysym == "Next": target.yview_scroll(1, "pages")

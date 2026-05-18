@@ -270,7 +270,9 @@ class AAXManagerApp:
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
         self.root.bind("<F2>", lambda event: self.handle_action_on_selected("edit"))
-        
+        for key in ("<Up>", "<Down>", "<Prior>", "<Next>", "<Home>", "<End>"):
+            self.root.bind(key, self.library_presenter.handle_keyboard_scroll)
+
         def _focus_search():
             self.search_entry.focus_force() 
             self.search_entry.icursor(tk.END) 
