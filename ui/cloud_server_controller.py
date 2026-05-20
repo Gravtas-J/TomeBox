@@ -14,22 +14,17 @@ class CloudServerController:
         
         if not self.app.api_client.auth:
             self.app.logger.info("DEBUG: fetch_cloud_library aborted - self.app.api_client.auth is missing or None.")
-            messagebox.showwarning("Not Logged In", "Please login via the Settings tab first.")
+            self.app.action_router.event_bus.publish("ui.show_warning", title="Not Logged In", message="Please login via the Settings tab first.")
             return
 
         self.app.logger.info("DEBUG: self.app.api_client.auth verified. Launching fetch_library_worker thread...")
-        
         self.app.ui_state.dl_status.set("Fetching data from Amazon... Please wait.")
-        
         self.app.thread_pool.submit(self.fetch_library_worker)
 
     def fetch_library_worker(self):
         try:
             self.app.logger.info("Querying Audible Library API...")
-            
-            # Delegate entirely to the LibraryManager
             self.app.library_manager.fetch_cloud_library()
-            
             self.app.logger.info(f"Successfully retrieved {len(self.app.library_manager.cloud_items)} library items.")
 
             self.app.root.after(0, self.app.library_presenter.refresh_library_ui)
@@ -39,16 +34,19 @@ class CloudServerController:
                 on_complete_cb=lambda: self.app.root.after(0, lambda: self.app.library_presenter.refresh_library_ui() if self.app.current_view_mode == 'grid' else None)
             )
             
-        except httpx.ConnectError:
-            self.app.logger.error("Network offline during library sync.")
-            self.app.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to Audible servers. Check your internet connection."))
         except Exception as e:
-            if "401" in str(e) or "unauthorized" in str(e).lower() or "Not authenticated" in str(e):
+            err_str = str(e).lower()
+            err_type = type(e).__name__.lower()
+            
+            if "networkerror" in err_type or "network down" in err_str or "connect" in err_str or "timeout" in err_str:
+                self.app.logger.error(f"Network offline during library sync: {e}")
+                self.app.action_router.event_bus.publish("ui.show_error", title="Connection Error", message="Could not connect to Audible servers. Check your internet connection.")
+            elif "401" in err_str or "unauthorized" in err_str or "not authenticated" in err_str:
                 self.app.logger.error(f"Audible API rejected the request: {e}")
-                self.app.root.after(0, lambda: messagebox.showerror("Audible API Error", "Your session may have expired. Please log in again via Settings."))
+                self.app.action_router.event_bus.publish("ui.show_error", title="Audible API Error", message="Your session may have expired. Please log in again via Settings.")
             else:
                 self.app.logger.error(f"Unhandled exception in library worker: {e}\n{traceback.format_exc()}")
-                self.app.root.after(0, lambda: messagebox.showerror("Library Error", "An unexpected error occurred while fetching your library."))
+                self.app.action_router.event_bus.publish("ui.show_error", title="Library Error", message="An unexpected error occurred while fetching your library.")
         finally:
             self.app.root.after(0, self.app.action_router.reset_ui_if_idle)
 

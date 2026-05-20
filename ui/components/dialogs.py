@@ -1319,7 +1319,7 @@ def open_shelf_management_window(app, title, asin):
         app.settings["shelves_db"][asin] = selected_shelves
         app.db.save_settings(app.settings)
         
-        app.root.after(0, app.refresh_library_ui)
+        app.root.after(0, app.library_presenter.refresh_library_ui)
         win.destroy()
 
     ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.RIGHT, padx=(5, 0))

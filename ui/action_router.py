@@ -34,6 +34,11 @@ class ActionRouter:
         # --- Library Events ---
         self.event_bus.subscribe("library.queue.empty", lambda **kw: self.on_import_queue_empty())
 
+        # --- UI Dialog Events (Safe Threading) ---
+        self.event_bus.subscribe("ui.show_error", lambda **kw: self.app.root.after(0, lambda: messagebox.showerror(kw.get("title", "Error"), kw.get("message", "An error occurred."))))
+        self.event_bus.subscribe("ui.show_info", lambda **kw: self.app.root.after(0, lambda: messagebox.showinfo(kw.get("title", "Information"), kw.get("message", ""))))
+        self.event_bus.subscribe("ui.show_warning", lambda **kw: self.app.root.after(0, lambda: messagebox.showwarning(kw.get("title", "Warning"), kw.get("message", ""))))
+
     # --- Global UI Updaters ---
     def reset_ui_if_idle(self):
         is_importing = getattr(self.app.library_manager, '_is_importing', False) or not self.app.library_manager.import_queue.empty()
@@ -179,7 +184,7 @@ class ActionRouter:
     def on_scrape_search_results(self, filepath, products):
         self.app.root.after(0, self.reset_ui_if_idle)
 
-    def on_scrape_apply_complete(self, filepath, title,is_manual=False):
+    def on_scrape_apply_complete(self, filepath, title, is_manual=False):
         def update():
             self.reset_ui_if_idle()
             self.app.library_presenter.cover_cache.clear()
@@ -187,9 +192,10 @@ class ActionRouter:
             self.app.metadata_manager.fetch_display_metadata(filepath)
             if self.app.file_path == filepath:
                 self.app.playback_presenter.load_specific_file(filepath)
-        if not is_manual:
-            messagebox.showinfo("Success", f"Metadata applied to {title}")
         self.app.root.after(0, update)
+        
+        if not is_manual:
+            self.event_bus.publish("ui.show_info", title="Success", message=f"Metadata applied to {title}")
 
     def on_display_metadata_ready(self, filepath, cover_path, authors, error_text):
         def update():

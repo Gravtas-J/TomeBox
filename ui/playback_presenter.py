@@ -12,16 +12,11 @@ class PlaybackPresenter:
         self.view = view
     # --- Callbacks ---
     def on_playback_error(self, error_code):
-        def update():
-            self.stop_audio()
-            if error_code == "NO_AUDIO":
-                messagebox.showerror(
-                    "Playback Failed", 
-                    "No audio stream found in this title.\n\nThe file may be corrupted, or the DRM decryption failed during download. Try deleting and re-downloading the file."
-                )
-            else:
-                messagebox.showerror("Playback Error", f"An unexpected playback error occurred.\nError Code: {error_code}")
-        self.app.root.after(0, update)
+        self.stop_audio()
+        if error_code == "NO_AUDIO":
+            self.app.event_bus.publish("ui.show_error", title="Playback Failed", message="No audio stream found in this title.\n\nThe file may be corrupted, or the DRM decryption failed during download. Try deleting and re-downloading the file.")
+        else:
+            self.app.event_bus.publish("ui.show_error", title="Playback Error", message=f"An unexpected playback error occurred.\nError Code: {error_code}")
 
     def on_playback_tick(self, current_time, total_time, real_time_delta):
         def update_ui():
@@ -136,7 +131,7 @@ class PlaybackPresenter:
             success, error_msg = self.verify_bytes(self.app.file_path)
             if not success:
                 self.app.ui_state.dl_status.set("Verification Failed")
-                messagebox.showerror("Audio Processing Error", f"Failed to process the file. Reason:\n\n{error_msg}")
+                self.app.event_bus.publish("ui.show_error", title="Audio Processing Error", message=f"Failed to process the file. Reason:\n\n{error_msg}")
                 self.app.file_path = ""
                 return
 
@@ -232,13 +227,13 @@ class PlaybackPresenter:
             selected = self.app.library_tree.focus()
             if not selected:
                 if self.app.file_path: self.play_chapter()
-                else: messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
+                else: self.app.event_bus.publish("ui.show_warning", title="Selection Required", message="Please select an audiobook to play.")
                 return
             item = self.app.library_tree.item(selected)
         else:
             if not getattr(self.app, '_selected_grid_item', None):
                 if self.app.file_path: self.play_chapter()
-                else: messagebox.showwarning("Selection Required", "Please select an audiobook to play.")
+                else: self.app.event_bus.publish("ui.show_warning", title="Selection Required", message="Please select an audiobook to play.")
                 return
             item = self.app._selected_grid_item
 
@@ -246,7 +241,7 @@ class PlaybackPresenter:
         status = item['values'][6]  
 
         if "Downloaded" not in status:
-            messagebox.showinfo("Cloud Only", "This title has not been downloaded yet.")
+            self.app.event_bus.publish("ui.show_info", title="Cloud Only", message="This title has not been downloaded yet.")
             return
 
         is_playlist = False
@@ -258,16 +253,8 @@ class PlaybackPresenter:
                 break
 
         if not local_path or (not is_playlist and not os.path.exists(local_path)):
-            messagebox.showerror("File Error", "The audio file could not be found on your disk.")
+            self.app.event_bus.publish("ui.show_error", title="File Error", message="The audio file could not be found on your disk.")
             return
-
-        if self.app.file_path == local_path:
-            self.play_chapter()
-            return
-
-        self.stop_audio()
-        self.app.metadata_manager.fetch_display_metadata(local_path)
-        self.app.handle_action_on_selected("play")
 
     def play_chapter(self):
         if not self.app.file_path or not self.app.playback.chapters: return
