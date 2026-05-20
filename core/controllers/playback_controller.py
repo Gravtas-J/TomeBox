@@ -154,64 +154,64 @@ class PlaybackController:
             
         return "SUCCESS"
 
-    def pause(self):
-        if self.is_playing:
-            self.player.stop()
-            self.is_playing = False
-            self.is_paused = True
-            self._tick_session += 1
+    # def pause(self):
+    #     if self.is_playing:
+    #         self.player.stop()
+    #         self.is_playing = False
+    #         self.is_paused = True
+    #         self._tick_session += 1
             
-            # Rewind slightly on pause to catch context on resume
-            self.current_play_time = max(0.0, self.current_play_time - 1.5)
+    #         # Rewind slightly on pause to catch context on resume
+    #         self.current_play_time = max(0.0, self.current_play_time - 1.5)
 
-    def stop(self):
-        self.is_playing = False
-        self.is_paused = False
-        self._tick_session += 1
-        self.player.stop()
+    # def stop(self):
+    #     self.is_playing = False
+    #     self.is_paused = False
+    #     self._tick_session += 1
+    #     self.player.stop()
 
-    def seek(self, offset_seconds):
-        if not self.file_path or not self.chapters:
-            return False # Cannot seek
+    # def seek(self, offset_seconds):
+    #     if not self.file_path or not self.chapters:
+    #         return False # Cannot seek
 
-        new_time = self.current_play_time + offset_seconds
+    #     new_time = self.current_play_time + offset_seconds
         
-        if new_time < 0:
-                deficit = abs(new_time)
+    #     if new_time < 0:
+    #             deficit = abs(new_time)
                 
-                # Cascade backwards through chapters to consume the deficit
-                while deficit > 0 and self.current_chapter_idx > 0:
-                    self.current_chapter_idx -= 1
-                    ch = self.chapters[self.current_chapter_idx]
-                    self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
+    #             # Cascade backwards through chapters to consume the deficit
+    #             while deficit > 0 and self.current_chapter_idx > 0:
+    #                 self.current_chapter_idx -= 1
+    #                 ch = self.chapters[self.current_chapter_idx]
+    #                 self.chapter_duration = float(ch.get("end_time", 0)) - float(ch.get("start_time", 0))
                     
-                    if deficit >= self.chapter_duration:
-                        deficit -= self.chapter_duration
-                        if deficit == 0:
-                            self.current_play_time = 0.0
-                    else:
-                        self.current_play_time = self.chapter_duration - deficit
-                        deficit = 0
+    #                 if deficit >= self.chapter_duration:
+    #                     deficit -= self.chapter_duration
+    #                     if deficit == 0:
+    #                         self.current_play_time = 0.0
+    #                 else:
+    #                     self.current_play_time = self.chapter_duration - deficit
+    #                     deficit = 0
                         
-                # If we hit the very beginning of the book, clamp to 0
-                if deficit > 0:
-                    self.current_play_time = 0.0
+    #             # If we hit the very beginning of the book, clamp to 0
+    #             if deficit > 0:
+    #                 self.current_play_time = 0.0
                 
-        elif new_time >= self.chapter_duration:
-            return "NEXT_CHAPTER" # Signal the UI to handle chapter transition
-        else:
-            self.current_play_time = new_time
+    #     elif new_time >= self.chapter_duration:
+    #         return "NEXT_CHAPTER" # Signal the UI to handle chapter transition
+    #     else:
+    #         self.current_play_time = new_time
             
-        # If currently playing, we must restart the FFplay process at the new time
-        was_playing = self.is_playing
-        if was_playing:
-            self.player.stop()
-            self.is_playing = False
-            self.is_paused = False
-            self._tick_session += 1
-            return "RESTART_PLAYBACK" # Signal UI to call play() again with current flags
+    #     # If currently playing, we must restart the FFplay process at the new time
+    #     was_playing = self.is_playing
+    #     if was_playing:
+    #         self.player.stop()
+    #         self.is_playing = False
+    #         self.is_paused = False
+    #         self._tick_session += 1
+    #         return "RESTART_PLAYBACK" # Signal UI to call play() again with current flags
             
-        return "SUCCESS"
+    #     return "SUCCESS"
 
     def set_speed(self, speed_float):
         self.playback_speed = speed_float
