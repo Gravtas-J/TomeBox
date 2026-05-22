@@ -273,6 +273,7 @@ class AAXManagerApp:
         for key in ("<Up>", "<Down>", "<Prior>", "<Next>", "<Home>", "<End>"):
             self.root.bind(key, self.library_presenter.handle_keyboard_scroll)
         self.root.bind("<Key>", self.library_presenter.handle_alpha_jump, add="+")
+        self.root.bind("<Delete>", lambda event: self.library_manager.handle_remove_clicked(self))
 
         def _focus_search():
             self.search_entry.focus_force() 
@@ -1137,39 +1138,6 @@ class AAXManagerApp:
         self.metadata_manager.sync_missing_covers(on_complete_cb=lambda: self.root.after(0, self.library_presenter.refresh_library_ui))
         self.library_presenter.refresh_library_ui()
         messagebox.showinfo("Match Successful", f"Successfully linked '{title}' to:\n\n{filepath}")
-
-    def remove_local_file(self):
-        selected_items = self.library_tree.selection()
-        if not selected_items: 
-            return
-        
-        if not messagebox.askyesno("Remove Files", f"Remove {len(selected_items)} selected item(s) from your local library list?\n\n(This only removes them from the list, it does not delete the actual files from your hard drive.)"):
-            return
-
-        removed_count = 0
-        for item_id in selected_items:
-            item = self.library_tree.item(item_id)
-            title = item['values'][0]
-            
-            local_path = None
-            for path, data in self.library_manager.local_library.items():
-                if data["title"] == title:
-                    local_path = path
-                    break
-            
-            if local_path and local_path in self.library_manager.local_library:
-                del self.library_manager.local_library[local_path]
-                removed_count += 1
-                
-        if removed_count > 0:
-            self.db.save_local_db(self.library_manager.local_library)
-            self.library_presenter.refresh_library_ui()
-            
-            # Wipe panel after deletion
-            self.clear_sidebar()
-            self._selected_local_path = None
-        else:
-            messagebox.showinfo("Cloud Only", "This title is not currently in your downloaded local library.")
         
     def start_convert_thread(self, target_path=None):
         # Fallback for backwards compatibility

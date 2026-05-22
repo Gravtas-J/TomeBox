@@ -33,6 +33,7 @@ class ActionRouter:
 
         # --- Library Events ---
         self.event_bus.subscribe("library.queue.empty", lambda **kw: self.on_import_queue_empty())
+        self.event_bus.subscribe("library.file_removed", lambda **kw: self.on_library_file_removed(kw.get("filepath")))
 
         # --- UI Dialog Events (Safe Threading) ---
         self.event_bus.subscribe("ui.show_error", lambda **kw: self.app.root.after(0, lambda: messagebox.showerror(kw.get("title", "Error"), kw.get("message", "An error occurred."))))
@@ -60,6 +61,12 @@ class ActionRouter:
             self.reset_ui_if_idle()
         else:
             self.app.ui_state.dl_progress.set(pct)
+
+    # --- Library Management ---
+    def on_library_file_removed(self, filepath):
+        """If the deleted file is the one currently loaded, tear down player state."""
+        if filepath and filepath == self.app.file_path:
+            self.app.root.after(0, self.app.playback_presenter.unload_current_file)
 
     # --- Queue Drawer Management ---
     def remove_queue_ui_row(self, task_id):

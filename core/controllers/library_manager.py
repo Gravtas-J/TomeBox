@@ -10,6 +10,7 @@ except ImportError:
 import queue
 import re
 import time
+from tkinter import messagebox
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list, normalize_title, find_matching_cloud_item
 from core.events import default_bus
@@ -310,10 +311,86 @@ class LibraryManager:
         self.local_library[filepath] = metadata
         self.db.save_local_db(self.local_library)
 
+    # library_manager.py
+    def handle_remove_clicked(self, app):
+        selected_items = app.library_tree.selection()
+        if not selected_items:
+            return
+
+        # 1. Pre-filter the selection to find items that actually exist locally
+        items_to_remove = []
+        for item_id in selected_items:
+            title = app.library_tree.item(item_id)['values'][0]
+            local_path = next(
+                (p for p, d in self.local_library.items() if d.get("title") == title),
+                None
+            )
+            if local_path:
+                items_to_remove.append((item_id, local_path))
+
+        # 2. If nothing is local, just tell them and bail out early
+        if not items_to_remove:
+            messagebox.showinfo(
+                "Cloud Only",
+                "The selected title(s) are not currently in your downloaded local library.",
+                parent=app.root
+            )
+            return
+
+        # 3. Prompt ONLY for the items that can actually be removed
+        msg = (f"Remove {len(items_to_remove)} selected item(s) from your local library list?\n\n"
+               "(This only removes them from the list, it does not delete the actual files from your hard drive.)")
+        if not messagebox.askyesno("Remove Files", msg, parent=app.root):
+            return
+
+        removed = 0
+        
+        # Save index for auto-selection later based on the original UI selection block
+        last_idx = 0
+        try:
+            last_idx = app.library_tree.index(selected_items[-1])
+        except Exception:
+            pass
+
+        # 4. Perform the actual removal using our pre-filtered list
+        for item_id, local_path in items_to_remove:
+            if self.remove_local_file(local_path):
+                removed += 1
+                
+                # --- Phase 1 Fix: Clear Player Ghost State ---
+                if app.file_path == local_path:
+                    app.playback_presenter.stop_audio()
+                    app.playback.chapters = []
+                    app.file_path = ""
+                    app.playback_presenter.update_info() 
+                    if hasattr(app.playback_presenter.view, 'time_label'):
+                        app.playback_presenter.view.time_label.config(text="00:00 / 00:00")
+                    app.ui_state.playback_progress.set(0)
+
+        if removed > 0:
+            app.library_presenter.refresh_library_ui()
+            app.clear_sidebar()
+            app._selected_local_path = None
+            
+            # --- Phase 3 Fix: Auto-select next row ---
+            children = app.library_tree.get_children()
+            if children:
+                # Target the item that fell into the index of our last deleted item
+                next_idx = min(last_idx - len(selected_items) + 1, len(children) - 1)
+                next_idx = max(0, next_idx)
+                next_item = children[next_idx]
+                app.library_tree.selection_set(next_item)
+                app.library_tree.focus(next_item)
+                app.library_tree.see(next_item)
+                app.on_item_select()
+            
     def remove_local_file(self, filepath):
         if filepath in self.local_library:
             del self.local_library[filepath]
             self.db.save_local_db(self.local_library)
+            self.event_bus.publish("library.file_removed", filepath=filepath)
+            return True # <--- This missing return was breaking the UI refresh!
+        return False
             
     def set_shelves(self, asin, tags_list):
         settings = self.db.load_settings()
@@ -562,7 +639,8 @@ class LibraryManager:
             if missing_paths:
                 for path in missing_paths:
                     del self.local_library[path]
-                    
+                    self.event_bus.publish("library.file_removed", filepath=path)
+
                 logger.info(f"Detected {len(missing_paths)} deleted files. Updating library...")
                 self.db.save_local_db(self.local_library)
                 ui_needs_refresh = True

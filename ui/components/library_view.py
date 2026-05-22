@@ -219,7 +219,7 @@ def setup_library_view(app, parent):
     local_btn_frame.pack(fill="x", pady=2)
     ttk.Button(local_btn_frame, text="Add Local File", command=app.import_session.add_local_file).pack(side=tk.LEFT, padx=5)
     ttk.Button(local_btn_frame, text="Import Folder", command=app.import_session.import_folder).pack(side=tk.LEFT, padx=5)
-    ttk.Button(local_btn_frame, text="Remove from List", command=app.remove_local_file).pack(side=tk.LEFT, padx=5)
+    ttk.Button(local_btn_frame, text="Remove from List", command=lambda:app.library_manager.handle_remove_clicked(app)).pack(side=tk.LEFT, padx=5)
     ttk.Button(local_btn_frame, text="Scrape Metadata", command=lambda: app.handle_action_on_selected("scrape")).pack(side=tk.LEFT, padx=5)
     # ttk.Button(local_btn_frame, text="Match to Audible", command=lambda: app.match_to_audible_prompt()).pack(side=tk.LEFT, padx=5)
     

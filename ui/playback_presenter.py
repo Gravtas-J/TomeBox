@@ -322,6 +322,37 @@ class PlaybackPresenter:
         self.app.playback.is_paused = False
         self.save_playback_state()
 
+    def unload_current_file(self):
+        """Tear down all state/UI tied to the currently loaded file.
+        Safe to call when the underlying file has been deleted from disk or library.
+        """
+        print(f"[unload] starting")
+        if self.app.playback.is_playing or self.app.playback.is_paused:
+            self.app.playback.player.stop() 
+        self.stop_audio()
+
+        self.app.file_path = ""
+        self.app.playback.file_path = None
+        self.app.playback.chapters = []
+        self.app.playback.current_chapter_idx = 0
+        self.app.playback.current_play_time = 0.0
+        self.app.playback.chapter_duration = 0.0
+        self.app.playback.is_playlist = False
+
+        if self.view:
+            if hasattr(self.view, 'time_label'):
+                self.view.time_label.config(text="00:00 / 00:00")
+            if hasattr(self.view, 'info_label'):
+                self.view.info_label.config(text="No file loaded")
+            if hasattr(self.view, 'player_cover_lbl'):
+                self.view.player_cover_lbl.config(image="", width=0, height=0)
+                self.app.current_cover_photo = None  # release the PhotoImage ref
+            if hasattr(self.view, 'btn_compact'):
+                self.view.btn_compact.config(state=tk.DISABLED)
+
+        self.app.ui_state.playback_progress.set(0)
+        self.app.ui_state.dl_status.set("Idle")
+
     def seek_audio(self, offset):
         result = self.app.playback.seek(offset)
         
