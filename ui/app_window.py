@@ -537,15 +537,13 @@ class AAXManagerApp:
         self.context_menu.add_command(label="🔗 Match Local File", command=lambda: self.handle_action_on_selected("match_local"))
 
     def show_context_menu(self, event):
-        # If we are in the list view, select the item under the cursor first
         if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
-            if item:
+            if item and item not in self.library_tree.selection():
                 self.library_tree.selection_set(item)
                 self.library_tree.focus(item)
-                self.on_item_select() # Update the side panel preview
+                self.on_item_select()
 
-        # Pop the menu at the exact screen coordinates of the mouse click
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
