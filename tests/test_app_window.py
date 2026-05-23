@@ -259,20 +259,18 @@ def test_manage_shelves_prompt_no_selection(mock_warn, app_instance):
     app_instance.manage_shelves_prompt()
     mock_warn.assert_called()
 
-@patch("ui.components.dialogs.open_shelf_management_window") # <--- Fixed Patch Target
+@patch("ui.components.dialogs.open_shelf_management_window") 
 def test_manage_shelves_prompt_success(mock_open_shelf, app_instance):
-    """Verifies the shelf manager parses the ASIN and Title and passes it down."""
     app_instance.current_view_mode = "grid"
-    app_instance._selected_grid_item = {'values': ["The Book", "Auth", "Ser", "Dur", "ASIN123"]}
+    app_instance._selected_grid_item = {'values': ["The Book", "Auth", "Narrator", "Ser", "Dur", "ASIN123"]}
     app_instance.manage_shelves_prompt()
     mock_open_shelf.assert_called_with(app_instance, "The Book", "ASIN123")
 
 def test_on_item_select_list_mode(app_instance):
-    """Verifies selecting an item updates the sidebar."""
     app_instance.current_view_mode = "list"
     app_instance.library_tree = MagicMock()
     app_instance.library_tree.focus.return_value = "row_1"
-    app_instance.library_tree.item.return_value = {'values': ["Test Title", "Author Name", "Series", "Dur", "ASIN_X"]}
+    app_instance.library_tree.item.return_value = {'values': ["Test Title", "Author Name", "Narrator", "Series", "Dur", "ASIN_X"]}
     
     app_instance.library_manager.local_library = {"/fake/file.m4b": {"title": "Test Title"}}
     app_instance.author_label = MagicMock()
@@ -286,10 +284,9 @@ def test_on_item_select_list_mode(app_instance):
 
 @patch("ui.app_window.messagebox.askyesno")
 def test_handle_action_download(mock_yesno, app_instance):
-    """Verifies right-clicking a cloud item triggers the download queue."""
     mock_yesno.return_value = True
     app_instance.current_view_mode = "grid"
-    app_instance._selected_grid_item = {'values': ["Cloud Book", "Auth", "Ser", "Dur", "ASIN123"]}
+    app_instance._selected_grid_item = {'values': ["Cloud Book", "Auth", "Narr", "Ser", "Dur", "ASIN123"]}
     app_instance.library_manager.local_library = {} # Not downloaded
     
     with patch.object(app_instance, "ensure_download_folder", return_value="/mock/dl"):
@@ -300,31 +297,15 @@ def test_handle_action_download(mock_yesno, app_instance):
 
 @patch("os.path.exists")
 def test_handle_action_play_local(mock_exists, app_instance):
-    """Verifies right-clicking a local item safely triggers playback."""
     mock_exists.return_value = True
     app_instance.current_view_mode = "grid"
-    app_instance._selected_grid_item = {'values': ["Local Book", "Auth", "Ser", "Dur", "ASIN123"]}
+    app_instance._selected_grid_item = {'values': ["Local Book", "Auth", "Narr", "Ser", "Dur", "ASIN123"]}
     app_instance.library_manager.local_library = {"/mock/file.m4b": {"title": "Local Book"}}
     
     app_instance.handle_action_on_selected("play")
     
     app_instance.playback_presenter.load_specific_file.assert_called_with("/mock/file.m4b")
     app_instance.playback_presenter.play_chapter.assert_called_once()
-
-@patch("ui.app_window.messagebox.askyesno")
-def test_remove_local_file(mock_yesno, app_instance):
-    """Verifies removing an item deletes it from the library list but keeps the file."""
-    mock_yesno.return_value = True
-    app_instance.library_tree = MagicMock()
-    app_instance.library_tree.selection.return_value = ["row_1"]
-    app_instance.library_tree.item.return_value = {'values': ["The Book"]}
-    app_instance.library_manager.local_library = {"/mock/file.m4b": {"title": "The Book"}}
-    
-    app_instance.remove_local_file()
-    
-    assert "/mock/file.m4b" not in app_instance.library_manager.local_library
-    app_instance.db.save_local_db.assert_called_once()
-    app_instance.library_presenter.refresh_library_ui.assert_called_once()
 
 @patch("ui.app_window.filedialog.askdirectory")
 def test_start_convert_thread_split(mock_askdir, app_instance):

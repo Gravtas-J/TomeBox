@@ -1,6 +1,6 @@
 import os
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 from freezegun import freeze_time
 from core.controllers.library_manager import LibraryManager
 import json
@@ -98,7 +98,7 @@ def test_get_view_data_filtering_and_overlay(manager):
     rows, shelves = manager.get_view_data(filter_type="All")
     assert len(rows) == 3
     
-    statuses = [r[5] for r in rows]
+    statuses = [r[6] for r in rows]
     assert "Downloaded (M4B)" in statuses # Cloud book that was downloaded
     assert "Downloaded (MP3)" in statuses # Sideloaded local file
     assert "Cloud Only" in statuses       # Audible book not downloaded yet
@@ -123,13 +123,35 @@ def test_get_view_data_filtering_and_overlay(manager):
     # Matrix 4: Shelf Tag Filter
     rows, _ = manager.get_view_data(shelf_filter="Favorites")
     assert len(rows) == 1
-    assert rows[0][4] == "ASIN_CLOUD" 
+    assert rows[0][5] == "ASIN_CLOUD" 
     
     # Matrix 5: Fuzzy Search Query (Matches against title, author, or series)
     rows, _ = manager.get_view_data(search_query="podcast")
     assert len(rows) == 1
     assert rows[0][0] == "Local Podcast"
 
+@patch("core.controllers.library_manager.messagebox.askyesno")
+def test_handle_remove_clicked(mock_yesno, manager):
+    """Verifies removing an item deletes it from the library list but keeps the file."""
+    mock_yesno.return_value = True
+    
+    # Create a dummy app mock to pass to the manager
+    mock_app = MagicMock()
+    mock_app.library_tree.selection.return_value = ["row_1"]
+    mock_app.library_tree.item.return_value = {'values': ["The Book"]}
+    mock_app.library_tree.index.return_value = 0
+    
+    # Mock the state of the tree AFTER the deletion and UI refresh
+    mock_app.library_tree.get_children.return_value = ["row_2"]
+    
+    manager.local_library = {"/mock/file.m4b": {"title": "The Book"}}
+    
+    manager.handle_remove_clicked(mock_app)
+    
+    assert "/mock/file.m4b" not in manager.local_library
+    manager.db.save_local_db.assert_called_once()
+    mock_app.library_presenter.refresh_library_ui.assert_called_once()
+    mock_app.library_tree.selection_set.assert_called_with("row_2")
 
 # --- Import Logic (_process_single_file_for_import) ---
 

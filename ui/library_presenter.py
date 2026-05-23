@@ -181,22 +181,31 @@ class LibraryPresenter:
         data = [(tree.set(child, col), child) for child in tree.get_children('')]
         
         def sort_key(item):
-            val = item[0]
-            if "h " in val and "m" in val:
-                try:
-                    parts = val.split("h ")
-                    h = int(parts[0])
-                    m = int(parts[1].replace("m", ""))
-                    return h * 60 + m
-                except ValueError:
-                    pass
+            val = str(item[0])
+            
+            # Duration must strictly return integers to prevent sort crashing
+            if col == "Duration":
+                if "h " in val and "m" in val:
+                    try:
+                        parts = val.split("h ")
+                        h = int(parts[0])
+                        m = int(parts[1].replace("m", ""))
+                        return h * 60 + m
+                    except ValueError:
+                        pass
+                # Missing/errored durations evaluate to -1
+                return -1
 
-            if val == "N/A":
-                return "0000-00-00"
+            # All other columns must strictly return strings
+            if val in ["", "N/A", "Unknown"]:
+                # The null character forces empty/errored paths to the absolute top
+                return "\x00"
                 
             return val.lower()
 
+        # Safely sort without type-mixing crashes
         data.sort(key=sort_key, reverse=descending)
+        
         self.current_sort_col = col
         self.current_sort_descending = descending
         for index, (val, child) in enumerate(data):

@@ -55,13 +55,20 @@ def test_format_time(presenter):
     assert presenter.format_time(125) == "02:05"
     assert presenter.format_time(3665) == "01:01:05"
 
-@patch("ui.playback_presenter.messagebox.showerror")
-def test_on_playback_error(mock_show, presenter, mock_app):
-    """Verifies errors trigger the UI popup and stop the player."""
+def test_on_playback_error(presenter, mock_app):
+    """Verifies errors trigger the UI EventBus popup and stop the player."""
+    mock_app.playback.is_playing = True # <--- Added so stop_audio() actually fires
+    
     presenter.on_playback_error("NO_AUDIO")
+    
     mock_app.playback.stop.assert_called()
-    mock_show.assert_called_once()
-    assert "No audio stream found" in mock_show.call_args[0][1]
+    
+    # Check the correct Action Router EventBus path
+    mock_app.action_router.event_bus.publish.assert_called_once()
+    call_args = mock_app.action_router.event_bus.publish.call_args
+    
+    assert call_args[0][0] == "ui.show_error"
+    assert "No audio stream found" in call_args[1]["message"]
 
 @patch("time.time")
 def test_on_playback_tick(mock_time, presenter, mock_app):
