@@ -309,6 +309,11 @@ class TomeBoxClient {
 
     // --- NEW: Master Timeline Router ---
     seekToGlobalTime(targetTime, autoPlay = false) {
+        // Tripwire 1: Did we receive bad data?
+        if (isNaN(targetTime) || targetTime === null || targetTime === undefined) {
+            throw new Error(`[seekToGlobalTime ERROR] Received invalid targetTime: ${targetTime}`);
+        }
+
         if (this.state.isPlaylist && this.state.currentChapters.length > 0) {
             let targetIdx = 0;
             for (let i = 0; i < this.state.currentChapters.length; i++) {
@@ -317,23 +322,29 @@ class TomeBoxClient {
             const targetCh = this.state.currentChapters[targetIdx];
             const physicalPath = targetCh.file_path || this.state.currentPath;
             
+            let localSeekTarget = Math.max(0, targetTime - targetCh.start);
+            
+            // Tripwire 2: Did the playlist math break?
+            if (isNaN(localSeekTarget)) {
+                throw new Error(`[seekToGlobalTime ERROR] Playlist localSeekTarget is NaN! targetTime=${targetTime}, chapterStart=${targetCh.start}`);
+            }
+
             if (targetIdx !== this.state.activeChapterIndex || !this.dom.audio.src.includes(encodeURIComponent(physicalPath))) {
                 this.state.activeChapterIndex = targetIdx;
                 const wasPlaying = !this.dom.audio.paused || autoPlay;
                 
                 this.dom.audio.src = `/api/stream?path=${encodeURIComponent(physicalPath)}`;
                 
-                // FIXED: Fire play() immediately to satisfy strict mobile gesture rules
                 if (wasPlaying) {
                     this.dom.audio.play().catch(e => console.log("Buffering...", e));
                     if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
                 }
                 
                 this.dom.audio.onloadedmetadata = () => { 
-                    this.dom.audio.currentTime = Math.max(0, targetTime - targetCh.start); 
+                    this.dom.audio.currentTime = localSeekTarget; 
                 };
             } else {
-                this.dom.audio.currentTime = Math.max(0, targetTime - targetCh.start);
+                this.dom.audio.currentTime = localSeekTarget;
                 if (autoPlay) {
                     this.dom.audio.play().catch(() => {});
                     if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
@@ -341,11 +352,14 @@ class TomeBoxClient {
             }
         } else {
             // Standard M4B Engine
+            if (isNaN(targetTime)) {
+                throw new Error(`[seekToGlobalTime ERROR] M4B targetTime is NaN before assignment!`);
+            }
+
             if (!this.dom.audio.src || !this.dom.audio.src.includes(encodeURIComponent(this.state.currentPath))) {
                 this.dom.audio.src = `/api/stream?path=${encodeURIComponent(this.state.currentPath)}`;
                 const wasPlaying = !this.dom.audio.paused || autoPlay;
                 
-                // FIXED: Fire play() immediately to satisfy strict mobile gesture rules
                 if (wasPlaying) {
                     this.dom.audio.play().catch(e => console.log("Buffering...", e));
                     if (this.dom.playBtn) this.dom.playBtn.innerText = '⏸';
@@ -500,8 +514,28 @@ class TomeBoxClient {
 
     seekRelative(seconds) {
         let globalTime = this.dom.audio.currentTime + (this.state.isPlaylist && this.state.currentChapters.length > 0 ? this.state.currentChapters[this.state.activeChapterIndex].start : 0);
-        let maxTime = this.state.isPlaylist ? this.state.globalDuration : this.dom.audio.duration;
+        
+        let maxTime = this.dom.audio.duration;
+        
+        // Log if the browser is glitching the duration
+        if (!maxTime || isNaN(maxTime) || maxTime === Infinity) {
+            console.warn(`[seekRelative] audio.duration is ${maxTime}. Using fallback: ${this.state.globalDuration}`);
+            maxTime = this.state.globalDuration;
+        }
+
+        // Catch if maxTime is still broken
+        if (isNaN(maxTime) || maxTime <= 0) {
+            throw new Error(`[seekRelative ERROR] maxTime is invalid: ${maxTime}. Cannot calculate seek bounds.`);
+        }
+        
         let newGlobalTime = Math.max(0, Math.min(globalTime + seconds, maxTime));
+        
+        // The ultimate tripwire
+        if (isNaN(newGlobalTime) || newGlobalTime === undefined || newGlobalTime === null) {
+            throw new Error(`[seekRelative ERROR] newGlobalTime evaluated to ${newGlobalTime}! globalTime=${globalTime}, seconds=${seconds}, maxTime=${maxTime}`);
+        }
+
+        console.log(`[seekRelative] Success: Jumping from ${globalTime.toFixed(2)}s to ${newGlobalTime.toFixed(2)}s`);
         this.seekToGlobalTime(newGlobalTime, !this.dom.audio.paused);
     }
 
@@ -716,23 +750,32 @@ class TomeBoxClient {
     }
 
     seekAudio(e) {
-        if (!this.dom.audio.duration && !this.state.isPlaylist) return;
+        let currentDuration = this.dom.audio.duration;
+        if (!currentDuration || isNaN(currentDuration) || currentDuration === Infinity) {
+            currentDuration = this.state.globalDuration;
+        }
+        
+        if (!currentDuration && !this.state.isPlaylist) return;
+        
         const container = document.getElementById('seek-bar-container');
         const clickPercent = Math.max(0, Math.min(1, (e.clientX - container.getBoundingClientRect().left) / container.clientWidth));
         
-        let chStart = 0, chEnd = this.dom.audio.duration; 
+        let chStart = 0, chEnd = currentDuration; 
         if (this.state.currentChapters.length > 0) {
             const currentCh = this.state.currentChapters[this.state.activeChapterIndex];
             chStart = currentCh.start;
             if (this.state.isPlaylist) {
-                chEnd = currentCh.end || (chStart + this.dom.audio.duration);
+                chEnd = currentCh.end || (chStart + currentDuration);
             } else {
-                chEnd = this.state.activeChapterIndex + 1 < this.state.currentChapters.length ? this.state.currentChapters[this.state.activeChapterIndex + 1].start : this.dom.audio.duration;
+                chEnd = this.state.activeChapterIndex + 1 < this.state.currentChapters.length ? this.state.currentChapters[this.state.activeChapterIndex + 1].start : currentDuration;
             }
         }
         
         const targetGlobalTime = chStart + ((chEnd - chStart) * clickPercent);
-        this.seekToGlobalTime(targetGlobalTime, !this.dom.audio.paused);
+        
+        if (!isNaN(targetGlobalTime)) {
+            this.seekToGlobalTime(targetGlobalTime, !this.dom.audio.paused);
+        }
     }
 
     toggleSidebar() {
