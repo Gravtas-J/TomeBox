@@ -53,6 +53,7 @@ class LibraryManager:
             import os
             settings = self.db.load_settings()
             folders = settings.get("library_folders", [])
+            ignored_files = set(settings.get("ignored_files", [])) # Load ignored list
             
             if not folders: 
                 return
@@ -87,6 +88,10 @@ class LibraryManager:
                         ext = f.lower().split('.')[-1]
                         if f.lower().endswith(valid_exts):
                             full_path = os.path.normpath(os.path.abspath(os.path.join(root_dir, f)))
+                            
+                            # --- The Ignore Gatekeeper ---
+                            if full_path in ignored_files:
+                                continue 
                             
                             if full_path not in tracked_files:
                                 if ext == 'mp3' and has_tracked_primary:
@@ -345,7 +350,11 @@ class LibraryManager:
 
         removed = 0
         
-        # Save index for auto-selection later based on the original UI selection block
+        # Load settings to access the ignored list
+        settings = self.db.load_settings()
+        ignored_files = set(settings.get("ignored_files", []))
+
+        # Save index for auto-selection later
         last_idx = 0
         try:
             last_idx = app.library_tree.index(selected_items[-1])
@@ -356,6 +365,7 @@ class LibraryManager:
         for item_id, local_path in items_to_remove:
             if self.remove_local_file(local_path):
                 removed += 1
+                ignored_files.add(local_path) # Add to ignore list
                 
                 # --- Phase 1 Fix: Clear Player Ghost State ---
                 if app.file_path == local_path:
@@ -368,6 +378,10 @@ class LibraryManager:
                     app.ui_state.playback_progress.set(0)
 
         if removed > 0:
+            # Save the updated ignored list back to the DB
+            settings["ignored_files"] = list(ignored_files)
+            self.db.save_settings(settings)
+            
             app.library_presenter.refresh_library_ui()
             app.clear_sidebar()
             app._selected_local_path = None
@@ -375,7 +389,6 @@ class LibraryManager:
             # --- Phase 3 Fix: Auto-select next row ---
             children = app.library_tree.get_children()
             if children:
-                # Target the item that fell into the index of our last deleted item
                 next_idx = min(last_idx - len(selected_items) + 1, len(children) - 1)
                 next_idx = max(0, next_idx)
                 next_item = children[next_idx]
