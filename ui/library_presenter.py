@@ -144,9 +144,6 @@ class LibraryPresenter:
             img_label = tk.Label(card, image=img_obj, text="No Cover" if not img_obj else "", bg=default_bg, fg=default_fg, bd=0, highlightthickness=0, takefocus=0, cursor="hand2")
             img_label.pack(pady=(5, 0))
             
-            text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
-            text_label.pack(pady=(5, 0))
-            display_title = title[:45] + "..." if len(title) > 45 else title
             
             text_color = "#ff4444" if is_missing_file else ("#ffaa00" if is_missing_duration else default_fg)
             text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
