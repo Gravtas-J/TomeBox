@@ -206,7 +206,18 @@ class AudioConverter:
         cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", filepath]
         try:
             result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
-            return json.loads(result.stdout)
+            data = json.loads(result.stdout)
+            
+            # Normalize all tag keys to lowercase to fix macOS / FFmpeg build discrepancies
+            if "format" in data and "tags" in data["format"]:
+                data["format"]["tags"] = {k.lower(): v for k, v in data["format"]["tags"].items()}
+                
+            if "chapters" in data:
+                for chapter in data["chapters"]:
+                    if "tags" in chapter:
+                        chapter["tags"] = {k.lower(): v for k, v in chapter["tags"].items()}
+                        
+            return data
         except Exception as e:
             self.logger(f"FFprobe error on {filepath}: {e}")
             return {}
