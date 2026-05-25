@@ -92,7 +92,7 @@ class AuthController:
                 self.app.ui_state.filter.set("All")
                 self.app.ui_state.shelf_filter.set("All Shelves")
                 self.app.ui_state.search.set("")
-                self.app.root.after(0, self.app.fetch_cloud_library)
+                self.app.root.after(0, self.app.cloud_server_controller.fetch_cloud_library)
                 
         except Exception as e:
             error_trace = traceback.format_exc()
