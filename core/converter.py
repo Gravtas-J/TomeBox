@@ -212,6 +212,12 @@ class AudioConverter:
             if "format" in data and "tags" in data["format"]:
                 data["format"]["tags"] = {k.lower(): v for k, v in data["format"]["tags"].items()}
                 
+            raw_dur = data["format"].get("duration", 0)
+            try:
+                data["format"]["duration"] = float(raw_dur)
+            except (ValueError, TypeError):
+                data["format"]["duration"] = 0.0
+
             if "chapters" in data:
                 for chapter in data["chapters"]:
                     if "tags" in chapter:
@@ -221,14 +227,6 @@ class AudioConverter:
         except Exception as e:
             self.logger(f"FFprobe error on {filepath}: {e}")
             return {}
-
-    def get_duration(self, filepath):
-        try:
-            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
-            res = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8")
-            return float(res.stdout.strip())
-        except Exception:
-            return 0.0
 
     def convert_to_m4b(self, input_path, output_path, title, authors, cover_path, drm_flags, total_duration, progress_cb=None):
         import os
