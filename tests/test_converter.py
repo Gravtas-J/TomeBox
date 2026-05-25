@@ -1,6 +1,7 @@
 import os
 import pytest
 import subprocess
+import json
 from unittest.mock import MagicMock, mock_open
 from core.converter import AudioConverter, resolve_cover_path
 
@@ -47,26 +48,56 @@ def test_resolve_cover_path(monkeypatch):
 
 def test_get_metadata_and_chapters(converter, monkeypatch):
     mock_run = MagicMock()
-    mock_run.return_value.stdout = '{"format": {"tags": {"title": "Test"}}}'
     monkeypatch.setattr("core.converter.ProcessRunner.run_blocking", mock_run)
-    
-    # Success
-    data = converter.get_metadata_and_chapters("/fake.m4b")
-    assert data["format"]["tags"]["title"] == "Test"
-    
-    # Failure trap
-    mock_run.side_effect = Exception("FFprobe crashed")
-    assert converter.get_metadata_and_chapters("/fake.m4b") == {}
 
-def test_get_duration(converter, monkeypatch):
-    mock_run = MagicMock()
-    mock_run.return_value.stdout = "3600.5\n"
-    monkeypatch.setattr("core.converter.ProcessRunner.run_blocking", mock_run)
+    win_output = {
+        "format": {
+            "duration": "3600.5",
+            "tags": {"title": "Windows Book", "artist": "Bob"}
+        },
+        "chapters": [{"id": 0, "tags": {"title": "Chapter 1"}}]
+    }
+    mock_run.return_value.stdout = json.dumps(win_output)
     
-    assert converter.get_duration("/fake.m4b") == 3600.5
+    data = converter.get_metadata_and_chapters("/fake_win.m4b")
+    assert data["format"]["tags"]["title"] == "Windows Book"
+    assert data["format"]["duration"] == 3600.5
+    assert data["chapters"][0]["tags"]["title"] == "Chapter 1"
+
+    mac_output = {
+        "format": {
+            "duration": "N/A",
+            "tags": {"TITLE": "Mac Book", "ARTIST": "Alice", "ALBUM": "Mac Album"}
+        },
+        "chapters": [{"id": 0, "tags": {"TITLE": "Prologue"}}]
+    }
+    mock_run.return_value.stdout = json.dumps(mac_output)
     
-    mock_run.side_effect = Exception("Crash")
-    assert converter.get_duration("/fake.m4b") == 0.0
+    data = converter.get_metadata_and_chapters("/fake_mac.mp3")
+
+    assert "title" in data["format"]["tags"]
+    assert data["format"]["tags"]["title"] == "Mac Book"
+    assert "artist" in data["format"]["tags"]
+
+    assert data["format"]["duration"] == 0.0
+
+    assert "title" in data["chapters"][0]["tags"]
+    assert data["chapters"][0]["tags"]["title"] == "Prologue"
+
+    minimal_output = {
+        "format": {
+            "tags": {"Title": "Minimal"}
+        }
+    }
+    mock_run.return_value.stdout = json.dumps(minimal_output)
+    
+    data = converter.get_metadata_and_chapters("/fake_min.m4b")
+    assert data["format"]["tags"]["title"] == "Minimal"
+    assert data["format"]["duration"] == 0.0  # Safe fallback applied
+    assert "chapters" not in data
+
+    mock_run.side_effect = Exception("FFprobe crashed")
+    assert converter.get_metadata_and_chapters("/broken.m4b") == {}
 
 def test_cancel_execution(converter):
     process = MagicMock()
