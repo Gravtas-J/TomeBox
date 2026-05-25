@@ -264,9 +264,17 @@ def open_sleep_menu(app):
     bg_color = style.lookup("TFrame", "background") or "#f0f0f0"
     app.sleep_menu_popup.config(bg=bg_color, highlightbackground="#4a90e2", highlightthickness=1)
 
-    x = app.timer_btn.winfo_rootx()
-    y = app.timer_btn.winfo_rooty() + app.timer_btn.winfo_height() + 2
-    app.sleep_menu_popup.geometry(f"+{x}+{y}")
+    # Safely locate the button inside the PlayerBarView component
+    btn_ref = getattr(app.player_bar, 'timer_btn', None) or getattr(app.player_bar, 'sleep_btn', None)
+
+    # Initial dummy placement
+    if btn_ref:
+        x = btn_ref.winfo_rootx()
+        y = btn_ref.winfo_rooty() + btn_ref.winfo_height() + 2
+        app.sleep_menu_popup.geometry(f"+{x}+{y}")
+    else:
+        # Fallback to center screen if the button reference is completely missing
+        app.sleep_menu_popup.geometry(f"+{app.root.winfo_rootx() + 200}+{app.root.winfo_rooty() + 200}")
 
     inner = tk.Frame(app.sleep_menu_popup, bg=bg_color, padx=5, pady=5)
     inner.pack(fill="both", expand=True)
@@ -292,12 +300,15 @@ def open_sleep_menu(app):
     ttk.Entry(custom_chap_frame, textvariable=chap_var, width=5).pack(side=tk.LEFT, padx=(1, 2))
     ttk.Button(custom_chap_frame, text="Set", width=4, command=lambda: app.playback_presenter.set_sleep_timer("chapters", chap_var.get())).pack(side=tk.LEFT)
 
+    # Recalculate exact height after elements are packed
     app.sleep_menu_popup.update_idletasks()
     popup_height = app.sleep_menu_popup.winfo_reqheight()
 
-    x = app.timer_btn.winfo_rootx()
-    y = app.timer_btn.winfo_rooty()
-    app.sleep_menu_popup.geometry(f"+{x}+{y - popup_height - 2}")
+    # Shift the popup so it anchors nicely above the player bar button
+    if btn_ref:
+        x = btn_ref.winfo_rootx()
+        y = btn_ref.winfo_rooty()
+        app.sleep_menu_popup.geometry(f"+{x}+{y - popup_height - 2}")
 
     def on_focus_out(event):
         if app.sleep_menu_popup.focus_get() is None or not str(app.sleep_menu_popup.focus_get()).startswith(str(app.sleep_menu_popup)):
