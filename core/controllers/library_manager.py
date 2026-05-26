@@ -767,6 +767,12 @@ class LibraryManager:
             added_count = 0
             total_expected = 0
             
+            # --- DIAGNOSTIC TRACKERS ---
+            total_source_files = 0
+            skipped_existing = 0
+            skipped_invalid = 0
+            failed_files = 0
+            
             def update_status(msg):
                 self.current_status = msg
                 if on_status_cb: on_status_cb(msg)
@@ -778,6 +784,7 @@ class LibraryManager:
                 
                 import re
                 if not os.path.isdir(folder_path):
+                    if logger: logger(f"[Debug] Import Failed: {folder_path} is not a valid directory.")
                     return
                 
                 update_status("Scanning and grouping files...")
@@ -785,13 +792,17 @@ class LibraryManager:
                 def natural_sort_key(s):
                     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
                 
-                valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
+                # Added .m4a as it is functionally identical to .m4b and often used by 3rd party tools
+                valid_exts = (".aax", ".aaxc", ".m4b", ".mp3", ".m4a") 
                 
                 dir_to_files = {}
                 for root_dir, dirs, files in os.walk(folder_path):
                     audio_files = [f for f in files if f.lower().endswith(valid_exts)]
                     if audio_files:
+                        total_source_files += len(audio_files)
                         dir_to_files[root_dir] = audio_files
+                        
+                if logger: logger(f"[Debug] Scan complete. Found {total_source_files} potential audio files across {len(dir_to_files)} directories.")
                 
                 file_metadata_cache = {}
                 
@@ -871,7 +882,7 @@ class LibraryManager:
                 
                 total_expected = len(discovered)
                 if not discovered:
-                    if logger: logger(f"No audio files found in {folder_path}")
+                    if logger: logger(f"No valid audio files found in {folder_path} matching {valid_exts}")
                     return
                 
                 update_status(f"Importing {len(discovered)} book(s)...")
@@ -908,12 +919,23 @@ class LibraryManager:
                         elif kind == 'single':
                             for fp in group_files:
                                 if self.cancel_requested or (task_id and task_id in self.canceled_tasks): break
-                                if not os.path.exists(fp) or fp in self.local_library: continue
-                                if os.path.splitext(fp)[1].lower() not in valid_exts: continue
+                                if not os.path.exists(fp):
+                                    if logger: logger(f"[Debug] Skipped: File missing on disk -> {fp}")
+                                    skipped_invalid += 1
+                                    continue
+                                if fp in self.local_library:
+                                    if logger: logger(f"[Debug] Skipped: Already in library -> {fp}")
+                                    skipped_existing += 1
+                                    continue
+                                    
                                 update_status(f"Importing: {os.path.basename(fp)}")
-                                entry = self._process_single_file_for_import(fp, active_profile, converter, logger)
-                                self.local_library[fp] = entry
-                                added_count += 1
+                                try:
+                                    entry = self._process_single_file_for_import(fp, active_profile, converter, logger)
+                                    self.local_library[fp] = entry
+                                    added_count += 1
+                                except Exception as err:
+                                    if logger: logger(f"[Debug] Failed to process {fp}: {err}")
+                                    failed_files += 1
                             book_success = True
                         
                         elif kind == 'merge':
@@ -955,24 +977,44 @@ class LibraryManager:
                                 else:
                                     final_path = out_m4b
                             
-                            if final_path and os.path.exists(final_path) and final_path not in self.local_library:
-                                update_status(f"Importing: {os.path.basename(final_path)}")
-                                entry = self._process_single_file_for_import(final_path, active_profile, converter, logger)
-                                self.local_library[final_path] = entry
-                                added_count += 1
-                                book_success = True
+                            if final_path and os.path.exists(final_path):
+                                if final_path not in self.local_library:
+                                    update_status(f"Importing: {os.path.basename(final_path)}")
+                                    try:
+                                        entry = self._process_single_file_for_import(final_path, active_profile, converter, logger)
+                                        self.local_library[final_path] = entry
+                                        added_count += 1
+                                        book_success = True
+                                    except Exception as err:
+                                        if logger: logger(f"[Debug] Failed to process merged file {final_path}: {err}")
+                                        failed_files += 1
+                                else:
+                                    if logger: logger(f"[Debug] Skipped: Merged file already in library -> {final_path}")
+                                    skipped_existing += 1
+                                    book_success = True
                             elif final_path is None:
                                 for fp in group_files:
                                     if self.cancel_requested or (task_id and task_id in self.canceled_tasks): break
-                                    if os.path.exists(fp) and fp not in self.local_library:
+                                    if not os.path.exists(fp):
+                                        skipped_invalid += 1
+                                        continue
+                                    if fp in self.local_library:
+                                        skipped_existing += 1
+                                        continue
+                                        
+                                    try:
                                         entry = self._process_single_file_for_import(fp, active_profile, converter, logger)
                                         self.local_library[fp] = entry
                                         added_count += 1
+                                    except Exception as err:
+                                        if logger: logger(f"[Debug] Failed to process fallback file {fp}: {err}")
+                                        failed_files += 1
                                 book_success = added_count > 0
                     
                     except Exception as e:
-                        if logger: logger(f"Error processing {album_name}: {e}")
+                        if logger: logger(f"[Debug] Error processing book '{album_name}': {e}")
                         book_success = False
+                        failed_files += len(group_files)
                     finally:
                         if book_success:
                             self.db.save_local_db(self.local_library)
@@ -991,6 +1033,17 @@ class LibraryManager:
             except Exception as e:
                 if logger: logger(f"Fatal error in import worker: {e}")
             finally:
+                if logger:
+                    logger(f"--- Import Summary for {os.path.basename(folder_path)} ---")
+                    logger(f"Source Files Found: {total_source_files}")
+                    logger(f"Library Entries Added/Updated: {added_count}")
+                    if skipped_existing > 0: logger(f"Skipped (Already in Library): {skipped_existing}")
+                    if skipped_invalid > 0: logger(f"Skipped (Invalid/Missing on Disk): {skipped_invalid}")
+                    if failed_files > 0: logger(f"Failed to Process (Errors): {failed_files}")
+                    if total_source_files != added_count and import_mode in ['merge', 'playlist']:
+                        logger(f"Note: Input vs Output mismatch is expected. '{import_mode}' mode groups multiple source MP3s into a single unified library entry.")
+                    logger(f"---------------------------------------------------")
+                
                 if on_complete_cb:
                     on_complete_cb(added_count, total_expected)
                 self.active_task_id = None
