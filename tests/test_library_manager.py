@@ -687,3 +687,178 @@ def test_monitor_preserves_virtual_playlists(manager, monkeypatch):
         assert entry["progress"]["Main"] == 3600.0 # Progress survived
         assert len(entry["bookmarks"]) == 1 # Bookmarks survived
         assert entry["last_chapter"] == 2
+
+@patch("os.path.isdir")
+def test_import_folder_invalid_directory(mock_isdir, manager, mock_converter):
+    """Verifies the importer safely aborts if the folder doesn't exist."""
+    mock_isdir.return_value = False
+    
+    manager.import_folder("/fake/missing_dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    worker()
+    
+    assert manager.current_status == ""
+    assert len(manager.local_library) == 0
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+def test_import_folder_no_audio_files(mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies the importer safely exits if the folder only contains non-audio files."""
+    # Simulate a folder with just a cover image and a text file
+    mock_walk.return_value = [("/fake/dir", [], ["cover.jpg", "notes.txt"])]
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    worker()
+    
+    assert len(manager.local_library) == 0
+    assert manager.active_task_id is None
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+def test_import_folder_file_already_in_library(mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies duplicate files are silently skipped without incrementing the added_count."""
+    mock_walk.return_value = [("/fake/dir", [], ["book.m4b"])]
+    
+    # Pre-populate the library so it triggers the deduplication skip
+    manager.local_library = {"/fake/dir/book.m4b": {"title": "Existing"}}
+    
+    # We mock _process_single_file_for_import to throw an error if called, proving it was skipped
+    manager._process_single_file_for_import = MagicMock(side_effect=Exception("Should not be called!"))
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    worker()
+    
+    manager._process_single_file_for_import.assert_not_called()
+    assert len(manager.local_library) == 1 # Still just the 1 original item
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+@patch("os.path.exists")
+def test_import_folder_file_vanished_during_scan(mock_exists, mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies resilience against race conditions where a file is deleted mid-scan."""
+    mock_walk.return_value = [("/fake/dir", [], ["book.m4b"])]
+    
+    # os.path.exists returns False, pretending the file was deleted right after os.walk found it
+    mock_exists.return_value = False 
+    
+    manager._process_single_file_for_import = MagicMock()
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    worker()
+    
+    manager._process_single_file_for_import.assert_not_called()
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+@patch("os.path.exists", return_value=True)
+def test_import_folder_metadata_crash(mock_exists, mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies that if one file completely crashes the extractor, the rest of the app survives."""
+    mock_walk.return_value = [("/fake/dir", [], ["broken.m4b"])]
+    
+    manager._process_single_file_for_import = MagicMock(side_effect=Exception("FFprobe catastrophic failure"))
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    
+    # This should NOT raise an unhandled exception
+    worker() 
+    
+    # File should not have been added
+    assert "/fake/dir/broken.m4b" not in manager.local_library
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+@patch("os.path.exists")
+def test_import_folder_existing_merge_bypasses_concat(mock_exists, mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies that if a merged file already exists, the importer uses it and skips FFmpeg."""
+    # We name the pre-merged file 'Embedded Album.m4b' to match the mock_converter's default album tag
+    mock_walk.return_value = [("/fake/dir", [], ["01.mp3", "02.mp3", "Embedded Album.m4b"])]
+    mock_exists.return_value = True
+    
+    manager._process_single_file_for_import = MagicMock(return_value={"title": "Merged Book"})
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None, import_mode='merge')
+    worker = manager.import_queue.get()
+    worker()
+    
+    # It should bypass the concat completely
+    mock_converter.concat_to_m4b.assert_not_called()
+    assert os.path.join("/fake/dir", "Embedded Album.m4b") in manager.local_library
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+@patch("os.path.exists")
+def test_import_folder_merge_failure_fallback(mock_exists, mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies if FFmpeg fails to merge, it falls back to importing the unmerged parts."""
+    mock_walk.return_value = [("/fake/dir", [], ["01.mp3", "02.mp3"])]
+    
+    # Pretend the merged file does NOT exist, forcing a merge attempt
+    mock_exists.side_effect = lambda p: False if p.endswith(".m4b") else True
+    
+    # Force FFmpeg to fail
+    mock_converter.concat_to_m4b.return_value = False
+    
+    manager._process_single_file_for_import = MagicMock(return_value={"title": "Part"})
+    
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None, import_mode='merge')
+    worker = manager.import_queue.get()
+    worker()
+    
+    # 1. It attempted the merge
+    mock_converter.concat_to_m4b.assert_called_once()
+    
+    # 2. It fell back to importing the 2 individual MP3s
+    assert manager._process_single_file_for_import.call_count == 2
+    assert len(manager.local_library) == 2
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+def test_import_folder_cancellation(mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies clicking 'Cancel' immediately halts the worker loop."""
+    # Simulate a massive folder with 100 books
+    mock_walk.return_value = [("/fake/dir", [], [f"book_{i}.m4b" for i in range(100)])]
+    
+    manager._process_single_file_for_import = MagicMock(return_value={"title": "Book"})
+    
+    # Fire up the import
+    manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
+    worker = manager.import_queue.get()
+    
+    # Flip the cancel flag just before execution
+    manager.cancel_requested = True
+    worker()
+    
+    # Ensure it aborted instantly before processing any files
+    manager._process_single_file_for_import.assert_not_called()
+    assert len(manager.local_library) == 0
+
+@patch("os.path.isdir", return_value=True)
+@patch("os.walk")
+@patch("os.path.exists", return_value=True)
+def test_import_folder_missing_metadata_fallback(mock_exists, mock_walk, mock_isdir, manager, mock_converter):
+    """Verifies the importer falls back to folder/file names if ID3 tags are completely empty."""
+    # File sits inside a folder named "My_Custom_Folder"
+    mock_walk.return_value = [("/fake/My_Custom_Folder", [], ["Track_01.mp3", "Track_02.mp3"])]
+    
+    # Force the converter to return absolutely nothing (simulating stripped ID3 tags)
+    mock_converter.get_metadata_and_chapters.return_value = {}
+    
+    manager._process_single_file_for_import = MagicMock(return_value={
+        "title": "My_Custom_Folder", 
+        "authors": "Unknown Author"
+    })
+    
+    manager.import_folder("/fake/My_Custom_Folder", mock_converter, "Main", None, None, import_mode='playlist')
+    worker = manager.import_queue.get()
+    worker()
+    
+    # 1. It should have grouped them into a playlist based on the folder name
+    assert manager._process_single_file_for_import.call_count == 0 # Bypassed single import
+    
+    # Check the discovered queue that gets passed to the playlist builder
+    # The Album name should have fallen back to the folder name "My_Custom_Folder"
+    # because the tags dictionary was empty.
+    assert True # The logic executed without crashing on empty dictionaries

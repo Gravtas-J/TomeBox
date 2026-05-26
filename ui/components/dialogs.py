@@ -813,17 +813,26 @@ def open_match_to_audible_window(app, filepath):
         win.update_idletasks()
 
         def capture_results(filepath=None, products=None, **kwargs):
-            # NEW DEBUG LINE
             print(f"[Scraper] API returned {len(products) if products else 0} results for query: {query}")
             
-            app.root.after(0, lambda: search_btn.config(state=tk.NORMAL))
-            app.root.after(0, lambda: populate_results(products))
+            def safe_update():
+                if win.winfo_exists():
+                    if search_btn.winfo_exists():
+                        search_btn.config(state=tk.NORMAL)
+                    populate_results(products)
+                    
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
 
         def capture_error(error_msg=None, **kwargs):
-            app.root.after(0, lambda: search_btn.config(state=tk.NORMAL))
-            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
+            def safe_update():
+                if win.winfo_exists():
+                    status_var.set(f"Error: {error_msg}")
+                    if search_btn.winfo_exists():
+                        search_btn.config(state=tk.NORMAL)
+                        
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.search_complete", capture_results)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", capture_error)
 
@@ -846,14 +855,23 @@ def open_match_to_audible_window(app, filepath):
         win.update_idletasks()
 
         def on_done(filepath=None, title=None, **kwargs):
-            app.root.after(0, lambda: app.refresh_library_ui())
-            app.root.after(0, win.destroy)
+            def safe_update():
+                app.refresh_library_ui()
+                if win.winfo_exists():
+                    win.destroy()
+                    
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
         def on_error(error_msg=None, **kwargs):
-            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
-            apply_btn.config(state=tk.NORMAL)
+            def safe_update():
+                if win.winfo_exists():
+                    status_var.set(f"Error: {error_msg}")
+                    if apply_btn.winfo_exists():
+                        apply_btn.config(state=tk.NORMAL)
+                        
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
@@ -993,16 +1011,24 @@ def open_manual_metadata_window(app, filepath):
         }
 
         def on_done(filepath=None, title=None, **kwargs):
-            app.root.after(0, lambda: app.library_presenter.refresh_library_ui())
-            # Force the sidebar to fetch the newly updated display metadata
-            app.root.after(0, lambda: app.metadata_manager.fetch_display_metadata(filepath))
-            app.root.after(0, win.destroy)
+            def safe_update():
+                app.library_presenter.refresh_library_ui()
+                app.metadata_manager.fetch_display_metadata(filepath)
+                if win.winfo_exists():
+                    win.destroy()
+                    
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
         def on_error(error_msg=None, **kwargs):
-            app.root.after(0, lambda: status_var.set(f"Error: {error_msg}"))
-            app.root.after(0, lambda: save_btn.config(state=tk.NORMAL))
+            def safe_update():
+                if win.winfo_exists():
+                    status_var.set(f"Error: {error_msg}")
+                    if save_btn.winfo_exists():
+                        save_btn.config(state=tk.NORMAL)
+                        
+            app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
@@ -1022,7 +1048,6 @@ def open_manual_metadata_window(app, filepath):
     save_btn.pack(side=tk.RIGHT)
 
     win.focus_set()
-
 
 def open_cover_modal(app, asin, title, explicit_path=None):
     """Opens a standardized, high-resolution, clickable cover art modal."""
