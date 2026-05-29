@@ -379,7 +379,41 @@ class LibraryPresenter:
         if not target: 
             return
             
-        # 1. Intercept Home and End to FORCE a visual scroll, and stop native selection jumps
+        # 1. Intercept Navigation Keys for List View to snap the selection focus
+        if event.keysym in ("Prior", "Next", "Home", "End") and self.app.current_view_mode == "list":
+            children = target.get_children()
+            if children:
+                if event.keysym == "Home":
+                    new_idx = 0
+                elif event.keysym == "End":
+                    new_idx = len(children) - 1
+                else:
+                    selected = target.selection()
+                    current_idx = 0
+                    if selected:
+                        try:
+                            current_idx = children.index(selected[0])
+                        except ValueError:
+                            pass
+                    
+                    try:
+                        page_size = int(target.cget('height'))
+                    except Exception:
+                        page_size = 15 
+                        
+                    if event.keysym == 'Next':
+                        new_idx = min(current_idx + page_size, len(children) - 1)
+                    else:  # Prior
+                        new_idx = max(current_idx - page_size, 0)
+                        
+                new_item = children[new_idx]
+                target.selection_set(new_item)
+                target.focus(new_item)
+                target.see(new_item)
+                target.event_generate("<<TreeviewSelect>>")
+                return "break"
+                
+        # 2. Intercept Home and End for Grid View to FORCE a visual scroll
         if event.keysym == "Home": 
             target.yview_moveto(0.0)
             return "break"
@@ -387,13 +421,13 @@ class LibraryPresenter:
             target.yview_moveto(1.0)
             return "break"
             
-        # 2. If the user is navigating the List View natively with arrows, let Treeview 
+        # 3. If the user is navigating the List View natively with arrows, let Treeview 
         # handle it so the selection changes, but trigger our sidebar update.
         if self.app.current_view_mode == "list" and focused == getattr(self.app, 'library_tree', None):
             self.app.root.after(10, self.app.on_item_select)
             return
             
-        # 3. Otherwise, manually scroll the Grid Canvas or unfocused List
+        # 4. Otherwise, manually scroll the Grid Canvas or unfocused List
         if event.keysym == "Up": target.yview_scroll(-1, "units")
         elif event.keysym == "Down": target.yview_scroll(1, "units")
         elif event.keysym == "Prior": target.yview_scroll(-1, "pages")
