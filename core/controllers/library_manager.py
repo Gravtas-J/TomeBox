@@ -32,6 +32,7 @@ class LibraryManager:
 
         self.active_task_id = None
         self.canceled_tasks = set()
+        self.unimportable_files = set()
 
         if start_workers:
             threading.Thread(target=self._import_worker_loop, daemon=True).start()
@@ -53,53 +54,61 @@ class LibraryManager:
             import os
             settings = self.db.load_settings()
             folders = settings.get("library_folders", [])
-            ignored_files = set(settings.get("ignored_files", [])) # Load ignored list
+            
+            # Normalize the ignored list exactly how import_folder does it
+            ignored_files = {os.path.normpath(p) for p in settings.get("ignored_files", [])} 
             
             if not folders: 
                 return
                 
-            valid_exts = (".aax", ".aaxc", ".m4b", ".mp3")
+            # Unified extensions
+            valid_exts = (".aax", ".aaxc", ".m4b", ".mp3", ".m4a")
             untracked_dirs = set()
             
             logger.info(f"Background scanner checking {len(folders)} library folders...")
             
+            # Gather all tracked file paths dynamically
             tracked_files = set()
             for path, data in self.local_library.items():
                 if data.get("is_playlist"):
                     for ch in data.get("chapters", []):
                         ch_path = ch.get("file_path")
                         if ch_path:
-                            tracked_files.add(os.path.normpath(os.path.abspath(ch_path)))
+                            tracked_files.add(os.path.normpath(ch_path))
                 else:
                     if path:
-                        tracked_files.add(os.path.normpath(os.path.abspath(path)))
+                        tracked_files.add(os.path.normpath(path))
             
             for folder in folders:
                 if not os.path.exists(folder): continue
                 for root_dir, _, files in os.walk(folder):
                     
-                    has_tracked_primary = any(
-                        f.lower().endswith(('.m4b', '.aax', '.aaxc')) and 
-                        os.path.normpath(os.path.abspath(os.path.join(root_dir, f))) in tracked_files
-                        for f in files
-                    )
-                    
                     for f in files:
-                        ext = f.lower().split('.')[-1]
+                        if ".temp." in f.lower() or f.lower().endswith(".tmp"):
+                            continue
                         if f.lower().endswith(valid_exts):
-                            full_path = os.path.normpath(os.path.abspath(os.path.join(root_dir, f)))
+                            # Strict match to how import_folder and the UI save paths
+                            full_path = os.path.normpath(os.path.join(root_dir, f))
                             
-                            # --- The Ignore Gatekeeper ---
+                            # Gatekeeper 1: User explicitly ignored it
                             if full_path in ignored_files:
                                 continue 
                             
+                            # Gatekeeper 2: It's not in the library yet
                             if full_path not in tracked_files:
-                                if ext == 'mp3' and has_tracked_primary:
-                                    continue
                                 untracked_dirs.add(root_dir)
+                                break # We only need one untracked file to trigger a folder scan
+                            
+                            # Gatekeeper 3: It's not in the library yet
+                            if full_path not in tracked_files:
+                                untracked_dirs.add(root_dir)
+                                break
             
             if untracked_dirs:
                 logger.info(f"Background scan found new files in {len(untracked_dirs)} directories. Queuing smart import...")
+                
+                # Default to merge so it behaves identically to Drag & Drop
+                default_mode = settings.get("default_import_mode", "playlist")
                 
                 for directory in untracked_dirs:
                     self.import_folder(
@@ -110,7 +119,7 @@ class LibraryManager:
                         on_complete_cb=lambda c, t: on_refresh_cb() if on_refresh_cb else None,
                         logger=logger,
                         task_id=f"auto_scan_{time.time()}_{os.path.basename(directory)}",
-                        import_mode='playlist'  
+                        import_mode=default_mode  
                     )
         
         thread_pool.submit(worker)
@@ -363,10 +372,16 @@ class LibraryManager:
 
         # 4. Perform the actual removal using our pre-filtered list
         for item_id, local_path in items_to_remove:
+            entry_data = self.local_library.get(local_path, {})
             if self.remove_local_file(local_path):
                 removed += 1
                 ignored_files.add(local_path) # Add to ignore list
                 
+                for ch in entry_data.get("chapters", []):
+                    ch_path = ch.get("file_path")
+                    if ch_path:
+                        ignored_files.add(os.path.normpath(ch_path))
+
                 # --- Phase 1 Fix: Clear Player Ghost State ---
                 if app.file_path == local_path:
                     app.playback_presenter.stop_audio()
@@ -431,7 +446,7 @@ class LibraryManager:
         except OSError:
             creation_date = time.time()
 
-        if format_clean in ["M4B", "MP3"]:
+        if format_clean in ["M4B", "MP3", "M4A"]:
             try:
                 data = converter.get_metadata_and_chapters(filepath)
                 tags = data.get("format", {}).get("tags", {})
@@ -466,6 +481,7 @@ class LibraryManager:
                         break
             except Exception as e:
                 if logger: logger(f"Failed to read tags for {filename}: {e}")
+                raise ValueError(f"Corrupt or unreadable media file: {filename}") from e
 
         matched_cloud_item = find_matching_cloud_item(title, self.cloud_items)
 
@@ -795,16 +811,34 @@ class LibraryManager:
                 # Added .m4a as it is functionally identical to .m4b and often used by 3rd party tools
                 valid_exts = (".aax", ".aaxc", ".m4b", ".mp3", ".m4a") 
                 
-                dir_to_files = {}
+                # Load ignored files list for fast O(1) lookups
+                ignored_set = set()
+                try:
+                    settings = self.db.load_settings()
+                    if settings and "ignored_files" in settings:
+                        ignored_set = {os.path.normpath(p) for p in settings["ignored_files"]}
+                except Exception:
+                    pass
+                
+                # --- PHASE 1: Global File Pooling ---
+                all_discovered_files = []
                 for root_dir, dirs, files in os.walk(folder_path):
-                    audio_files = [f for f in files if f.lower().endswith(valid_exts)]
-                    if audio_files:
-                        total_source_files += len(audio_files)
-                        dir_to_files[root_dir] = audio_files
-                        
-                if logger: logger(f"[Debug] Scan complete. Found {total_source_files} potential audio files across {len(dir_to_files)} directories.")
+                    for f in files:
+                        # Block FFmpeg Temp Files
+                        if ".temp." in f.lower() or f.lower().endswith(".tmp"):
+                            continue
+                            
+                        if f.lower().endswith(valid_exts):
+                            full_path = os.path.normpath(os.path.join(root_dir, f))
+                            if full_path not in ignored_set:
+                                all_discovered_files.append(full_path)
+                                
+                total_source_files = len(all_discovered_files)
+                if logger: logger(f"[Debug] Scan complete. Found {total_source_files} potential audio files across tree.")
                 
                 file_metadata_cache = {}
+                missing_album_tags = set()
+                global_album_groups = {}
                 
                 def advanced_sort_key(filepath):
                     tags = file_metadata_cache.get(filepath, {})
@@ -817,6 +851,39 @@ class LibraryManager:
                             pass
                     return (track_num, natural_sort_key(os.path.basename(filepath)))
                 
+                # --- PHASE 2: Global Album Grouping ---
+                update_status("Analyzing metadata for global grouping...")
+                
+                for full_path in all_discovered_files:
+                    if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
+                        break
+                        
+                    ext = full_path.lower().split('.')[-1]
+                    directory = os.path.dirname(full_path)
+                    
+                    if ext in ('aax', 'aaxc'):
+                        global_album_groups.setdefault("AAX_NO_MERGE", []).append(full_path)
+                        continue
+                        
+                    try:
+                        data = converter.get_metadata_and_chapters(full_path)
+                        tags = data.get("format", {}).get("tags", {})
+                        file_metadata_cache[full_path] = tags
+                        
+                        album = tags.get("album")
+                        if not album:
+                            # Fallback to immediate parent folder name
+                            album = os.path.basename(directory)
+                            missing_album_tags.add(full_path)
+                            
+                    except Exception:
+                        album = os.path.basename(directory)
+                        file_metadata_cache[full_path] = {}
+                        missing_album_tags.add(full_path)
+                        
+                    global_album_groups.setdefault(album, []).append(full_path)
+                
+                # --- PHASE 3: Book Queue Generation ---
                 discovered = [] 
                 book_counter = 0
                 
@@ -826,55 +893,34 @@ class LibraryManager:
                     safe = re.sub(r'[^A-Za-z0-9]+', '_', label)[:40]
                     return f"{task_id}__{book_counter}_{safe}"
                 
-                def record_book(title, kind, directory, group_files):
+                def record_book(title, kind, group_files):
                     sub_id = make_sub_id(title)
+                    # Use the directory of the first file as the output destination for merges
+                    output_dir = os.path.dirname(group_files[0]) if group_files else folder_path
                     discovered.append({
                         'sub_task_id': sub_id, 'title': title, 'kind': kind,
-                        'directory': directory, 'group_files': group_files,
+                        'directory': output_dir, 'group_files': group_files,
                     })
                     if on_book_start_cb:
                         on_book_start_cb(sub_id, title)
                 
-                for directory, files in dir_to_files.items():
+                for album_name, group_files in global_album_groups.items():
                     if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                         break
-                    
-                    if len(files) == 1:
-                        fname = files[0]
-                        record_book(os.path.splitext(fname)[0], 'single', directory, [os.path.join(directory, fname)])
+                        
+                    if album_name == "AAX_NO_MERGE":
+                        for aax in group_files:
+                            record_book(os.path.basename(aax), 'single', [aax])
                         continue
-                    
-                    update_status(f"Analyzing parts in {os.path.basename(directory)}...")
-                    
-                    album_groups = {}
-                    for f in files:
-                        full_path = os.path.join(directory, f)
-                        ext = f.lower().split('.')[-1]
-                        if ext in ('aax', 'aaxc'):
-                            album_groups.setdefault("AAX_NO_MERGE", []).append(full_path)
-                            continue
-                        try:
-                            data = converter.get_metadata_and_chapters(full_path)
-                            tags = data.get("format", {}).get("tags", {})
-                            album = tags.get("album", os.path.basename(directory))
-                            file_metadata_cache[full_path] = tags
-                        except Exception:
-                            album = os.path.basename(directory)
-                            file_metadata_cache[full_path] = {}
-                        album_groups.setdefault(album, []).append(full_path)
-                    
-                    for album_name, group_files in album_groups.items():
-                        if album_name == "AAX_NO_MERGE":
-                            for aax in group_files:
-                                record_book(os.path.basename(aax), 'single', directory, [aax])
-                            continue
-                        if len(group_files) == 1:
-                            kind = 'single'
-                        elif import_mode == 'playlist':
-                            kind = 'playlist'
-                        else:
-                            kind = 'merge'
-                        record_book(album_name, kind, directory, group_files)
+                        
+                    if len(group_files) == 1:
+                        kind = 'single'
+                    elif import_mode == 'playlist':
+                        kind = 'playlist'
+                    else:
+                        kind = 'merge'
+                        
+                    record_book(album_name, kind, group_files)
                 
                 if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                     update_status("Import cancelled.")
@@ -934,14 +980,17 @@ class LibraryManager:
                                     self.local_library[fp] = entry
                                     added_count += 1
                                 except Exception as err:
+                                    if hasattr(self, 'unimportable_files'): 
+                                        self.unimportable_files.add(os.path.normpath(fp))
+                                        
                                     if logger: logger(f"[Debug] Failed to process {fp}: {err}")
                                     failed_files += 1
-                            book_success = True
+                                    self.event_bus.publish("conversion.error", filepath=fp, action="import", error_msg=str(err))
                         
                         elif kind == 'merge':
                             safe_album = "".join(c for c in album_name if c.isalnum() or c in [' ', '-', '_']).rstrip()
                             out_m4b = os.path.join(directory, f"{safe_album}.m4b")
-                            fallback_m4b = os.path.join(directory, f"{safe_album}_merged.m4b")
+                            fallback_m4b = os.path.join(directory, f"{safe_album}.m4b")
                             
                             final_path = None
                             if out_m4b in group_files:
@@ -986,8 +1035,12 @@ class LibraryManager:
                                         added_count += 1
                                         book_success = True
                                     except Exception as err:
+                                        if hasattr(self, 'unimportable_files'): 
+                                            self.unimportable_files.add(os.path.normpath(final_path))
+                                            
                                         if logger: logger(f"[Debug] Failed to process merged file {final_path}: {err}")
                                         failed_files += 1
+                                        self.event_bus.publish("conversion.error", filepath=final_path, action="import", error_msg=str(err))
                                 else:
                                     if logger: logger(f"[Debug] Skipped: Merged file already in library -> {final_path}")
                                     skipped_existing += 1
@@ -1007,14 +1060,24 @@ class LibraryManager:
                                         self.local_library[fp] = entry
                                         added_count += 1
                                     except Exception as err:
+                                        if hasattr(self, 'unimportable_files'): 
+                                            self.unimportable_files.add(os.path.normpath(fp))
+                                            
                                         if logger: logger(f"[Debug] Failed to process fallback file {fp}: {err}")
                                         failed_files += 1
+                                        self.event_bus.publish("conversion.error", filepath=fp, action="import", error_msg=str(err))
                                 book_success = added_count > 0
                     
                     except Exception as e:
+                        if hasattr(self, 'unimportable_files'):
+                            for bad_fp in group_files:
+                                self.unimportable_files.add(os.path.normpath(bad_fp))
+                                
                         if logger: logger(f"[Debug] Error processing book '{album_name}': {e}")
                         book_success = False
                         failed_files += len(group_files)
+                        if group_files:
+                            self.event_bus.publish("conversion.error", filepath=group_files[0], action="import", error_msg=f"Book processing failed: {e}")
                     finally:
                         if book_success:
                             self.db.save_local_db(self.local_library)
@@ -1040,6 +1103,12 @@ class LibraryManager:
                     if skipped_existing > 0: logger(f"Skipped (Already in Library): {skipped_existing}")
                     if skipped_invalid > 0: logger(f"Skipped (Invalid/Missing on Disk): {skipped_invalid}")
                     if failed_files > 0: logger(f"Failed to Process (Errors): {failed_files}")
+                    
+                    # --- NEW: Fallback Warning ---
+                    if missing_album_tags:
+                        logger(f"WARNING: {len(missing_album_tags)} file(s) were missing 'Album' ID3 tags.")
+                        logger(f"Fallback Applied: These files were grouped using their parent folder names instead.")
+                        
                     if total_source_files != added_count and import_mode in ['merge', 'playlist']:
                         logger(f"Note: Input vs Output mismatch is expected. '{import_mode}' mode groups multiple source MP3s into a single unified library entry.")
                     logger(f"---------------------------------------------------")

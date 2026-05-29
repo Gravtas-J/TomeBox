@@ -148,7 +148,7 @@ def setup_library_view(app, parent):
     app.library_tree = ttk.Treeview(
         tree_frame, 
         columns=("Title", "Author", "Narrator", "Series", "Duration", "ASIN", "Status", "File Path", "Date Added"), 
-        displaycolumns=("Title", "ASIN", "Author", "Narrator", "Series", "Duration", "Date Added", "File Path", "Status" ),
+        displaycolumns=("Title", "ASIN", "Author", "Narrator", "Series", "Duration", "Date Added","Status", "File Path"),
         show="headings", 
         yscrollcommand=app.v_scroll.set,
         xscrollcommand=app.h_scroll.set
@@ -203,8 +203,9 @@ def setup_library_view(app, parent):
     app.library_tree.column("Duration", width=70, minwidth=70, stretch=tk.NO)
     app.library_tree.column("ASIN", width=90, minwidth=90, stretch=tk.NO)
     app.library_tree.column("File Path", width=350, minwidth=250, stretch=tk.NO)
-    app.library_tree.column("Date Added", width=100, minwidth=90, stretch=tk.NO)
-    app.library_tree.column("Status", width=110, minwidth=100, stretch=tk.YES)
+    app.library_tree.column("Status", width=110, minwidth=100, stretch=tk.NO)
+    app.library_tree.column("Date Added", width=100, minwidth=90, stretch=tk.YES)
+    
     
     
     btn_frame = ttk.Frame(lib_frame)
