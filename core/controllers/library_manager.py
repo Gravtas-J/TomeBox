@@ -520,6 +520,7 @@ class LibraryManager:
             cover_output = os.path.join(self.covers_dir, f"{fake_asin}.jpg")
             extraction_succeeded = os.path.exists(cover_output) and os.path.getsize(cover_output) > 0
             
+            # 1. Try to extract an embedded cover first
             if not extraction_succeeded:
                 try:
                     extract_cmd = ["ffmpeg", "-y", "-i", filepath, "-an", "-vframes", "1", cover_output]
@@ -530,6 +531,23 @@ class LibraryManager:
                         if logger: logger(f"Extracted embedded cover for {title}")
                 except Exception as e:
                     if logger: logger(f"Cover extraction failed for {title}: {e}")
+                    
+            if not extraction_succeeded:
+                directory = os.path.dirname(filepath)
+                valid_covers = ["cover.jpg", "cover.png", "folder.jpg", "folder.png", "art.jpg", "art.png"]
+                
+                for c in valid_covers:
+                    test_path = os.path.join(directory, c)
+                    if os.path.exists(test_path):
+                        try:
+                            from PIL import Image
+                            img = Image.open(test_path).convert("RGB")
+                            img.save(cover_output, "JPEG")
+                            extraction_succeeded = True
+                            if logger: logger(f"Auto-assigned local cover for {title} from '{c}'")
+                            break
+                        except Exception:
+                            pass
             
             if extraction_succeeded:
                 entry["asin"] = fake_asin
