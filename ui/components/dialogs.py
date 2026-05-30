@@ -976,13 +976,13 @@ def open_manual_metadata_window(app, filepath):
     narrator_var = tk.StringVar(value=local_data.get("narrator", ""))
     ttk.Entry(form_frame, textvariable=narrator_var, width=38).grid(row=2, column=1, sticky="w", pady=5)
 
-    ttk.Label(form_frame, text="Series:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+    ttk.Label(form_frame, text="Series:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
     series_var = tk.StringVar(value=local_data.get("series", ""))
-    ttk.Entry(form_frame, textvariable=series_var, width=38).grid(row=2, column=1, sticky="w", pady=5)
+    ttk.Entry(form_frame, textvariable=series_var, width=38).grid(row=3, column=1, sticky="w", pady=5)
 
-    ttk.Label(form_frame, text="ASIN:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+    ttk.Label(form_frame, text="ASIN:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
     asin_var = tk.StringVar(value=local_data.get("asin", ""))
-    ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(row=3, column=1, sticky="w", pady=5)
+    ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(row=4, column=1, sticky="w", pady=5)
 
     # --- Options ---
     options_frame = ttk.Frame(main_frame)
