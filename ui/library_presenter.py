@@ -218,6 +218,52 @@ class LibraryPresenter:
         # 3. Apply the new text and flip the command for the next click
         tree.heading(col, text=f"{col}{arrow}", command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
 
+    def handle_tree_double_click(self, event):
+        import tkinter.font as tkfont
+        
+        tree = event.widget
+        region = tree.identify_region(event.x, event.y)
+        
+        if region == "separator":
+            # Identify which column separator was clicked
+            column_id = tree.identify_column(event.x)
+            if not column_id:
+                return "break"
+                
+            # Get the logical column name (protects against displaycolumns reordering)
+            col_name = tree.column(column_id, "id")
+            
+            # Initialize font measurement
+            font = tkfont.nametofont("TkTextFont")
+            
+            # Start by measuring the header text
+            header_text = tree.heading(column_id, "text")
+            max_width = font.measure(header_text) + 30 # +30px for padding and sort arrows
+            
+            # Scan all visible rows for the longest string
+            for item in tree.get_children():
+                try:
+                    val = str(tree.set(item, col_name))
+                    width = font.measure(val) + 30
+                    if width > max_width:
+                        max_width = width
+                except Exception:
+                    pass
+            
+            # Cap the max width to prevent runaway sizing (e.g., long file paths)
+            max_width = min(max_width, 800)
+            
+            # Apply the calculated width
+            tree.column(column_id, width=max_width)
+            
+            # Stop the event from propagating to prevent standard Tkinter drag glitches
+            return "break"
+            
+        elif region in ("tree", "cell"):
+            # Route to normal audio playback
+            if hasattr(self.app, 'playback_presenter'):
+                self.app.playback_presenter.master_play(event)
+                
     def _on_global_scroll(self, event):
         widget = event.widget
         if isinstance(widget, str):
