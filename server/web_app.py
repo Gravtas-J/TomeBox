@@ -603,7 +603,10 @@ def create_server_app(tomebox):
         end_byte = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else file_size - 1
 
         if start_byte >= file_size or end_byte >= file_size:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, detail="Invalid Range")
+            raise HTTPException(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE, 
+                detail="Range out of bounds"
+            )
 
         chunk_size = (end_byte - start_byte) + 1
 

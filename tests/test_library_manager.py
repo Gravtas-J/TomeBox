@@ -786,7 +786,9 @@ def test_import_folder_existing_merge_bypasses_concat(mock_exists, mock_walk, mo
     
     # It should bypass the concat completely
     mock_converter.concat_to_m4b.assert_not_called()
-    assert os.path.join("/fake/dir", "Embedded Album.m4b") in manager.local_library
+    
+    expected_path = os.path.normpath(os.path.join("/fake/dir", "Embedded Album.m4b"))
+    assert expected_path in manager.local_library
 
 @patch("os.path.isdir", return_value=True)
 @patch("os.walk")
