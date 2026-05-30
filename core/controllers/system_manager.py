@@ -86,6 +86,28 @@ class SystemManager:
                 time.sleep(1)
                 continue
 
+    def open_file_location(self, filepath):
+        """Opens the native OS file explorer and highlights the target file."""
+        import os
+        import subprocess
+        import platform
+
+        if not filepath or not os.path.exists(filepath):
+            return
+
+        filepath = os.path.normpath(filepath)
+
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(['explorer', '/select,', filepath])
+            elif platform.system() == "Darwin": 
+                subprocess.Popen(["open", "-R", filepath])
+            else: 
+                subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
+        except Exception as e:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger(f"Failed to open file location: {e}")
+
     def toggle_system_sleep(self, prevent_sleep=True):
         """Prevents Windows and the display from sleeping during active background tasks."""
         if os.name != 'nt':

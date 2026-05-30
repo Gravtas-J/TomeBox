@@ -149,17 +149,17 @@ class LibraryPresenter:
             text_label = tk.Label(card, text=display_title, bg=default_bg, fg=text_color, font=("Segoe UI", 9), wraplength=150, justify="center", bd=0, highlightthickness=0, takefocus=0)
             text_label.pack(pady=(5, 0))
             
-            def on_card_click(e, oc=outer_card, t=title, a=asin, s=status):
+            def on_card_click(e, oc=outer_card, t=title, a=asin, s=status, p=row_path):
                 if self.last_selected_card_frame is not None and self.last_selected_card_frame.winfo_exists():
                     self.last_selected_card_frame.config(bg=default_bg)
                 
                 oc.config(bg=select_bg)
                 self.last_selected_card_frame = oc 
-                self.app._selected_grid_item = {'values': [t, "", "", "", "", a, s, "", ""]}
+                self.app._selected_grid_item = {'values': [t, "", "", "", "", a, s, p, ""]}
                 self.app.on_item_select()
                 
-            def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status):
-                on_card_click(e, oc, t, a, s)
+            def on_card_double_click(e, oc=outer_card, t=title, a=asin, s=status, p=row_path):
+                on_card_click(e, oc, t, a, s, p)
                 self.app.playback_presenter.master_play()
 
             outer_card.bind("<Button-1>", on_card_click)
@@ -263,7 +263,7 @@ class LibraryPresenter:
             # Route to normal audio playback
             if hasattr(self.app, 'playback_presenter'):
                 self.app.playback_presenter.master_play(event)
-                
+
     def _on_global_scroll(self, event):
         widget = event.widget
         if isinstance(widget, str):

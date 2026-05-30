@@ -528,23 +528,62 @@ class AAXManagerApp:
         self.context_menu.add_command(label="▶ Play", command=self.playback_presenter.master_play)
         self.context_menu.add_separator()
 
-
         # File Operations 
         self.context_menu.add_command(label="⬇️ Download", command=lambda: self.handle_action_on_selected("download"))
         self.context_menu.add_command(label="🔄 Convert", command=lambda: self.handle_action_on_selected("convert"))
         self.context_menu.add_command(label="🔍 Scrape Metadata", command=lambda: self.handle_action_on_selected("scrape"))
         self.context_menu.add_command(label="✏️ Edit Metadata", command=lambda: self.handle_action_on_selected("edit"))
+        
+        # --- NEW: Safe Extraction Lambda ---
+        def open_location():
+            path = None
+            if self.current_view_mode == "list":
+                selected = self.library_tree.selection()
+                if selected:
+                    vals = self.library_tree.item(selected[0], 'values')
+                    if len(vals) > 7: path = vals[7]
+            else:
+                grid_item = getattr(self, '_selected_grid_item', None)
+                if grid_item:
+                    vals = grid_item.get('values', [])
+                    if len(vals) > 7: path = vals[7]
+            
+            if not path: path = getattr(self, '_selected_local_path', None)
+            self.system_manager.open_file_location(path)
+
+        self.context_menu.add_command(label="📁 Open File Location", command=open_location)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="🔗 Match Local File", command=lambda: self.handle_action_on_selected("match_local"))
 
     def show_context_menu(self, event):
+        path = None
         if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
             if item and item not in self.library_tree.selection():
                 self.library_tree.selection_set(item)
                 self.library_tree.focus(item)
                 self.on_item_select()
-
+                
+            selected = self.library_tree.selection()
+            if selected:
+                vals = self.library_tree.item(selected[0], 'values')
+                if len(vals) > 7: path = vals[7]
+        else:
+            grid_item = getattr(self, '_selected_grid_item', None)
+            if grid_item:
+                vals = grid_item.get('values', [])
+                if len(vals) > 7: path = vals[7]
+                
+        if not path:
+            path = getattr(self, '_selected_local_path', None)
+            
+        # --- NEW: Dynamically enable or disable the button ---
+        import os
+        if path and os.path.exists(path):
+            self.context_menu.entryconfig("📁 Open File Location", state=tk.NORMAL)
+        else:
+            self.context_menu.entryconfig("📁 Open File Location", state=tk.DISABLED)
+        
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
