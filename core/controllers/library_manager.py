@@ -241,7 +241,8 @@ class LibraryManager:
             narrator = ", ".join([n.get("name", "") for n in raw_narrators if isinstance(n, dict)]) or item.get("narrator", "")
             
             series_str = format_series_list(item.get("series"))
-            
+            if series_str.upper() in ["N/A", "NONE", "UNKNOWN", "NULL", "[]"]:
+                series_str = ""
             duration_min = item.get("runtime_length_min") or 0
             hours, mins = divmod(duration_min, 60)
             duration_str = f"{hours}h {mins}m"
@@ -273,9 +274,13 @@ class LibraryManager:
                 if meta.get("narrators") and not loc_narrator:
                     loc_narrator = ", ".join([n.get("name", "") for n in meta.get("narrators") if isinstance(n, dict)])
 
-                loc_series = data.get("series", "N/A")
-                if meta.get("series") and loc_series == "N/A":
+                loc_series = data.get("series", "")
+                if meta.get("series") and (not loc_series or loc_series.upper() == "N/A"):
                     loc_series = format_series_list(meta.get("series"))
+
+                # Normalize to blank universally
+                if loc_series.upper() in ["N/A", "NONE", "UNKNOWN", "NULL", "[]"]:
+                    loc_series = ""
 
                 duration_min = meta.get("runtime_length_min") or data.get("duration_min") or 0
                 loc_duration = f"{duration_min//60}h {duration_min%60}m" if duration_min > 0 else "N/A"
