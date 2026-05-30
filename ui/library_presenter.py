@@ -208,7 +208,15 @@ class LibraryPresenter:
         for index, (val, child) in enumerate(data):
             tree.move(child, '', index)
             
-        tree.heading(col, command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
+        # 1. Reset all column headers to their clean base names
+        for c in tree["columns"]:
+            tree.heading(c, text=c)
+            
+        # 2. Append the directional arrow to the active column
+        arrow = " ▼" if descending else " ▲"
+        
+        # 3. Apply the new text and flip the command for the next click
+        tree.heading(col, text=f"{col}{arrow}", command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
 
     def _on_global_scroll(self, event):
         widget = event.widget
