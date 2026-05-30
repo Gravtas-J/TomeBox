@@ -949,9 +949,13 @@ def open_manual_metadata_window(app, filepath):
             update_preview(existing_cover)
 
     def pick_cover():
+        # Grab the directory of the audio file, fallback to None if it's missing
+        start_dir = os.path.dirname(filepath) if filepath and os.path.exists(filepath) else None
+        
         path = filedialog.askopenfilename(
             parent=win,
             title="Select Cover Art",
+            initialdir=start_dir,  # <-- NEW: Smart directory mapping
             filetypes=[("Image Files", "*.jpg *.jpeg *.png *.webp")]
         )
         if path:
