@@ -105,10 +105,14 @@ def test_mid_stream_cancellation(manager, mock_downloader):
         
     mock_downloader.download_item.side_effect = fake_cancellable_download
     
+    # Mock the event bus to capture the status updates
+    manager.event_bus.publish = MagicMock()
+    
     manager.queue_download("123", "Cancel Me", "/fake/dir")
     
-    # The worker catches the exception and signals "Failed" (since it crashed mid-stream)
-    manager.on_status_change.assert_any_call("123", "Failed", is_global=False)
+    # The worker catches the exception and signals "Failed" over the event bus
+    manager.event_bus.publish.assert_any_call("download.status", asin="123", status="Failed", is_global=False)
+    
     # Ensure it didn't write to the library database
     assert len(manager.library_manager.local_library) == 0
 

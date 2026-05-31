@@ -330,11 +330,11 @@ def test_save_playback_state_empty_or_untracked(manager):
 
 def test_cancel_import(manager):
     # Test 1: Global cancellation clears the queue
-    manager.import_queue.put("dummy_worker")
+    manager.import_queue.append({"task_id": "dummy_task", "func": "dummy_worker"})
     manager.cancel_import()
     
     assert manager.cancel_requested is True
-    assert len(manager.import_queue) == 0 is True
+    assert len(manager.import_queue) == 0
 
     # Test 2: Targeted cancellation adds to the set
     manager.cancel_requested = False

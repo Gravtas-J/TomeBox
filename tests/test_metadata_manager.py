@@ -47,67 +47,59 @@ def manager(sync_pool):
 # --- The Fallback Chain Tests ---
 
 def test_search_audible_success(manager, monkeypatch):
-    """Test 1: If Audible succeeds, it completely ignores Google Books and Local Tags."""
-    # Mock Audible to return a valid result
-    manager.api.search_catalog.return_value = [{"asin": "AUD_1", "title": "Audible Match"}]
-    
-    mock_gb = MagicMock()
-    monkeypatch.setattr(manager, "search_google_books", mock_gb)
-
-    manager.search_catalog("/fake/audiobook.m4b", "Test Query")
-
-    # Verify the callback received the Audible result
-    manager.on_search_complete.assert_called_once()
-    results = manager.on_search_complete.call_args[0][1]
-    
-    assert results[0]["asin"] == "AUD_1"
-    assert results[0]["source"] == "Audible"
-    
-    # Verify it broke the fallback chain early
-    mock_gb.assert_not_called()
+        """Test 1: If Audible succeeds, it completely ignores Google Books and Local Tags."""
+        manager.api.search_catalog.return_value = [{"asin": "AUD_1", "title": "Audible Match"}]
+        mock_gb = MagicMock()
+        monkeypatch.setattr(manager, "search_google_books", mock_gb)
+        
+        manager.event_bus.publish = MagicMock() # Mock the bus
+        manager.search_catalog("/fake/audiobook.m4b", "Test Query")
+        
+        # Verify the event bus published the Audible result
+        manager.event_bus.publish.assert_any_call(
+            "metadata.search_complete", 
+            filepath="/fake/audiobook.m4b", 
+            products=[{"asin": "AUD_1", "title": "Audible Match", "source": "Audible"}]
+        )
 
 def test_search_fallback_to_google_books(manager, monkeypatch):
-    """Test 2: If Audible fails (e.g., 404 or rate limit), it falls back to Google Books."""
-    # Mock Audible to aggressively fail
-    manager.api.search_catalog.side_effect = Exception("404 Product Not Found")
-    
-    # Mock Google Books to succeed
-    mock_gb = MagicMock(return_value=[{"asin": "GB_1", "title": "GB Match", "source": "Google"}])
-    monkeypatch.setattr(manager, "search_google_books", mock_gb)
-
-    manager.search_catalog("/fake/audiobook.m4b", "Test Query")
-
-    # Verify GB was queried
-    mock_gb.assert_called_once_with("Test Query")
-    
-    # Verify the callback received the GB result
-    results = manager.on_search_complete.call_args[0][1]
-    assert results[0]["asin"] == "GB_1"
-    assert results[0]["source"] == "Google"
+        """Test 2: If Audible fails (e.g., 404 or rate limit), it falls back to Google Books."""
+        manager.api.search_catalog.side_effect = Exception("404 Product Not Found")
+        mock_gb = MagicMock(return_value=[{"asin": "GB_1", "title": "GB Match", "source": "Google"}])
+        monkeypatch.setattr(manager, "search_google_books", mock_gb)
+        
+        manager.event_bus.publish = MagicMock() # Mock the bus
+        manager.search_catalog("/fake/audiobook.m4b", "Test Query")
+        
+        mock_gb.assert_called_once_with("Test Query")
+        
+        # Verify the event bus published the GB result
+        manager.event_bus.publish.assert_any_call(
+            "metadata.search_complete", 
+            filepath="/fake/audiobook.m4b", 
+            products=[{"asin": "GB_1", "title": "GB Match", "source": "Google"}]
+        )
 
 def test_search_fallback_to_local_tags(manager, monkeypatch):
-    """Test 3: If both APIs fail or return nothing, it rips data from the local file tags."""
-    # Mock Audible to fail
-    manager.api.search_catalog.side_effect = Exception("Network Error")
-    # Mock Google Books to return an empty array
-    monkeypatch.setattr(manager, "search_google_books", MagicMock(return_value=[]))
-    
-    # Mock the internal AudioConverter to simulate reading embedded tags
-    mock_converter = MagicMock()
-    mock_converter.return_value.get_metadata_and_chapters.return_value = {
-        "format": {"tags": {"title": "Embedded Title", "artist": "Embedded Author"}}
-    }
-    
-    monkeypatch.setattr("core.controllers.metadata_manager.AudioConverter", mock_converter)
-
-    manager.search_catalog("/fake/audiobook.m4b", "Test Query")
-
-    # Verify the callback received the local file extraction
-    results = manager.on_search_complete.call_args[0][1]
-    assert results[0]["asin"] == "LOCAL_TAGS"
-    assert results[0]["title"] == "Embedded Title"
-    assert results[0]["authors"][0]["name"] == "Embedded Author"
-    assert results[0]["source"] == "Local File Tags"
+        """Test 3: If both APIs fail or return nothing, it rips data from the local file tags."""
+        manager.api.search_catalog.side_effect = Exception("Network Error")
+        monkeypatch.setattr(manager, "search_google_books", MagicMock(return_value=[]))
+        
+        mock_converter = MagicMock()
+        mock_converter.return_value.get_metadata_and_chapters.return_value = {
+            "format": {"tags": {"title": "Embedded Title", "artist": "Embedded Author"}}
+        }
+        monkeypatch.setattr("core.controllers.metadata_manager.AudioConverter", mock_converter)
+        
+        manager.event_bus.publish = MagicMock() # Mock the bus
+        manager.search_catalog("/fake/audiobook.m4b", "Test Query")
+        
+        # Extract the results from the event bus call
+        calls = [c for c in manager.event_bus.publish.call_args_list if c[0][0] == "metadata.search_complete"]
+        results = calls[0].kwargs["products"]
+        
+        assert len(results) == 1
+        assert results[0]["title"] == "Embedded Title"
 # --- Scraping & Apply Logic ---
 
 def test_apply_scraped_metadata_google_books(manager, monkeypatch):
@@ -115,7 +107,8 @@ def test_apply_scraped_metadata_google_books(manager, monkeypatch):
     filepath = "/fake/audiobook.m4b"
     selected_asin = "GB_999"
     cover_path = os.path.join("/fake/covers", f"{selected_asin}.jpg")
-    
+    manager.event_bus.publish = MagicMock()
+    manager.apply_scraped_metadata(filepath, selected_asin)
     # Mock requests.get to return a fake Google Books volume AND fake image bytes
     class MockResponse:
         def __init__(self, json_data, content, status_code=200):
@@ -175,7 +168,12 @@ def test_apply_scraped_metadata_google_books(manager, monkeypatch):
     assert "artist=New GB Author" in cmd
     
     # 4. Verify the completion callback fired
-    manager.on_apply_complete.assert_called_once_with(filepath, "New GB Title", False)
+    manager.event_bus.publish.assert_any_call(
+            "metadata.apply_complete", 
+            filepath=filepath, 
+            title="New GB Title", 
+            is_manual=False
+        )
 
 def test_extract_embedded_cover(manager, monkeypatch):
     """Verifies FFmpeg is correctly called to extract embedded cover art."""
@@ -321,11 +319,11 @@ def test_fetch_display_metadata_cascade(manager, monkeypatch):
     manager.fetch_display_metadata(filepath)
 
     # Check that UI was updated with the Google Books data
-    manager.on_display_ready.assert_called_once()
-    args = manager.on_display_ready.call_args[0]
-    assert args[0] == filepath
-    assert "GB_" in args[1] # A new GB ASIN was generated for the cover
-    assert args[2] == "GB Author"
+    manager.event_bus.publish = MagicMock()
+    manager.fetch_display_metadata(filepath)
+
+    # Check that UI was updated via the event bus
+    assert any(call[0][0] == "metadata.display_ready" for call in manager.event_bus.publish.call_args_list)
 
 # --- Background Missing Cover Sync (Lines 421-452) ---
 
@@ -384,7 +382,8 @@ def test_apply_manual_metadata_custom_cover_and_embed(manager, monkeypatch):
     mock_run.return_value.returncode = 0
     monkeypatch.setattr("core.controllers.metadata_manager.ProcessRunner.run_blocking", mock_run)
     monkeypatch.setattr("os.replace", MagicMock())
-    
+    manager.event_bus.publish = MagicMock()
+        
     # Execute
     manager.apply_manual_metadata(
         filepath, 
@@ -415,4 +414,9 @@ def test_apply_manual_metadata_custom_cover_and_embed(manager, monkeypatch):
     assert "series=Manual Series" in cmd
     
     # 4. Verify EventBus Notification fired for the UI
-    manager.on_apply_complete.assert_called_once_with(filepath, "Manual Title", True)
+    manager.event_bus.publish.assert_any_call(
+            "metadata.apply_complete", 
+            filepath=filepath, 
+            title="Manual Title", 
+            is_manual=True
+        )

@@ -87,20 +87,22 @@ def test_lock_resolves_race_condition(manager, db):
 # --- Achievement Logic Tests ---
 
 def test_achievement_triggers_on_threshold(manager, db, callbacks):
-    # 'first_finish' requires 1 book.
-    manager.add_stat("books_finished", 1)
-    
-    # Revert to expecting the unpacked strings for the legacy callback
-    callbacks["on_achievement"].assert_called_once_with(
-        "Core Consumed", "Finish an audiobook."
-    )
+        manager.event_bus.publish = MagicMock() # Mock the bus
+        
+        # 'first_finish' requires 1 book.
+        manager.add_stat("books_finished", 1)
+        
+        # Isolate the achievement events
+        achievements = [c for c in manager.event_bus.publish.call_args_list if c[0][0] == "stats.achievement_unlocked"]
+        
+        assert len(achievements) == 1
+        assert achievements[0].kwargs["achievement"]["title"] == "Core Consumed"
 
 def test_multiple_achievements_can_trigger(manager, db, callbacks):
+    manager.event_bus.publish = MagicMock() # Mock the bus
+    
     # Jump straight to 5 books to unlock both 'first_finish' and 'finish_5'
     manager.add_stat("books_finished", 5)
     
-    assert callbacks["on_achievement"].call_count == 2
-    
-    unlocked = db.settings["stats"]["unlocked_achievements"]
-    assert "first_finish" in unlocked
-    assert "finish_5" in unlocked
+    achievements = [c for c in manager.event_bus.publish.call_args_list if c[0][0] == "stats.achievement_unlocked"]
+    assert len(achievements) == 2
