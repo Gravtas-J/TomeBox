@@ -347,6 +347,7 @@ class MetadataManager:
 
             local_data["title"] = new_data.get("title", "")
             local_data["authors"] = new_data.get("authors", "")
+            local_data["narrator"] = new_data.get("narrator", "")  # <-- FIX 1: Save to database
             local_data["series"] = new_data.get("series", "")
             local_data["asin"] = new_asin
 
@@ -370,6 +371,10 @@ class MetadataManager:
                     "-metadata", f"title={local_data['title']}",
                     "-metadata", f"artist={local_data['authors']}"
                 ])
+
+                # <-- FIX 2: Embed narrator as standard 'composer' tag
+                if local_data.get('narrator'):
+                    cmd.extend(["-metadata", f"composer={local_data['narrator']}"])
 
                 if local_data['series']:
                     cmd.extend(["-metadata", f"show={local_data['series']}", "-metadata", f"series={local_data['series']}"])
@@ -395,7 +400,6 @@ class MetadataManager:
                         try: os.remove(temp_out)
                         except OSError: pass
 
-            # In apply_manual_metadata:
             self.event_bus.publish("metadata.apply_complete", filepath=filepath, title=local_data['title'], is_manual=True)
 
         if self.start_workers:
