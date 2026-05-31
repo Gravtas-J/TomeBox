@@ -3,6 +3,7 @@ import json
 import threading
 import requests
 import traceback
+import datetime
 try:
     import audible
 except ImportError:
@@ -804,11 +805,17 @@ class LibraryManager:
             added_count = 0
             total_expected = 0
             
-            # --- DIAGNOSTIC TRACKERS ---
-            total_source_files = 0
-            skipped_existing = 0
-            skipped_invalid = 0
-            failed_files = 0
+            # --- TRANSPARENCY TRACKERS ---
+            report = {
+                "discovered_files": [],
+                "missing_album_tags": [],
+                "broken_metadata": [],
+                "playlist_merges": [],
+                "m4b_merges": [],
+                "failed_imports": [],
+                "skipped_existing": [],
+                "skipped_invalid": []
+            }
             
             def update_status(msg):
                 self.current_status = msg
@@ -829,10 +836,8 @@ class LibraryManager:
                 def natural_sort_key(s):
                     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
                 
-                # Added .m4a as it is functionally identical to .m4b and often used by 3rd party tools
                 valid_exts = (".aax", ".aaxc", ".m4b", ".mp3", ".m4a") 
                 
-                # Load ignored files list for fast O(1) lookups
                 ignored_set = set()
                 try:
                     settings = self.db.load_settings()
@@ -842,23 +847,21 @@ class LibraryManager:
                     pass
                 
                 # --- PHASE 1: Global File Pooling ---
-                all_discovered_files = []
                 for root_dir, dirs, files in os.walk(folder_path):
                     for f in files:
-                        # Block FFmpeg Temp Files
                         if ".temp." in f.lower() or f.lower().endswith(".tmp"):
                             continue
                             
                         if f.lower().endswith(valid_exts):
                             full_path = os.path.normpath(os.path.join(root_dir, f))
                             if full_path not in ignored_set:
-                                all_discovered_files.append(full_path)
+                                report["discovered_files"].append(full_path)
                                 
-                total_source_files = len(all_discovered_files)
-                if logger: logger(f"[Debug] Scan complete. Found {total_source_files} potential audio files across tree.")
+                if not report["discovered_files"]:
+                    if logger: logger(f"No valid audio files found in {folder_path} matching {valid_exts}")
+                    return
                 
                 file_metadata_cache = {}
-                missing_album_tags = set()
                 global_album_groups = {}
                 
                 def advanced_sort_key(filepath):
@@ -875,7 +878,7 @@ class LibraryManager:
                 # --- PHASE 2: Global Album Grouping ---
                 update_status("Analyzing metadata for global grouping...")
                 
-                for full_path in all_discovered_files:
+                for full_path in report["discovered_files"]:
                     if self.cancel_requested or (task_id and task_id in self.canceled_tasks):
                         break
                         
@@ -893,14 +896,13 @@ class LibraryManager:
                         
                         album = tags.get("album")
                         if not album:
-                            # Fallback to immediate parent folder name
                             album = os.path.basename(directory)
-                            missing_album_tags.add(full_path)
+                            report["missing_album_tags"].append(full_path)
                             
-                    except Exception:
+                    except Exception as e:
                         album = os.path.basename(directory)
                         file_metadata_cache[full_path] = {}
-                        missing_album_tags.add(full_path)
+                        report["broken_metadata"].append(f"{full_path} | Error: {str(e)}")
                         
                     global_album_groups.setdefault(album, []).append(full_path)
                 
@@ -916,7 +918,6 @@ class LibraryManager:
                 
                 def record_book(title, kind, group_files):
                     sub_id = make_sub_id(title)
-                    # Use the directory of the first file as the output destination for merges
                     output_dir = os.path.dirname(group_files[0]) if group_files else folder_path
                     discovered.append({
                         'sub_task_id': sub_id, 'title': title, 'kind': kind,
@@ -948,10 +949,6 @@ class LibraryManager:
                     return
                 
                 total_expected = len(discovered)
-                if not discovered:
-                    if logger: logger(f"No valid audio files found in {folder_path} matching {valid_exts}")
-                    return
-                
                 update_status(f"Importing {len(discovered)} book(s)...")
                 
                 for book in discovered:
@@ -982,17 +979,16 @@ class LibraryManager:
                             self.local_library[v_path] = entry
                             added_count += 1
                             book_success = True
+                            report["playlist_merges"].append(f"{album_name} ({len(group_files)} files)")
                         
                         elif kind == 'single':
                             for fp in group_files:
                                 if self.cancel_requested or (task_id and task_id in self.canceled_tasks): break
                                 if not os.path.exists(fp):
-                                    if logger: logger(f"[Debug] Skipped: File missing on disk -> {fp}")
-                                    skipped_invalid += 1
+                                    report["skipped_invalid"].append(fp)
                                     continue
                                 if fp in self.local_library:
-                                    if logger: logger(f"[Debug] Skipped: Already in library -> {fp}")
-                                    skipped_existing += 1
+                                    report["skipped_existing"].append(fp)
                                     continue
                                     
                                 update_status(f"Importing: {os.path.basename(fp)}")
@@ -1003,9 +999,7 @@ class LibraryManager:
                                 except Exception as err:
                                     if hasattr(self, 'unimportable_files'): 
                                         self.unimportable_files.add(os.path.normpath(fp))
-                                        
-                                    if logger: logger(f"[Debug] Failed to process {fp}: {err}")
-                                    failed_files += 1
+                                    report["failed_imports"].append(f"{fp} | Error: {str(err)}")
                                     self.event_bus.publish("conversion.error", filepath=fp, action="import", error_msg=str(err))
                         
                         elif kind == 'merge':
@@ -1029,6 +1023,7 @@ class LibraryManager:
                                     per_book_prog = (lambda p, sid=sub_task_id: on_book_progress_cb(sid, p)) if on_book_progress_cb else on_progress_cb
                                     if converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger, progress_cb=per_book_prog):
                                         final_path = out_m4b
+                                        report["m4b_merges"].append(f"{album_name} -> {out_m4b} ({len(group_files)} files)")
                                     else:
                                         suspected_orphan = os.path.join(directory, f"{safe_album}.m4b")
                                         if suspected_orphan in group_files:
@@ -1036,14 +1031,14 @@ class LibraryManager:
                                             try:
                                                 safe_unlink(suspected_orphan, logger)
                                                 group_files.remove(suspected_orphan)
-                                                if logger: logger(f"Purged offending file: {suspected_orphan}")
                                                 out_m4b = suspected_orphan
                                                 if len(group_files) > 1:
                                                     update_status(f"Restarting merge: {safe_album}...")
                                                     if converter.concat_to_m4b(group_files, out_m4b, title=album_name, logger=logger, progress_cb=per_book_prog):
                                                         final_path = out_m4b
+                                                        report["m4b_merges"].append(f"{album_name} -> {out_m4b} ({len(group_files)} files) [Recovered]")
                                             except Exception as e:
-                                                if logger: logger(f"Failed to purge {suspected_orphan}: {e}")
+                                                report["failed_imports"].append(f"Merge purge failed for {suspected_orphan} | Error: {str(e)}")
                                 else:
                                     final_path = out_m4b
                             
@@ -1058,22 +1053,19 @@ class LibraryManager:
                                     except Exception as err:
                                         if hasattr(self, 'unimportable_files'): 
                                             self.unimportable_files.add(os.path.normpath(final_path))
-                                            
-                                        if logger: logger(f"[Debug] Failed to process merged file {final_path}: {err}")
-                                        failed_files += 1
+                                        report["failed_imports"].append(f"{final_path} | Error: {str(err)}")
                                         self.event_bus.publish("conversion.error", filepath=final_path, action="import", error_msg=str(err))
                                 else:
-                                    if logger: logger(f"[Debug] Skipped: Merged file already in library -> {final_path}")
-                                    skipped_existing += 1
+                                    report["skipped_existing"].append(final_path)
                                     book_success = True
                             elif final_path is None:
                                 for fp in group_files:
                                     if self.cancel_requested or (task_id and task_id in self.canceled_tasks): break
                                     if not os.path.exists(fp):
-                                        skipped_invalid += 1
+                                        report["skipped_invalid"].append(fp)
                                         continue
                                     if fp in self.local_library:
-                                        skipped_existing += 1
+                                        report["skipped_existing"].append(fp)
                                         continue
                                         
                                     try:
@@ -1083,9 +1075,7 @@ class LibraryManager:
                                     except Exception as err:
                                         if hasattr(self, 'unimportable_files'): 
                                             self.unimportable_files.add(os.path.normpath(fp))
-                                            
-                                        if logger: logger(f"[Debug] Failed to process fallback file {fp}: {err}")
-                                        failed_files += 1
+                                        report["failed_imports"].append(f"{fp} | Fallback Error: {str(err)}")
                                         self.event_bus.publish("conversion.error", filepath=fp, action="import", error_msg=str(err))
                                 book_success = added_count > 0
                     
@@ -1093,10 +1083,8 @@ class LibraryManager:
                         if hasattr(self, 'unimportable_files'):
                             for bad_fp in group_files:
                                 self.unimportable_files.add(os.path.normpath(bad_fp))
-                                
-                        if logger: logger(f"[Debug] Error processing book '{album_name}': {e}")
+                        report["failed_imports"].append(f"Book grouping '{album_name}' failed entirely | Error: {str(e)}")
                         book_success = False
-                        failed_files += len(group_files)
                         if group_files:
                             self.event_bus.publish("conversion.error", filepath=group_files[0], action="import", error_msg=f"Book processing failed: {e}")
                     finally:
@@ -1115,24 +1103,79 @@ class LibraryManager:
                 update_status(f"Successfully imported {added_count} book(s).")
                 
             except Exception as e:
+                report["failed_imports"].append(f"Fatal worker exception: {str(e)}")
                 if logger: logger(f"Fatal error in import worker: {e}")
             finally:
-                if logger:
-                    logger(f"--- Import Summary for {os.path.basename(folder_path)} ---")
-                    logger(f"Source Files Found: {total_source_files}")
-                    logger(f"Library Entries Added/Updated: {added_count}")
-                    if skipped_existing > 0: logger(f"Skipped (Already in Library): {skipped_existing}")
-                    if skipped_invalid > 0: logger(f"Skipped (Invalid/Missing on Disk): {skipped_invalid}")
-                    if failed_files > 0: logger(f"Failed to Process (Errors): {failed_files}")
+                # --- WRITE DEDICATED IMPORT LOG ---
+                logs_dir = os.path.join(self.base_dir, "logs")
+                os.makedirs(logs_dir, exist_ok=True)
+                import_log_path = os.path.join(logs_dir, "import_history.log")
+                
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                log_content = [
+                    f"\n{'='*60}",
+                    f"IMPORT SESSION: {timestamp}",
+                    f"TARGET DIRECTORY: {folder_path}",
+                    f"IMPORT MODE: {import_mode}",
+                    f"{'='*60}",
+                    f"TOTAL FILES DISCOVERED: {len(report['discovered_files'])}",
+                    f"ENTRIES ADDED/UPDATED: {added_count}",
+                    f"SKIPPED (EXISTING): {len(report['skipped_existing'])}",
+                    f"SKIPPED (MISSING/INVALID): {len(report['skipped_invalid'])}",
+                    f"HARD FAILURES: {len(report['failed_imports'])}",
+                    f"{'-'*60}"
+                ]
+                
+                if report['discovered_files']:
+                    log_content.append("ALL DISCOVERED FILES:")
+                    for f in sorted(report['discovered_files']):
+                        log_content.append(f"  - {f}")
+                    log_content.append(f"{'-'*60}")
+                
+                if report['missing_album_tags']:
+                    log_content.append(f"MISSING ID3 'ALBUM' TAGS ({len(report['missing_album_tags'])} files):")
+                    log_content.append("  *These files were grouped by their parent folder name.*")
+                    for f in sorted(report['missing_album_tags']):
+                        log_content.append(f"  - {f}")
+                    log_content.append(f"{'-'*60}")
+
+                if report['broken_metadata']:
+                    log_content.append(f"BROKEN/UNREADABLE METADATA ({len(report['broken_metadata'])} files):")
+                    for f in sorted(report['broken_metadata']):
+                        log_content.append(f"  - {f}")
+                    log_content.append(f"{'-'*60}")
                     
-                    # --- NEW: Fallback Warning ---
-                    if missing_album_tags:
-                        logger(f"WARNING: {len(missing_album_tags)} file(s) were missing 'Album' ID3 tags.")
-                        logger(f"Fallback Applied: These files were grouped using their parent folder names instead.")
-                        
-                    if total_source_files != added_count and import_mode in ['merge', 'playlist']:
-                        logger(f"Note: Input vs Output mismatch is expected. '{import_mode}' mode groups multiple source MP3s into a single unified library entry.")
-                    logger(f"---------------------------------------------------")
+                if report['playlist_merges']:
+                    log_content.append(f"PLAYLIST MERGES GENERATED ({len(report['playlist_merges'])} albums):")
+                    for m in sorted(report['playlist_merges']):
+                        log_content.append(f"  - {m}")
+                    log_content.append(f"{'-'*60}")
+
+                if report['m4b_merges']:
+                    log_content.append(f"M4B MERGES COMPILED ({len(report['m4b_merges'])} albums):")
+                    for m in sorted(report['m4b_merges']):
+                        log_content.append(f"  - {m}")
+                    log_content.append(f"{'-'*60}")
+
+                if report['failed_imports']:
+                    log_content.append(f"FAILED IMPORTS ({len(report['failed_imports'])} errors):")
+                    for err in report['failed_imports']:
+                        log_content.append(f"  - {err}")
+                    log_content.append(f"{'-'*60}")
+
+                try:
+                    with open(import_log_path, "a", encoding="utf-8") as log_file:
+                        log_file.write("\n".join(log_content) + "\n")
+                except Exception as e:
+                    if logger: logger(f"Failed to write detailed import log: {e}")
+
+                # Keep a brief summary for the main standard log
+                if logger:
+                    logger(f"Import finished for {os.path.basename(folder_path)} | "
+                           f"Added: {added_count} | Skipped: {len(report['skipped_existing'])} | "
+                           f"Errors: {len(report['failed_imports'])}. "
+                           f"See logs/import_history.log for full transparent details.")
                 
                 if on_complete_cb:
                     on_complete_cb(added_count, total_expected)
