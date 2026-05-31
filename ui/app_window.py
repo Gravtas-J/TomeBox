@@ -327,6 +327,28 @@ class AAXManagerApp:
         else:
             self.download_manager.cancel_download(task_id)
 
+    def toggle_pause_task(self, task_id, btn):
+        """Toggles the pause state for a specific task in the queue."""
+        # If the button shows play, it's currently paused
+        is_paused = btn.cget("text") == "▶"
+        
+        if str(task_id).startswith("import_"):
+            # Placeholder for the upcoming LibraryManager refactor
+            if is_paused:
+                self.library_manager.resume_import(task_id)
+                btn.config(text="⏸")
+            else:
+                self.library_manager.pause_import(task_id)
+                btn.config(text="▶")
+        else:
+            # Download Manager routing
+            if is_paused:
+                self.download_manager.resume_download(task_id)
+                btn.config(text="⏸")
+            else:
+                self.download_manager.pause_download(task_id)
+                btn.config(text="▶")
+
     def clear_sidebar(self):
         """Wipes the side panel when selection is lost or deleted."""
         if hasattr(self, 'author_label'):
@@ -827,7 +849,7 @@ class AAXManagerApp:
             self.import_session.toggle_queue_drawer(True)
             
             for item in missing_items:
-                self.add_queue_ui_row(item["asin"], item["title"])
+                self.import_session.add_queue_ui_row(item["asin"], item["title"])
                 
             self.download_manager.queue_batch(missing_items, save_dir)
 

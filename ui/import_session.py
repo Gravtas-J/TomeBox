@@ -195,11 +195,17 @@ class ImportSession:
         status_lbl = ttk.Label(row_frame, textvariable=status_var, width=15, anchor="w")
         status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
-        cancel_btn = ttk.Button(row_frame, text="✕", command=lambda a=task_id: self.app.cancel_task(a))
-        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn = ttk.Button(row_frame, text="✕", width=3, command=lambda a=task_id: self.app.cancel_task(a))
+        cancel_btn.pack(side=tk.RIGHT, padx=(2, 0))
+
+        # NEW: Pause/Resume Toggle Button
+        pause_btn = ttk.Button(row_frame, text="⏸", width=3)
+        pause_btn.config(command=lambda a=task_id, b=pause_btn: self.app.toggle_pause_task(a, b))
+        pause_btn.pack(side=tk.RIGHT, padx=(5, 2))
 
         self.app.queue_ui_elements[task_id] = {
             "frame": row_frame,
             "prog_var": prog_var,
-            "status_var": status_var
+            "status_var": status_var,
+            "pause_btn": pause_btn
         }

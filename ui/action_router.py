@@ -42,7 +42,7 @@ class ActionRouter:
 
     # --- Global UI Updaters ---
     def reset_ui_if_idle(self):
-        is_importing = getattr(self.app.library_manager, '_is_importing', False) or not self.app.library_manager.import_queue.empty()
+        is_importing = getattr(self.app.library_manager, '_is_importing', False) or len(self.app.library_manager.import_queue) > 0
         is_downloading = getattr(self.app.download_manager, 'is_processing', False)
         is_converting = getattr(self.app.converter, 'current_process', None) is not None
         

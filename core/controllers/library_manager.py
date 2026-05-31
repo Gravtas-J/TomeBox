@@ -11,6 +11,7 @@ except ImportError:
 import queue
 import re
 import time
+import uuid
 from tkinter import messagebox
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import format_series_list, normalize_title, find_matching_cloud_item
@@ -27,7 +28,11 @@ class LibraryManager:
         self.cancel_requested = False
         self.current_status = ""
 
-        self.import_queue = queue.Queue()
+        self.import_queue = []
+        self.queue_lock = threading.RLock()
+        self.is_paused = False
+        self.paused_items = set()
+        
         self._is_importing = False
         self.on_queue_empty_cb = None
 
@@ -140,30 +145,88 @@ class LibraryManager:
             return True
         return False
     
+    # --- PAUSE CONTROLS ---
+    def pause_all(self):
+        with self.queue_lock:
+            self.is_paused = True
+            self.event_bus.publish("library.import.status", task_id="global", status="Queue Paused")
+
+    def resume_all(self):
+        with self.queue_lock:
+            self.is_paused = False
+            self.event_bus.publish("library.import.status", task_id="global", status="Queue Active")
+
+    def pause_import(self, task_id):
+        with self.queue_lock:
+            if any(t["task_id"] == task_id for t in self.import_queue):
+                self.paused_items.add(task_id)
+                self.event_bus.publish("library.import.status", task_id=task_id, status="Paused")
+
+    def resume_import(self, task_id):
+        with self.queue_lock:
+            if task_id in self.paused_items:
+                self.paused_items.remove(task_id)
+                self.event_bus.publish("library.import.status", task_id=task_id, status="Queued")
+
     def cancel_import(self, task_id=None):
         if task_id:
             self.canceled_tasks.add(task_id)
+            self.paused_items.discard(task_id)  # Clean up pause state
             if self.active_task_id == task_id:
                 self.cancel_requested = True
         else:
             self.cancel_requested = True
-            with self.import_queue.mutex:
-                self.import_queue.queue.clear()
+            with self.queue_lock:
+                self.import_queue.clear()
+                self.paused_items.clear()
             self.canceled_tasks.clear()
 
     def _import_worker_loop(self):
         while True:
-            task_func = self.import_queue.get()
+            # 1. Sleep if empty
+            with self.queue_lock:
+                is_empty = len(self.import_queue) == 0
+            
+            if is_empty:
+                time.sleep(0.5)
+                continue
+                
+            # 2. Sleep if globally paused
+            if self.is_paused:
+                time.sleep(0.5)
+                continue
+                
+            # 3. Find first unpaused task
+            with self.queue_lock:
+                task_index = -1
+                for i, t in enumerate(self.import_queue):
+                    if t["task_id"] not in self.paused_items:
+                        task_index = i
+                        break
+                        
+                if task_index == -1:
+                    all_paused = True
+                else:
+                    task = self.import_queue.pop(task_index)
+                    all_paused = False
+                    
+            if all_paused:
+                time.sleep(0.5)
+                continue
+                
+            # 4. Execute the popped task
+            task_func = task["func"]
             self._is_importing = True
             try:
                 task_func()
             except Exception as e:
-                print(f"Import Queue Error: {e}")
+                if hasattr(self, 'logger'): self.logger(f"Import Queue Error: {e}")
             finally:
                 self._is_importing = False
-                self.import_queue.task_done()
-
-                if self.import_queue.empty():
+                with self.queue_lock:
+                    empty_now = len(self.import_queue) == 0
+                
+                if empty_now:
                     self.current_status = ""
                     self.event_bus.publish("library.queue.empty")
                     if self.on_queue_empty_cb:
@@ -554,7 +617,10 @@ class LibraryManager:
         return entry
     
     def import_files(self, file_paths, converter, active_profile, on_status_cb, on_complete_cb, logger=None, task_id=None):
-        if self._is_importing or not self.import_queue.empty():
+        with self.queue_lock:
+            q_len = len(self.import_queue)
+            
+        if self._is_importing or q_len > 0:
             self.current_status = f"Queued {len(file_paths)} files for import..."
             if on_status_cb: on_status_cb(self.current_status)
         else:
@@ -608,7 +674,10 @@ class LibraryManager:
                 self.active_task_id = None
                 self.current_status = ""
 
-        self.import_queue.put(worker)
+        safe_task_id = task_id or uuid.uuid4().hex
+        
+        with self.queue_lock:
+            self.import_queue.append({"task_id": safe_task_id, "func": worker})
 
     def save_playback_state(self, state_dict, active_profile):
         if not state_dict: return
@@ -792,7 +861,10 @@ class LibraryManager:
         return entry, virtual_path
 
     def import_folder(self, folder_path, converter, active_profile, on_status_cb, on_complete_cb, logger=None, on_progress_cb=None, task_id=None, import_mode='merge', on_book_start_cb=None, on_book_progress_cb=None, on_book_complete_cb=None):
-        if self._is_importing or not self.import_queue.empty():
+        with self.queue_lock:
+            q_len = len(self.import_queue)
+            
+        if self._is_importing or q_len > 0:
             self.current_status = f"Queued folder for import: {os.path.basename(folder_path)}"
             if on_status_cb: on_status_cb(self.current_status)
         else:
@@ -814,7 +886,8 @@ class LibraryManager:
                 "m4b_merges": [],
                 "failed_imports": [],
                 "skipped_existing": [],
-                "skipped_invalid": []
+                "skipped_invalid": [],
+                "skipped_ignored": []
             }
             
             def update_status(msg):
@@ -856,6 +929,8 @@ class LibraryManager:
                             full_path = os.path.normpath(os.path.join(root_dir, f))
                             if full_path not in ignored_set:
                                 report["discovered_files"].append(full_path)
+                            else:
+                                report["skipped_ignored"].append(full_path)
                                 
                 if not report["discovered_files"]:
                     if logger: logger(f"No valid audio files found in {folder_path} matching {valid_exts}")
@@ -1118,6 +1193,7 @@ class LibraryManager:
                     f"TOTAL FILES DISCOVERED: {len(report['discovered_files'])}",
                     f"ENTRIES ADDED/UPDATED: {added_count}",
                     f"SKIPPED (EXISTING): {len(report['skipped_existing'])}",
+                    f"SKIPPED (USER IGNORED): {len(report['skipped_ignored'])}",
                     f"SKIPPED (MISSING/INVALID): {len(report['skipped_invalid'])}",
                     f"HARD FAILURES: {len(report['failed_imports'])}",
                     f"{'-'*60}"
@@ -1159,7 +1235,12 @@ class LibraryManager:
                     for err in report['failed_imports']:
                         log_content.append(f"  - {err}")
                     log_content.append(f"{'-'*60}")
-
+                    
+                if report['skipped_ignored']:
+                    log_content.append(f"FILES SKIPPED (USER IGNORED) ({len(report['skipped_ignored'])} files):")
+                    for f in sorted(report['skipped_ignored']):
+                        log_content.append(f"  - {f}")
+                    log_content.append(f"{'-'*60}")
                 try:
                     logs_dir = os.path.join(self.base_dir, "logs")
                     os.makedirs(logs_dir, exist_ok=True)
@@ -1182,4 +1263,7 @@ class LibraryManager:
                 self.active_task_id = None
                 self.current_status = ""
         
-        self.import_queue.put(worker)
+        safe_task_id = task_id or uuid.uuid4().hex
+        
+        with self.queue_lock:
+            self.import_queue.append({"task_id": safe_task_id, "func": worker})

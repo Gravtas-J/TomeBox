@@ -334,7 +334,7 @@ def test_cancel_import(manager):
     manager.cancel_import()
     
     assert manager.cancel_requested is True
-    assert manager.import_queue.empty() is True
+    assert len(manager.import_queue) == 0 is True
 
     # Test 2: Targeted cancellation adds to the set
     manager.cancel_requested = False
@@ -461,7 +461,7 @@ def test_import_files_worker(manager, monkeypatch):
     manager.import_files(["/fake/1.m4b", "/fake/2.mp3"], MagicMock(), "Main", MagicMock(), mock_complete)
     
     # Run it
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     assert "/fake/1.m4b" in manager.local_library
@@ -513,7 +513,7 @@ def test_import_folder_grouping_and_merging(manager, monkeypatch):
     manager.import_folder("/fake/folder", mock_converter, "Main", MagicMock(), mock_complete)
     
     # Run it
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     # Album 1 triggered FFmpeg concat
@@ -607,7 +607,7 @@ def test_import_folder_playlist_mode_bypasses_ffmpeg(manager, monkeypatch):
         import_mode="playlist"  # <--- Critical Flag
     )
     
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     # Assertions
@@ -686,7 +686,7 @@ def test_monitor_preserves_virtual_playlists(manager, monkeypatch):
             import_mode="playlist"
         )
         
-        manager.import_queue.get()() # Run worker
+        manager.import_queue.pop(0)["func"]() # Run worker
         
         # 3. Assert the playlist was rebuilt BUT the user data survived
         entry = manager.local_library[virtual_path]
@@ -701,7 +701,7 @@ def test_import_folder_invalid_directory(mock_isdir, manager, mock_converter):
     mock_isdir.return_value = False
     
     manager.import_folder("/fake/missing_dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     assert manager.current_status == ""
@@ -715,7 +715,7 @@ def test_import_folder_no_audio_files(mock_walk, mock_isdir, manager, mock_conve
     mock_walk.return_value = [("/fake/dir", [], ["cover.jpg", "notes.txt"])]
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     assert len(manager.local_library) == 0
@@ -734,7 +734,7 @@ def test_import_folder_file_already_in_library(mock_walk, mock_isdir, manager, m
     manager._process_single_file_for_import = MagicMock(side_effect=Exception("Should not be called!"))
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     manager._process_single_file_for_import.assert_not_called()
@@ -753,7 +753,7 @@ def test_import_folder_file_vanished_during_scan(mock_exists, mock_walk, mock_is
     manager._process_single_file_for_import = MagicMock()
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     manager._process_single_file_for_import.assert_not_called()
@@ -768,7 +768,7 @@ def test_import_folder_metadata_crash(mock_exists, mock_walk, mock_isdir, manage
     manager._process_single_file_for_import = MagicMock(side_effect=Exception("FFprobe catastrophic failure"))
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     
     # This should NOT raise an unhandled exception
     worker() 
@@ -788,7 +788,7 @@ def test_import_folder_existing_merge_bypasses_concat(mock_exists, mock_walk, mo
     manager._process_single_file_for_import = MagicMock(return_value={"title": "Merged Book"})
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None, import_mode='merge')
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     # It should bypass the concat completely
@@ -813,7 +813,7 @@ def test_import_folder_merge_failure_fallback(mock_exists, mock_walk, mock_isdir
     manager._process_single_file_for_import = MagicMock(return_value={"title": "Part"})
     
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None, import_mode='merge')
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     # 1. It attempted the merge
@@ -834,7 +834,7 @@ def test_import_folder_cancellation(mock_walk, mock_isdir, manager, mock_convert
     
     # Fire up the import
     manager.import_folder("/fake/dir", mock_converter, "Main", None, None)
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     
     # Flip the cancel flag just before execution
     manager.cancel_requested = True
@@ -861,7 +861,7 @@ def test_import_folder_missing_metadata_fallback(mock_exists, mock_walk, mock_is
     })
     
     manager.import_folder("/fake/My_Custom_Folder", mock_converter, "Main", None, None, import_mode='playlist')
-    worker = manager.import_queue.get()
+    worker = manager.import_queue.pop(0)["func"]
     worker()
     
     # 1. It should have grouped them into a playlist based on the folder name
