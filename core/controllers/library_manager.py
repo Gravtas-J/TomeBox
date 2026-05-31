@@ -332,22 +332,20 @@ class LibraryManager:
 
     # library_manager.py
     def handle_remove_clicked(self, app):
-        selected_items = app.library_tree.selection()
+        # 1. Grab the cached selection to beat the macOS focus bug
+        selected_items = getattr(app, '_cached_selection', app.library_tree.selection())
         if not selected_items:
             return
 
-        # 1. Pre-filter the selection to find items that actually exist locally
+        # 2. Extract local paths directly from the Treeview data
         items_to_remove = []
         for item_id in selected_items:
-            title = app.library_tree.item(item_id)['values'][0]
-            local_path = next(
-                (p for p, d in self.local_library.items() if d.get("title") == title),
-                None
-            )
-            if local_path:
+            values = app.library_tree.item(item_id).get('values', [])
+            if len(values) > 7 and values[7]:
+                local_path = values[7]
                 items_to_remove.append((item_id, local_path))
 
-        # 2. If nothing is local, just tell them and bail out early
+        # 3. If nothing is local, just tell them and bail out early
         if not items_to_remove:
             messagebox.showinfo(
                 "Cloud Only",
@@ -356,7 +354,7 @@ class LibraryManager:
             )
             return
 
-        # 3. Prompt ONLY for the items that can actually be removed
+        # 4. Prompt ONLY for the items that can actually be removed
         msg = (f"Remove {len(items_to_remove)} selected item(s) from your local library list?\n\n"
                "(This only removes them from the list, it does not delete the actual files from your hard drive.)")
         if not messagebox.askyesno("Remove Files", msg, parent=app.root):
@@ -422,7 +420,7 @@ class LibraryManager:
             del self.local_library[filepath]
             self.db.save_local_db(self.local_library)
             self.event_bus.publish("library.file_removed", filepath=filepath)
-            return True # <--- This missing return was breaking the UI refresh!
+            return True 
         return False
             
     def set_shelves(self, asin, tags_list):

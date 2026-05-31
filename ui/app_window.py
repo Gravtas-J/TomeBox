@@ -613,6 +613,7 @@ class AAXManagerApp:
 
     def on_item_select(self, event=None):
         if self.current_view_mode == "list":
+            self._cached_selection = self.library_tree.selection()
             selected = self.library_tree.focus()
             if not selected:
                 self.clear_sidebar()
