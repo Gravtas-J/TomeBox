@@ -1107,10 +1107,6 @@ class LibraryManager:
                 if logger: logger(f"Fatal error in import worker: {e}")
             finally:
                 # --- WRITE DEDICATED IMPORT LOG ---
-                logs_dir = os.path.join(self.base_dir, "logs")
-                os.makedirs(logs_dir, exist_ok=True)
-                import_log_path = os.path.join(logs_dir, "import_history.log")
-                
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 log_content = [
@@ -1165,6 +1161,10 @@ class LibraryManager:
                     log_content.append(f"{'-'*60}")
 
                 try:
+                    logs_dir = os.path.join(self.base_dir, "logs")
+                    os.makedirs(logs_dir, exist_ok=True)
+                    import_log_path = os.path.join(logs_dir, "import_history.log")
+                    
                     with open(import_log_path, "a", encoding="utf-8") as log_file:
                         log_file.write("\n".join(log_content) + "\n")
                 except Exception as e:
