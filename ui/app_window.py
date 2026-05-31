@@ -536,6 +536,7 @@ class AAXManagerApp:
         
         # --- NEW: Safe Extraction Lambda ---
         def open_location():
+            import os
             path = None
             if self.current_view_mode == "list":
                 selected = self.library_tree.selection()
@@ -549,7 +550,19 @@ class AAXManagerApp:
                     if len(vals) > 7: path = vals[7]
             
             if not path: path = getattr(self, '_selected_local_path', None)
-            self.system_manager.open_file_location(path)
+            
+            # Resolve virtual playlist paths to their actual folder
+            if path:
+                local_data = self.library_manager.local_library.get(path, {})
+                if local_data.get("is_playlist"):
+                    chapters = local_data.get("chapters", [])
+                    if chapters and chapters[0].get("file_path"):
+                        path = os.path.dirname(chapters[0]["file_path"])
+                    else:
+                        path = os.path.dirname(path)
+            
+            if path:
+                self.system_manager.open_file_location(path)
 
         self.context_menu.add_command(label="📁 Open File Location", command=open_location)
         self.context_menu.add_separator()
@@ -577,8 +590,17 @@ class AAXManagerApp:
         if not path:
             path = getattr(self, '_selected_local_path', None)
             
-        # --- NEW: Dynamically enable or disable the button ---
         import os
+        # Resolve virtual playlist paths before doing the existence check
+        if path:
+            local_data = self.library_manager.local_library.get(path, {})
+            if local_data.get("is_playlist"):
+                chapters = local_data.get("chapters", [])
+                if chapters and chapters[0].get("file_path"):
+                    path = os.path.dirname(chapters[0]["file_path"])
+                else:
+                    path = os.path.dirname(path)
+
         if path and os.path.exists(path):
             self.context_menu.entryconfig("📁 Open File Location", state=tk.NORMAL)
         else:
