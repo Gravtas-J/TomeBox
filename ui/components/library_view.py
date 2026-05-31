@@ -204,7 +204,7 @@ def setup_library_view(app, parent):
     app.library_tree.column("ASIN", width=90, minwidth=90, stretch=tk.NO)
     app.library_tree.column("File Path", width=350, minwidth=250, stretch=tk.NO)
     app.library_tree.column("Status", width=110, minwidth=100, stretch=tk.NO)
-    app.library_tree.column("Date Added", width=100, minwidth=90, stretch=tk.YES)
+    app.library_tree.column("Date Added", width=100, minwidth=90, stretch=tk.NO)
     
     
     
