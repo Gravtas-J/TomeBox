@@ -162,16 +162,33 @@ def setup_library_view(app, parent):
     app.library_tree.bind("<Double-1>", app.library_presenter.handle_tree_double_click)
     
     app.current_view_mode = "list"
-    app.grid_images_ref = [] 
     
-    app.grid_canvas = tk.Canvas(tree_frame, bg=default_bg, highlightthickness=0)
-    app.grid_inner = tk.Frame(app.grid_canvas, bg=default_bg)
-    app.grid_window_id = app.grid_canvas.create_window((0, 0), window=app.grid_inner, anchor="nw")
-    
+    def on_grid_click(index):
+        if 0 <= index < len(app.grid_canvas.data):
+            item = app.grid_canvas.data[index]
+            app._selected_grid_item = {'values': [
+                item.get("title", ""), item.get("authors", ""), item.get("narrator", ""),
+                item.get("series", ""), item.get("duration_str", ""), item.get("asin", ""),
+                item.get("status", ""), item.get("path", "")
+            ]}
+            app.on_item_select()
+
+    def on_grid_double_click(index):
+        on_grid_click(index)
+        if hasattr(app, 'playback_presenter'):
+            app.playback_presenter.master_play(None)
+
+    from ui.components.virtual_grid import VirtualGridView
+    app.grid_canvas = VirtualGridView(
+        tree_frame, 
+        image_cache=app.image_cache, 
+        cell_width=200, 
+        cell_height=300,
+        on_click_cb=on_grid_click,
+        on_double_click_cb=on_grid_double_click
+    )
     app.grid_canvas.configure(yscrollcommand=app.v_scroll.set)
-    app.grid_inner.bind("<Configure>", lambda e: app.grid_canvas.configure(scrollregion=app.grid_canvas.bbox("all")))
-    
-    app.grid_canvas.bind("<Configure>", app.library_presenter.on_canvas_resize)
+
     app.root.bind_all("<MouseWheel>", app.library_presenter._on_global_scroll)  
     app.root.bind_all("<Button-4>", app.library_presenter._on_global_scroll)    
     app.root.bind_all("<Button-5>", app.library_presenter._on_global_scroll)   

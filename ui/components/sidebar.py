@@ -13,6 +13,10 @@ def setup_sidebar(app, parent):
     
     app.author_label = ttk.Label(app.cover_frame, text="", font=("Segoe UI", 10, "italic"))
     app.author_label.pack(pady=2)
+
+    # --- NEW: Series Metadata Label ---
+    app.series_label = ttk.Label(app.cover_frame, text="", font=("Segoe UI", 9, "bold"), foreground="#4a90e2")
+    app.series_label.pack(pady=(0, 5))
     
     app.current_cover_photo = None
 
@@ -45,13 +49,10 @@ def setup_sidebar(app, parent):
         return "break"
         
     def recursively_block_clicks(widget):
-        # Bind the block to the widget itself (Button-3 for Win/Linux, Button-2 for Mac)
-        widget.bind("<Button-3>", block_context_menu)
+        # Bind the block to everything inside the sidebar
         widget.bind("<Button-2>", block_context_menu)
-        
-        # Drill down into every child widget
+        widget.bind("<Button-3>", block_context_menu)
         for child in widget.winfo_children():
             recursively_block_clicks(child)
             
-    # Apply the shield to the master sidebar container and everything inside it
     recursively_block_clicks(parent)

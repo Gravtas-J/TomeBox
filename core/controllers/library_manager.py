@@ -396,60 +396,51 @@ class LibraryManager:
 
     # library_manager.py
     def handle_remove_clicked(self, app):
-        # 1. Grab the cached selection to beat the macOS focus bug
-        selected_items = getattr(app, '_cached_selection', app.library_tree.selection())
-        if not selected_items:
-            return
-
-        # 2. Extract local paths directly from the Treeview data
         items_to_remove = []
-        for item_id in selected_items:
-            values = app.library_tree.item(item_id).get('values', [])
-            if len(values) > 7 and values[7]:
-                local_path = values[7]
-                items_to_remove.append((item_id, local_path))
+        
+        # 1. Grab selection based on view mode
+        if app.current_view_mode == "list":
+            selected_items = getattr(app, '_cached_selection', app.library_tree.selection())
+            if not selected_items: return
+            for item_id in selected_items:
+                values = app.library_tree.item(item_id).get('values', [])
+                if len(values) > 7 and values[7]:
+                    items_to_remove.append((item_id, values[7]))
+        else:
+            if getattr(app, '_selected_grid_item', None):
+                vals = app._selected_grid_item.get('values', [])
+                if len(vals) > 7 and vals[7]:
+                    items_to_remove.append(("grid_item", vals[7]))
 
-        # 3. If nothing is local, just tell them and bail out early
         if not items_to_remove:
-            messagebox.showinfo(
-                "Cloud Only",
-                "The selected title(s) are not currently in your downloaded local library.",
-                parent=app.root
-            )
+            messagebox.showinfo("Cloud Only", "The selected title(s) are not currently in your downloaded local library.", parent=app.root)
             return
 
-        # 4. Prompt ONLY for the items that can actually be removed
         msg = (f"Remove {len(items_to_remove)} selected item(s) from your local library list?\n\n"
                "(This only removes them from the list, it does not delete the actual files from your hard drive.)")
         if not messagebox.askyesno("Remove Files", msg, parent=app.root):
             return
 
         removed = 0
-        
-        # Load settings to access the ignored list
         settings = self.db.load_settings()
         ignored_files = set(settings.get("ignored_files", []))
 
-        # Save index for auto-selection later
         last_idx = 0
-        try:
-            last_idx = app.library_tree.index(selected_items[-1])
-        except Exception:
-            pass
+        if app.current_view_mode == "list":
+            try: last_idx = app.library_tree.index(selected_items[-1])
+            except Exception: pass
 
-        # 4. Perform the actual removal using our pre-filtered list
         for item_id, local_path in items_to_remove:
             entry_data = self.local_library.get(local_path, {})
             if self.remove_local_file(local_path):
                 removed += 1
-                ignored_files.add(local_path) # Add to ignore list
+                ignored_files.add(local_path)
                 
                 for ch in entry_data.get("chapters", []):
                     ch_path = ch.get("file_path")
                     if ch_path:
                         ignored_files.add(os.path.normpath(ch_path))
 
-                # --- Phase 1 Fix: Clear Player Ghost State ---
                 if app.file_path == local_path:
                     app.playback_presenter.stop_audio()
                     app.playback.chapters = []
@@ -460,24 +451,24 @@ class LibraryManager:
                     app.ui_state.playback_progress.set(0)
 
         if removed > 0:
-            # Save the updated ignored list back to the DB
             settings["ignored_files"] = list(ignored_files)
             self.db.save_settings(settings)
             
             app.library_presenter.refresh_library_ui()
             app.clear_sidebar()
             app._selected_local_path = None
+            app._selected_grid_item = None
             
-            # --- Phase 3 Fix: Auto-select next row ---
-            children = app.library_tree.get_children()
-            if children:
-                next_idx = min(last_idx - len(selected_items) + 1, len(children) - 1)
-                next_idx = max(0, next_idx)
-                next_item = children[next_idx]
-                app.library_tree.selection_set(next_item)
-                app.library_tree.focus(next_item)
-                app.library_tree.see(next_item)
-                app.on_item_select()
+            if app.current_view_mode == "list":
+                children = app.library_tree.get_children()
+                if children:
+                    next_idx = min(last_idx - len(selected_items) + 1, len(children) - 1)
+                    next_idx = max(0, next_idx)
+                    next_item = children[next_idx]
+                    app.library_tree.selection_set(next_item)
+                    app.library_tree.focus(next_item)
+                    app.library_tree.see(next_item)
+                    app.on_item_select()
             
     def remove_local_file(self, filepath):
         if filepath in self.local_library:

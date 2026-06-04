@@ -49,6 +49,7 @@ from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
+from core.utils.image_cache import ImageCache
 
 from ui.bookmarks_presenter import BookmarksPresenter
 from ui.action_router import ActionRouter
@@ -104,6 +105,7 @@ class UiState:
         self.timer_countdown = tk.StringVar(value="")
         self.voice_boost = tk.BooleanVar(value=settings.get("voice_boost", False))
         self.skip_silence = tk.BooleanVar(value=settings.get("skip_silence", False))
+        
 class AAXManagerApp:
     @property
     def file_path(self): return getattr(self, '_active_book_path', "")
@@ -265,7 +267,7 @@ class AAXManagerApp:
         self.tray_icon = None
         self.browser_login_btn = None
 
-        
+        self.image_cache = ImageCache(max_size=100)
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
@@ -604,6 +606,28 @@ class AAXManagerApp:
                 vals = self.library_tree.item(selected[0], 'values')
                 if len(vals) > 7: path = vals[7]
         else:
+            # Map absolute click coordinates to logical grid index
+            x = self.grid_canvas.canvasx(event.x)
+            y = self.grid_canvas.canvasy(event.y)
+            col = int(x // self.grid_canvas.cell_width)
+            row = int(y // self.grid_canvas.cell_height)
+            
+            if 0 <= col < self.grid_canvas.cols:
+                idx = (row * self.grid_canvas.cols) + col
+                if 0 <= idx < len(self.grid_canvas.data):
+                    item_data = self.grid_canvas.data[idx]
+                    self._selected_grid_item = {'values': [
+                        item_data.get("title", ""),
+                        item_data.get("authors", ""),
+                        item_data.get("narrator", ""),
+                        item_data.get("series", ""),
+                        item_data.get("duration_str", ""),
+                        item_data.get("asin", ""),
+                        item_data.get("status", ""),
+                        item_data.get("path", "")
+                    ]}
+                    self.on_item_select()
+
             grid_item = getattr(self, '_selected_grid_item', None)
             if grid_item:
                 vals = grid_item.get('values', [])
@@ -677,9 +701,20 @@ class AAXManagerApp:
             authors = item['values'][1]
             asin = item['values'][5]
 
+            # Highlight active cell in the virtual pool
+            for win_id, cell in self.grid_canvas.active_cells.values():
+                if cell.current_index is not None and self.grid_canvas.data[cell.current_index].get("asin") == asin:
+                    cell.config(highlightbackground="#4a90e2", highlightthickness=2)
+                else:
+                    cell.config(highlightthickness=0)
+
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)
-        
+        series_text = item['values'][3]
+        if series_text and series_text.strip():
+            self.series_label.config(text=series_text)
+        else:
+            self.series_label.config(text="")
         cover_path = None
         covers_dir = self.covers_dir
         
