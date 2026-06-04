@@ -606,27 +606,21 @@ class AAXManagerApp:
                 vals = self.library_tree.item(selected[0], 'values')
                 if len(vals) > 7: path = vals[7]
         else:
-            # Map absolute click coordinates to logical grid index
-            x = self.grid_canvas.canvasx(event.x)
-            y = self.grid_canvas.canvasy(event.y)
-            col = int(x // self.grid_canvas.cell_width)
-            row = int(y // self.grid_canvas.cell_height)
+            idx = self.grid_canvas.get_index_at(event.x, event.y)
             
-            if 0 <= col < self.grid_canvas.cols:
-                idx = (row * self.grid_canvas.cols) + col
-                if 0 <= idx < len(self.grid_canvas.data):
-                    item_data = self.grid_canvas.data[idx]
-                    self._selected_grid_item = {'values': [
-                        item_data.get("title", ""),
-                        item_data.get("authors", ""),
-                        item_data.get("narrator", ""),
-                        item_data.get("series", ""),
-                        item_data.get("duration_str", ""),
-                        item_data.get("asin", ""),
-                        item_data.get("status", ""),
-                        item_data.get("path", "")
-                    ]}
-                    self.on_item_select()
+            if idx is not None:
+                item_data = self.grid_canvas.data[idx]
+                self._selected_grid_item = {'values': [
+                    item_data.get("title", ""),
+                    item_data.get("authors", ""),
+                    item_data.get("narrator", ""),
+                    item_data.get("series", ""),
+                    item_data.get("duration_str", ""),
+                    item_data.get("asin", ""),
+                    item_data.get("status", ""),
+                    item_data.get("path", "")
+                ]}
+                self.on_item_select()
 
             grid_item = getattr(self, '_selected_grid_item', None)
             if grid_item:
@@ -701,12 +695,7 @@ class AAXManagerApp:
             authors = item['values'][1]
             asin = item['values'][5]
 
-            # Highlight active cell in the virtual pool
-            for win_id, cell in self.grid_canvas.active_cells.values():
-                if cell.current_index is not None and self.grid_canvas.data[cell.current_index].get("asin") == asin:
-                    cell.config(highlightbackground="#4a90e2", highlightthickness=2)
-                else:
-                    cell.config(highlightthickness=0)
+            self.grid_canvas.set_active_asin(asin)
 
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)

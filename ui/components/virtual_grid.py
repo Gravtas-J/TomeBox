@@ -1,68 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
 import math
-
-class GridCell(tk.Frame):
-    """The physical Tkinter widget that gets recycled for different books."""
-    def __init__(self, parent, width, height, **kwargs):
-        # Use your theme's background color
-        super().__init__(parent, width=width, height=height, bg="#1e1e1e", **kwargs)
-        self.pack_propagate(False)
-        
-        # Cover Image Canvas (Leaves ~50px at the bottom for text)
-        self.cover_height = height - 55
-        self.cover_canvas = tk.Canvas(self, width=width, height=self.cover_height, bg="#1e1e1e", highlightthickness=0)
-        self.cover_canvas.pack(side="top", fill="x", pady=(5, 0))
-        self.cover_id = self.cover_canvas.create_image(width//2, self.cover_height//2, anchor="center")
-        
-        # Title Label
-        self.lbl_title = tk.Label(self, text="", bg="#1e1e1e", fg="white", font=("Segoe UI", 10, "bold"), anchor="w")
-        self.lbl_title.pack(side="top", fill="x", padx=10)
-        
-        # Author Label
-        self.lbl_author = tk.Label(self, text="", bg="#1e1e1e", fg="#95a5a6", font=("Segoe UI", 9), anchor="w")
-        self.lbl_author.pack(side="top", fill="x", padx=10)
-        
-        self.current_index = None
-
-        self.last_x = None
-        self.last_y = None
-        self.is_hidden = True
-        for w in (self, self.cover_canvas, self.lbl_title, self.lbl_author):
-            w.bind("<Button-1>", self._on_click)
-            w.bind("<Double-1>", self._on_double_click)
-            # Explicitly force scroll events to bubble up to the parent grid
-            w.bind("<MouseWheel>", parent._on_mousewheel_win)
-            w.bind("<Button-4>", parent._on_mousewheel_mac)
-            w.bind("<Button-5>", parent._on_mousewheel_mac)
-
-    def _on_click(self, event):
-        if self.current_index is not None and getattr(self.master, 'on_click_cb', None):
-            self.master.on_click_cb(self.current_index)
-
-    def _on_double_click(self, event):
-        if self.current_index is not None and getattr(self.master, 'on_double_click_cb', None):
-            self.master.on_double_click_cb(self.current_index)
-
-    def update_data(self, index, data, photo):
-        """Injects new data into the cell without destroying/recreating widgets."""
-        self.current_index = index
-        self.lbl_title.config(text=data.get("title", "Unknown Title"))
-        
-        # Safely handle author lists or strings
-        authors = data.get("authors", "Unknown Author")
-        if isinstance(authors, list):
-            authors = ", ".join([a.get("name", "") for a in authors if isinstance(a, dict)])
-        self.lbl_author.config(text=authors)
-        
-        self.cover_canvas.itemconfig(self.cover_id, image=photo)
-        self.photo = photo  # Keep a local reference so Tkinter's garbage collector doesn't eat it
-
 
 class VirtualGridView(tk.Canvas):
     """
-    Phase 3: The Virtualized Grid Engine.
-    Recycles a small pool of GridCell widgets based on scroll math.
+    Phase 5 (Ultimate): Native Vector Rendering.
+    Bypasses Tkinter's widget engine entirely for 144hz-adjacent scrolling performance.
     """
     def __init__(self, parent, image_cache, cell_width=200, cell_height=300, on_click_cb=None, on_double_click_cb=None, **kwargs):
         kwargs.setdefault('highlightthickness', 0)
@@ -70,46 +12,57 @@ class VirtualGridView(tk.Canvas):
         super().__init__(parent, **kwargs)
         
         self.image_cache = image_cache
-        self.on_click_cb = on_click_cb
-        self.on_double_click_cb = on_double_click_cb
-        
-        self.image_cache = image_cache
         self.cell_width = cell_width
         self.cell_height = cell_height
+        
+        self.on_click_cb = on_click_cb
+        self.on_double_click_cb = on_double_click_cb
         
         self.data = []
         self.cols = 1
         self.rows = 0
+        self.x_offset = 0
+        self.active_asin = None
         
-        # --- THE RECYCLING POOL ---
-        self.active_cells = {}  # Dict mapping: logical_index -> (canvas_window_id, GridCell)
-        self.unused_pool = []   # List of unused (canvas_window_id, GridCell)
-        self._init_pool(40)     # Pre-allocate enough for a 1080p screen
+        # --- THE NATIVE CANVAS POOL ---
+        self.active_cells = {}  # logical_index -> cell_dict
+        self.unused_pool = []   # list of cell_dicts
+        self._init_pool(50)     
         
         # Bindings
         self.bind("<Configure>", self._on_configure)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Double-1>", self._on_double_click)
         self.bind("<MouseWheel>", self._on_mousewheel_win)
         self.bind("<Button-4>", self._on_mousewheel_mac)
         self.bind("<Button-5>", self._on_mousewheel_mac)
         
     def _init_pool(self, size):
-        """Creates physical widgets and stores them off-screen."""
+        """Creates raw canvas vector shapes instead of expensive Tkinter frames."""
         for _ in range(size):
-            cell = GridCell(self, self.cell_width, self.cell_height)
-            cell.is_hidden = True
-            win_id = self.create_window(-1000, -1000, window=cell, anchor="nw", state="hidden")
-            self.unused_pool.append((win_id, cell))
+            cell = {
+                # Outline is used for the active selection border
+                "bg_id": self.create_rectangle(0, 0, 0, 0, fill="#1e1e1e", outline="", width=2, state="hidden"),
+                "cover_id": self.create_image(0, 0, anchor="n", state="hidden"),
+                "title_id": self.create_text(0, 0, anchor="nw", fill="white", font=("Segoe UI", 10, "bold"), state="hidden"),
+                "author_id": self.create_text(0, 0, anchor="nw", fill="#95a5a6", font=("Segoe UI", 9), state="hidden"),
+                
+                "photo_ref": None, # Prevents Tkinter garbage collection
+                "current_index": None,
+                "last_x": -9999,
+                "last_y": -9999,
+                "is_hidden": True
+            }
+            self.unused_pool.append(cell)
 
     def set_data(self, data):
-        """Ingest new library data, reset scroll, and re-render."""
         self.data = data
-        self.yview_moveto(0) # Reset scroll to top on filter/sort
+        self.yview_moveto(0) 
         self._recalculate_layout()
         self._update_viewport()
         
     def _on_configure(self, event):
         new_cols = max(1, event.width // self.cell_width)
-        
         if new_cols != self.cols or getattr(self, 'last_width', 0) != event.width:
             self.cols = new_cols
             self.last_width = event.width
@@ -142,16 +95,54 @@ class VirtualGridView(tk.Canvas):
         direction = -1 if event.num == 4 else 1
         self.yview_scroll(direction, "units")
 
-    # --- THE RENDER LOOP ---
+    # --- Interaction Helpers ---
+    def get_index_at(self, event_x, event_y):
+        """Translates raw mouse clicks into logical grid indices."""
+        if self.cols == 0 or not self.data: return None
+        
+        x = self.canvasx(event_x) - self.x_offset
+        y = self.canvasy(event_y)
+        
+        col = int(x // self.cell_width)
+        row = int(y // self.cell_height)
+        
+        if 0 <= col < self.cols:
+            idx = (row * self.cols) + col
+            if 0 <= idx < len(self.data):
+                return idx
+        return None
+
+    def _on_click(self, event):
+        idx = self.get_index_at(event.x, event.y)
+        if idx is not None and self.on_click_cb:
+            self.on_click_cb(idx)
+
+    def _on_double_click(self, event):
+        idx = self.get_index_at(event.x, event.y)
+        if idx is not None and self.on_double_click_cb:
+            self.on_double_click_cb(idx)
+            
+    def set_active_asin(self, asin):
+        """Applies the blue selection border using native canvas outlines."""
+        self.active_asin = asin
+        for cell in self.active_cells.values():
+            if cell["current_index"] is not None and self.data[cell["current_index"]].get("asin") == asin:
+                self.itemconfig(cell["bg_id"], outline="#4a90e2")
+            else:
+                self.itemconfig(cell["bg_id"], outline="")
+
+    # --- THE VECTOR RENDER LOOP ---
     def _update_viewport(self):
-        """The heart of the virtual grid. Recycles cells based on visibility."""
         if not self.data or self.cols == 0:
             for idx in list(self.active_cells.keys()):
-                win_id, cell = self.active_cells.pop(idx)
-                if not cell.is_hidden:
-                    self.itemconfig(win_id, state="hidden")
-                    cell.is_hidden = True
-                self.unused_pool.append((win_id, cell))
+                cell = self.active_cells.pop(idx)
+                if not cell["is_hidden"]:
+                    self.itemconfig(cell["bg_id"], state="hidden")
+                    self.itemconfig(cell["cover_id"], state="hidden")
+                    self.itemconfig(cell["title_id"], state="hidden")
+                    self.itemconfig(cell["author_id"], state="hidden")
+                    cell["is_hidden"] = True
+                self.unused_pool.append(cell)
             return
             
         top_frac, bottom_frac = super().yview()
@@ -167,57 +158,84 @@ class VirtualGridView(tk.Canvas):
         
         canvas_width = getattr(self, 'last_width', self.winfo_width())
         grid_width = self.cols * self.cell_width
-        x_offset = max(0, (canvas_width - grid_width) // 2)
+        self.x_offset = max(0, (canvas_width - grid_width) // 2)
         
-        # 1. PURGE: Remove cells that scrolled off-screen
+        # 1. PURGE
         for idx in list(self.active_cells.keys()):
             if idx not in visible_indices:
-                win_id, cell = self.active_cells.pop(idx)
+                cell = self.active_cells.pop(idx)
+                if not cell["is_hidden"]:
+                    self.itemconfig(cell["bg_id"], state="hidden")
+                    self.itemconfig(cell["cover_id"], state="hidden")
+                    self.itemconfig(cell["title_id"], state="hidden")
+                    self.itemconfig(cell["author_id"], state="hidden")
+                    cell["is_hidden"] = True
+                self.unused_pool.append(cell)
                 
-                # PERFORMANCE FIX: Only hide if not already hidden
-                if not cell.is_hidden:
-                    self.itemconfig(win_id, state="hidden")
-                    cell.is_hidden = True
-                    
-                self.unused_pool.append((win_id, cell))
-                
-        # 2. DRAW & REPOSITION: Assign cells or update existing ones
+        # 2. DRAW & VECTOR MATH
         for idx in visible_indices:
             is_new = False
             
             if idx not in self.active_cells:
                 if not self.unused_pool:
                     self._init_pool(10)
-                win_id, cell = self.unused_pool.pop()
-                self.active_cells[idx] = (win_id, cell)
+                cell = self.unused_pool.pop()
+                self.active_cells[idx] = cell
                 is_new = True
                 
-            win_id, cell = self.active_cells[idx]
+            cell = self.active_cells[idx]
             
+            # Inject new data only if recycled
             if is_new:
                 item = self.data[idx]
                 asin = item.get("asin", f"local_{idx}")
                 cover_path = item.get("cover_path")
+                
                 title = item.get("title", "Unknown")
+                display_title = title[:35] + "..." if len(title) > 35 else title
+                
                 authors = item.get("authors", "Unknown")
+                if isinstance(authors, list):
+                    authors = ", ".join([a.get("name", "") for a in authors if isinstance(a, dict)])
+                display_author = authors[:40] + "..." if len(authors) > 40 else authors
                 
-                cover_size = (self.cell_width - 20, cell.cover_height - 10) 
+                cover_size = (self.cell_width - 20, self.cell_height - 65) 
                 photo = self.image_cache.get_thumbnail(asin, cover_path, title, authors, size=cover_size)
-                cell.update_data(idx, item, photo)
                 
+                self.itemconfig(cell["cover_id"], image=photo)
+                self.itemconfig(cell["title_id"], text=display_title)
+                self.itemconfig(cell["author_id"], text=display_author)
+                
+                cell["photo_ref"] = photo
+                cell["current_index"] = idx
+                
+                if asin == self.active_asin:
+                    self.itemconfig(cell["bg_id"], outline="#4a90e2")
+                else:
+                    self.itemconfig(cell["bg_id"], outline="")
+                
+            # Vector Translation Math
             row = idx // self.cols
             col = idx % self.cols
-            x = x_offset + (col * self.cell_width)
+            x = self.x_offset + (col * self.cell_width)
             y = row * self.cell_height
             
-            # --- THE PERFORMANCE FIX: Diff Checking ---
-            # Only talk to Tkinter if coordinates actually changed
-            if cell.last_x != x or cell.last_y != y:
-                self.coords(win_id, x, y)
-                cell.last_x = x
-                cell.last_y = y
+            # THE PERFORMANCE FIX: Diff Check vectors before commanding Tkinter
+            if cell["last_x"] != x or cell["last_y"] != y:
+                # Background rect (inset by 2px)
+                self.coords(cell["bg_id"], x + 2, y + 2, x + self.cell_width - 2, y + self.cell_height - 2)
+                # Cover image (centered horizontally, 10px down)
+                self.coords(cell["cover_id"], x + (self.cell_width // 2), y + 10)
+                # Text anchors
+                self.coords(cell["title_id"], x + 10, y + self.cell_height - 50)
+                self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
                 
-            # Only talk to Tkinter if visibility actually changed
-            if cell.is_hidden:
-                self.itemconfig(win_id, state="normal")
-                cell.is_hidden = False
+                cell["last_x"] = x
+                cell["last_y"] = y
+                
+            if cell["is_hidden"]:
+                self.itemconfig(cell["bg_id"], state="normal")
+                self.itemconfig(cell["cover_id"], state="normal")
+                self.itemconfig(cell["title_id"], state="normal")
+                self.itemconfig(cell["author_id"], state="normal")
+                cell["is_hidden"] = False
