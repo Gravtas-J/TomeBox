@@ -49,6 +49,7 @@ class VirtualGridView(tk.Canvas):
                 
                 "photo_ref": None, # Prevents Tkinter garbage collection
                 "current_index": None,
+                "current_asin": None,
                 "last_x": -9999,
                 "last_y": -9999,
                 "is_hidden": True
@@ -57,6 +58,8 @@ class VirtualGridView(tk.Canvas):
 
     def set_data(self, data):
         self.data = data
+        for cell in self.active_cells.values():
+            cell["current_asin"] = None
         self.yview_moveto(0) 
         self._recalculate_layout()
         self._update_viewport()
@@ -184,11 +187,10 @@ class VirtualGridView(tk.Canvas):
                 is_new = True
                 
             cell = self.active_cells[idx]
-            
+            item = self.data[idx]
+            asin = item.get("asin", f"local_{idx}")
             # Inject new data only if recycled
-            if is_new:
-                item = self.data[idx]
-                asin = item.get("asin", f"local_{idx}")
+            if is_new or cell.get("current_asin") != asin:
                 cover_path = item.get("cover_path")
                 
                 title = item.get("title", "Unknown")
@@ -208,6 +210,7 @@ class VirtualGridView(tk.Canvas):
                 
                 cell["photo_ref"] = photo
                 cell["current_index"] = idx
+                cell["current_asin"] = asin  # <-- REMEMBER THE NEW ASIN
                 
                 if asin == self.active_asin:
                     self.itemconfig(cell["bg_id"], outline="#4a90e2")

@@ -137,9 +137,11 @@ def test_handle_remove_clicked(mock_yesno, manager):
     
     # Create a dummy app mock to pass to the manager
     mock_app = MagicMock()
+    
+    mock_app.current_view_mode = "list"
+    
     mock_app.library_tree.selection.return_value = ["row_1"]
     
-    # FIX: Explicitly set the cached selection so the MagicMock doesn't swallow the loop
     mock_app._cached_selection = ["row_1"]
     
     # Provide a full 8-element list so the new logic can find the path at index 7
