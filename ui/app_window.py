@@ -280,7 +280,7 @@ class AAXManagerApp:
 
         self.root.bind("<Control-a>", self.library_presenter.handle_select_all)
         self.root.bind("<Command-a>", self.library_presenter.handle_select_all)
-        
+
         def _focus_search():
             self.search_entry.focus_force() 
             self.search_entry.icursor(tk.END) 
@@ -694,6 +694,7 @@ class AAXManagerApp:
                 self.clear_sidebar()
                 self._selected_local_path = None
                 return
+            self._selected_grid_items = None
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
@@ -894,7 +895,7 @@ class AAXManagerApp:
                 messagebox.showwarning("Selection Required", "Select a title first.")
                 return
             item = self._selected_grid_item
-
+        self._selected_grid_items = None
         title = item['values'][0]
         asin = item['values'][5]
 

@@ -407,7 +407,14 @@ class LibraryManager:
                 if len(values) > 7 and values[7]:
                     items_to_remove.append((item_id, values[7]))
         else:
-            if getattr(app, '_selected_grid_item', None):
+            # 1. Try to delete the multi-select batch (from Ctrl+A)
+            if getattr(app, '_selected_grid_items', None):
+                for item in app._selected_grid_items:
+                    path = item.get("path")
+                    if path:
+                        items_to_remove.append(("grid_item", path))
+            # 2. Fallback to deleting a single-selected item
+            elif getattr(app, '_selected_grid_item', None):
                 vals = app._selected_grid_item.get('values', [])
                 if len(vals) > 7 and vals[7]:
                     items_to_remove.append(("grid_item", vals[7]))

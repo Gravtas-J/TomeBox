@@ -450,7 +450,6 @@ class LibraryPresenter:
         import tkinter as tk
         from tkinter import ttk
         
-        # Ignore if the user is typing in the search box
         focused = self.app.root.focus_get()
         if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
             return
@@ -459,14 +458,38 @@ class LibraryPresenter:
             tree = self.app.library_tree
             children = tree.get_children()
             if children:
-                # Natively select every row
                 tree.selection_set(children)
                 self.app.root.after(10, self.app.on_item_select)
             return "break"
         else:
-            # TODO: Requires upgrading VirtualGridView to support arrays of active_asins
-            pass
-        
+            grid_data = self.app.grid_canvas.data
+            if not grid_data: return
+            
+            # 1. Grab every ASIN currently visible under the active filter
+            all_asins = {item.get("asin") for item in grid_data}
+            
+            # 2. Apply the blue border instantly to the entire virtual grid
+            self.app.grid_canvas.set_active_asins(all_asins)
+            
+            # 3. Store the full list so the 'Remove' button can process batch deletions
+            self.app._selected_grid_items = grid_data 
+            
+            # 4. Populate the sidebar with the first item to keep the UI looking clean
+            first = grid_data[0]
+            self.app._selected_grid_item = {'values': [
+                first.get("title", ""), first.get("authors", ""), first.get("narrator", ""),
+                first.get("series", ""), first.get("duration_str", ""), first.get("asin", ""),
+                first.get("status", ""), first.get("path", ""), first.get("date_str", "")
+            ]}
+            
+            if hasattr(self.app, 'author_label'):
+                self.app.author_label.config(text=first.get("authors", ""))
+            if hasattr(self.app, 'series_label'):
+                series = first.get("series", "")
+                self.app.series_label.config(text=series if series and series.strip() else "")
+                
+            return "break"
+
     def handle_alpha_jump(self, event):
         import tkinter as tk
         from tkinter import ttk

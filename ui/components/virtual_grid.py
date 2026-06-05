@@ -22,7 +22,7 @@ class VirtualGridView(tk.Canvas):
         self.cols = 1
         self.rows = 0
         self.x_offset = 0
-        self.active_asin = None
+        self.active_asins = set()
         
         # --- THE NATIVE CANVAS POOL ---
         self.active_cells = {}  # logical_index -> cell_dict
@@ -44,8 +44,8 @@ class VirtualGridView(tk.Canvas):
                 # Outline is used for the active selection border
                 "bg_id": self.create_rectangle(0, 0, 0, 0, fill="#1e1e1e", outline="", width=2, state="hidden"),
                 "cover_id": self.create_image(0, 0, anchor="n", state="hidden"),
-                "title_id": self.create_text(0, 0, anchor="nw", fill="white", font=("Segoe UI", 10, "bold"), state="hidden"),
-                "author_id": self.create_text(0, 0, anchor="nw", fill="#95a5a6", font=("Segoe UI", 9), state="hidden"),
+                "title_id": self.create_text(0, 0, anchor="nw", fill="white", font=("Segoe UI", 10, "bold"), width=self.cell_width - 20, state="hidden"),
+                "author_id": self.create_text(0, 0, anchor="nw", fill="#95a5a6", font=("Segoe UI", 9), width=self.cell_width - 20, state="hidden"),
                 
                 "photo_ref": None, # Prevents Tkinter garbage collection
                 "current_index": None,
@@ -127,13 +127,20 @@ class VirtualGridView(tk.Canvas):
             self.on_double_click_cb(idx)
             
     def set_active_asin(self, asin):
-        """Applies the blue selection border using native canvas outlines."""
-        self.active_asin = asin
+        """Legacy helper to keep single-clicks working smoothly."""
+        self.set_active_asins({asin} if asin else set())
+
+    def set_active_asins(self, asins):
+        """Applies the blue selection border to multiple cells natively."""
+        self.active_asins = set(asins)
         for cell in self.active_cells.values():
-            if cell["current_index"] is not None and self.data[cell["current_index"]].get("asin") == asin:
-                self.itemconfig(cell["bg_id"], outline="#4a90e2")
-            else:
-                self.itemconfig(cell["bg_id"], outline="")
+            idx = cell["current_index"]
+            if idx is not None and idx < len(self.data):
+                cell_asin = self.data[idx].get("asin")
+                if cell_asin in self.active_asins:
+                    self.itemconfig(cell["bg_id"], outline="#4a90e2")
+                else:
+                    self.itemconfig(cell["bg_id"], outline="")
 
     # --- THE VECTOR RENDER LOOP ---
     def _update_viewport(self):
@@ -188,21 +195,25 @@ class VirtualGridView(tk.Canvas):
                 is_new = True
                 
             cell = self.active_cells[idx]
+            
             item = self.data[idx]
             asin = item.get("asin", f"local_{idx}")
-            # Inject new data only if recycled
+            
+            # Inject new data only if recycled or swapped
             if is_new or cell.get("current_asin") != asin:
                 cover_path = item.get("cover_path")
                 
                 title = item.get("title", "Unknown")
-                display_title = title[:35] + "..." if len(title) > 35 else title
+                # Expand truncation so it fills out two wrapped lines
+                display_title = title[:60] + "..." if len(title) > 60 else title
                 
                 authors = item.get("authors", "Unknown")
                 if isinstance(authors, list):
                     authors = ", ".join([a.get("name", "") for a in authors if isinstance(a, dict)])
                 display_author = authors[:40] + "..." if len(authors) > 40 else authors
                 
-                cover_size = (self.cell_width - 20, self.cell_height - 65) 
+                # Shrink cover height by 5px to give text more breathing room
+                cover_size = (self.cell_width - 20, self.cell_height - 70) 
                 photo = self.image_cache.get_thumbnail(asin, cover_path, title, authors, size=cover_size)
                 
                 self.itemconfig(cell["cover_id"], image=photo)
@@ -211,9 +222,9 @@ class VirtualGridView(tk.Canvas):
                 
                 cell["photo_ref"] = photo
                 cell["current_index"] = idx
-                cell["current_asin"] = asin  # <-- REMEMBER THE NEW ASIN
+                cell["current_asin"] = asin 
                 
-                if asin == self.active_asin:
+                if asin in self.active_asins:
                     self.itemconfig(cell["bg_id"], outline="#4a90e2")
                 else:
                     self.itemconfig(cell["bg_id"], outline="")
@@ -226,13 +237,12 @@ class VirtualGridView(tk.Canvas):
             
             # THE PERFORMANCE FIX: Diff Check vectors before commanding Tkinter
             if cell["last_x"] != x or cell["last_y"] != y:
-                # Background rect (inset by 2px)
                 self.coords(cell["bg_id"], x + 2, y + 2, x + self.cell_width - 2, y + self.cell_height - 2)
-                # Cover image (centered horizontally, 10px down)
                 self.coords(cell["cover_id"], x + (self.cell_width // 2), y + 10)
-                # Text anchors
-                self.coords(cell["title_id"], x + 10, y + self.cell_height - 50)
-                self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
+                
+                # Adjust text anchors: Title gets more room, Author shifts to the bottom edge
+                self.coords(cell["title_id"], x + 10, y + self.cell_height - 55)
+                self.coords(cell["author_id"], x + 10, y + self.cell_height - 20)
                 
                 cell["last_x"] = x
                 cell["last_y"] = y
