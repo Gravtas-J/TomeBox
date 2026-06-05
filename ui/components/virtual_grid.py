@@ -24,6 +24,10 @@ class VirtualGridView(tk.Canvas):
         self.x_offset = 0
         self.active_asins = set()
         
+        # --- Range Selection Trackers ---
+        self.last_clicked_index = None
+        self.batch_selection = None
+
         # --- THE NATIVE CANVAS POOL ---
         self.active_cells = {}  # logical_index -> cell_dict
         self.unused_pool = []   # list of cell_dicts
@@ -118,8 +122,23 @@ class VirtualGridView(tk.Canvas):
 
     def _on_click(self, event):
         idx = self.get_index_at(event.x, event.y)
-        if idx is not None and self.on_click_cb:
-            self.on_click_cb(idx)
+        if idx is not None:
+            # 0x0001 is the OS-level hex code for the Shift key being held down
+            is_shift = bool(event.state & 0x0001)
+            
+            if is_shift and self.last_clicked_index is not None:
+                # Calculate the range between the anchor click and this click
+                start = min(self.last_clicked_index, idx)
+                end = max(self.last_clicked_index, idx)
+                # Store the batch so the main app can read it
+                self.batch_selection = [self.data[i] for i in range(start, end + 1)]
+            else:
+                # Normal click: Set the new anchor and clear any old batches
+                self.last_clicked_index = idx
+                self.batch_selection = None
+                
+            if self.on_click_cb:
+                self.on_click_cb(idx)
 
     def _on_double_click(self, event):
         idx = self.get_index_at(event.x, event.y)

@@ -600,6 +600,7 @@ class AAXManagerApp:
         path = None
         if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
+            # Treeview already has native protection: it only selects if 'not in selection()'
             if item and item not in self.library_tree.selection():
                 self.library_tree.selection_set(item)
                 self.library_tree.focus(item)
@@ -614,18 +615,22 @@ class AAXManagerApp:
             
             if idx is not None:
                 item_data = self.grid_canvas.data[idx]
-                self._selected_grid_item = {'values': [
-                    item_data.get("title", ""),
-                    item_data.get("authors", ""),
-                    item_data.get("narrator", ""),
-                    item_data.get("series", ""),
-                    item_data.get("duration_str", ""),
-                    item_data.get("asin", ""),
-                    item_data.get("status", ""),
-                    item_data.get("path", "")
-                ]}
-                self.on_item_select()
+                asin = item_data.get("asin", "")
+                
+                if asin not in self.grid_canvas.active_asins:
+                    self._selected_grid_item = {'values': [
+                        item_data.get("title", ""),
+                        item_data.get("authors", ""),
+                        item_data.get("narrator", ""),
+                        item_data.get("series", ""),
+                        item_data.get("duration_str", ""),
+                        item_data.get("asin", ""),
+                        item_data.get("status", ""),
+                        item_data.get("path", "")
+                    ]}
+                    self.on_item_select()
 
+            # Grab the path of the primary selected item to determine which context menu to show
             grid_item = getattr(self, '_selected_grid_item', None)
             if grid_item:
                 vals = grid_item.get('values', [])
@@ -694,13 +699,24 @@ class AAXManagerApp:
                 self.clear_sidebar()
                 self._selected_local_path = None
                 return
-            self._selected_grid_items = None
+            
+            if getattr(self.grid_canvas, 'batch_selection', None):
+                self._selected_grid_items = self.grid_canvas.batch_selection
+                
+                # Apply the blue border to everything in the batch
+                all_asins = {item.get("asin") for item in self._selected_grid_items}
+                self.grid_canvas.set_active_asins(all_asins)
+            else:
+                # Normal click: Wipe the batch and highlight just the one book
+                self._selected_grid_items = None 
+                asin = self._selected_grid_item['values'][5]
+                self.grid_canvas.set_active_asins({asin})
+
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
             asin = item['values'][5]
 
-            self.grid_canvas.set_active_asin(asin)
 
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)
