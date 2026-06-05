@@ -84,8 +84,9 @@ class VirtualGridView(tk.Canvas):
 
     # --- Scroll Passthroughs ---
     def yview(self, *args):
-        super().yview(*args)
+        res = super().yview(*args)
         self._update_viewport()
+        return res
     def yview_scroll(self, *args):
         super().yview_scroll(*args)
         self._update_viewport()

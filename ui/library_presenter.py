@@ -331,50 +331,142 @@ class LibraryPresenter:
         from tkinter import ttk
         focused = self.app.root.focus_get()
         
-        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)): return
-        target = getattr(self.app, 'grid_canvas', None) if self.app.current_view_mode == "grid" else getattr(self.app, 'library_tree', None)
-        if not target: return
+        # Don't hijack keys if the user is typing in the search bar
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
             
-        if event.keysym in ("Prior", "Next", "Home", "End") and self.app.current_view_mode == "list":
+        target = getattr(self.app, 'grid_canvas', None) if self.app.current_view_mode == "grid" else getattr(self.app, 'library_tree', None)
+        if not target: 
+            return
+            
+        keys_handled = ("Prior", "Next", "Home", "End", "Up", "Down", "Left", "Right")
+        if event.keysym not in keys_handled:
+            return
+
+        # --- LIST VIEW NAVIGATION ---
+        if self.app.current_view_mode == "list":
             children = target.get_children()
-            if children:
-                if event.keysym == "Home": new_idx = 0
-                elif event.keysym == "End": new_idx = len(children) - 1
+            if not children: return
+            
+            if event.keysym == "Home":
+                new_idx = 0
+            elif event.keysym == "End":
+                new_idx = len(children) - 1
+            else:
+                selected = target.selection()
+                current_idx = 0
+                if selected:
+                    try: current_idx = children.index(selected[0])
+                    except ValueError: pass
+                
+                # Treat Up/Left as -1, Down/Right as +1
+                if event.keysym in ("Up", "Left"): new_idx = current_idx - 1
+                elif event.keysym in ("Down", "Right"): new_idx = current_idx + 1
                 else:
-                    selected = target.selection()
-                    current_idx = 0
-                    if selected:
-                        try: current_idx = children.index(selected[0])
-                        except ValueError: pass
                     try: page_size = int(target.cget('height'))
                     except Exception: page_size = 15 
                         
-                    if event.keysym == 'Next': new_idx = min(current_idx + page_size, len(children) - 1)
-                    else: new_idx = max(current_idx - page_size, 0)
-                        
-                new_item = children[new_idx]
-                target.selection_set(new_item)
-                target.focus(new_item)
-                target.see(new_item)
-                target.event_generate("<<TreeviewSelect>>")
-                return "break"
-                
-        if event.keysym == "Home": 
-            target.yview_moveto(0.0)
-            return "break"
-        elif event.keysym == "End": 
-            target.yview_moveto(1.0)
+                    if event.keysym == 'Next': new_idx = current_idx + page_size
+                    elif event.keysym == 'Prior': new_idx = current_idx - page_size
+                    else: new_idx = current_idx
+                    
+            new_idx = max(0, min(new_idx, len(children) - 1))
+            new_item = children[new_idx]
+            
+            target.selection_set(new_item)
+            target.focus(new_item)
+            target.see(new_item)
+            self.app.on_item_select()
             return "break"
             
-        if self.app.current_view_mode == "list" and focused == getattr(self.app, 'library_tree', None):
-            self.app.root.after(10, self.app.on_item_select)
+        # --- GRID VIEW NAVIGATION ---
+        elif self.app.current_view_mode == "grid":
+            grid_data = self.app.grid_canvas.data
+            if not grid_data: return
+            
+            # 1. Find the currently selected index
+            current_idx = 0
+            if getattr(self.app, '_selected_grid_item', None):
+                asin = self.app._selected_grid_item['values'][5]
+                for i, item in enumerate(grid_data):
+                    if item.get("asin") == asin:
+                        current_idx = i
+                        break
+                        
+            cols = max(1, self.app.grid_canvas.cols)
+            
+            # 2. Estimate how many rows fit on the screen to calculate Page Up/Down jumps
+            visible_rows_count = max(1, int(self.app.grid_canvas.winfo_height() // self.app.grid_canvas.cell_height))
+            
+            # 3. Calculate new 1D Array Index based on 2D movements
+            if event.keysym == "Home": new_idx = 0
+            elif event.keysym == "End": new_idx = len(grid_data) - 1
+            elif event.keysym == "Left": new_idx = current_idx - 1
+            elif event.keysym == "Right": new_idx = current_idx + 1
+            elif event.keysym == "Up": new_idx = current_idx - cols
+            elif event.keysym == "Down": new_idx = current_idx + cols
+            elif event.keysym == "Prior": new_idx = current_idx - (cols * visible_rows_count)
+            elif event.keysym == "Next": new_idx = current_idx + (cols * visible_rows_count)
+            else: new_idx = current_idx
+            
+            # Clamp to safe bounds
+            new_idx = max(0, min(new_idx, len(grid_data) - 1))
+            
+            # 4. Update the active selection tracking variables
+            item = grid_data[new_idx]
+            self.app._selected_grid_item = {'values': [
+                item.get("title", ""), item.get("authors", ""), item.get("narrator", ""),
+                item.get("series", ""), item.get("duration_str", ""), item.get("asin", ""),
+                item.get("status", ""), item.get("path", ""), item.get("date_str", "")
+            ]}
+            self.app.on_item_select() # Triggers the UI sidebar + border updates
+            
+            # 5. Smart Scrolling Math (Pixel-Perfect Method)
+            # Calculate absolute pixel coordinates for the active cell
+            row = new_idx // cols
+            cell_h = self.app.grid_canvas.cell_height
+            total_h = max(1, self.app.grid_canvas.rows * cell_h)
+            canvas_h = self.app.grid_canvas.winfo_height()
+            
+            item_top = row * cell_h
+            item_bottom = item_top + cell_h
+            
+            # Calculate absolute pixel coordinates for the current viewport
+            top_frac = self.app.grid_canvas.yview()[0]
+            current_top = top_frac * total_h
+            current_bottom = current_top + canvas_h
+            
+            # Snap the viewport if the cell steps out of bounds
+            if item_top < current_top:
+                # Scroll up so the top of the cell hits the top edge
+                self.app.grid_canvas.yview_moveto(item_top / total_h)
+            elif item_bottom > current_bottom:
+                # Scroll down so the bottom of the cell hits the bottom edge
+                new_top = item_bottom - canvas_h
+                self.app.grid_canvas.yview_moveto(new_top / total_h)
+
+            return "break"
+    def handle_select_all(self, event):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        # Ignore if the user is typing in the search box
+        focused = self.app.root.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
             return
             
-        if event.keysym == "Up": target.yview_scroll(-1, "units")
-        elif event.keysym == "Down": target.yview_scroll(1, "units")
-        elif event.keysym == "Prior": target.yview_scroll(-1, "pages")
-        elif event.keysym == "Next": target.yview_scroll(1, "pages")
-
+        if self.app.current_view_mode == "list":
+            tree = self.app.library_tree
+            children = tree.get_children()
+            if children:
+                # Natively select every row
+                tree.selection_set(children)
+                self.app.root.after(10, self.app.on_item_select)
+            return "break"
+        else:
+            # TODO: Requires upgrading VirtualGridView to support arrays of active_asins
+            pass
+        
     def handle_alpha_jump(self, event):
         import tkinter as tk
         from tkinter import ttk
