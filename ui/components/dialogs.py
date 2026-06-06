@@ -4,6 +4,11 @@ import socket
 import qrcode
 from PIL import Image, ImageTk
 import os
+import threading
+import requests
+import io
+import sounddevice as sd
+import os
 
 def open_error_log_window(app):
     """Opens the Error Log popup window."""
@@ -80,8 +85,7 @@ def open_error_log_window(app):
 def open_audio_device_settings(app):
     """Queries the OS for audio hardware and displays a selection menu."""
     try:
-        import sounddevice as sd
-        import os
+        
         devices = []
         
         # Find the WASAPI host API index on Windows
@@ -730,10 +734,7 @@ def open_match_to_audible_window(app, filepath):
 
         status_var.set(f"Found {len(products)} result(s). Select one to apply.")
 
-        import threading
-        import requests
-        from PIL import Image, ImageTk
-        import io
+        
 
         for idx, product in enumerate(products):
             asin = product.get("asin")
@@ -859,6 +860,8 @@ def open_match_to_audible_window(app, filepath):
                 app.refresh_library_ui()
                 if win.winfo_exists():
                     win.destroy()
+                    app.root.lift()
+                    app.root.focus_force()
                     
             app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
@@ -1020,6 +1023,8 @@ def open_manual_metadata_window(app, filepath):
                 app.metadata_manager.fetch_display_metadata(filepath)
                 if win.winfo_exists():
                     win.destroy()
+                    app.root.lift()
+                    app.root.focus_force()
                     
             app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
