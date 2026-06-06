@@ -232,7 +232,7 @@ class VirtualGridView(tk.Canvas):
                 display_author = authors[:40] + "..." if len(authors) > 40 else authors
                 
                 # Shrink cover height by 5px to give text more breathing room
-                cover_size = (self.cell_width - 20, self.cell_height - 70) 
+                cover_size = (self.cell_width - 20, self.cell_height - 90) 
                 photo = self.image_cache.get_thumbnail(asin, cover_path, title, authors, size=cover_size)
                 
                 self.itemconfig(cell["cover_id"], image=photo)
@@ -259,9 +259,9 @@ class VirtualGridView(tk.Canvas):
                 self.coords(cell["bg_id"], x + 2, y + 2, x + self.cell_width - 2, y + self.cell_height - 2)
                 self.coords(cell["cover_id"], x + (self.cell_width // 2), y + 10)
                 
-                # Adjust text anchors: Title gets more room, Author shifts to the bottom edge
-                self.coords(cell["title_id"], x + 10, y + self.cell_height - 55)
-                self.coords(cell["author_id"], x + 10, y + self.cell_height - 20)
+                # Push the anchors up so wrapped text doesn't bleed out of the cell
+                self.coords(cell["title_id"], x + 10, y + self.cell_height - 75)
+                self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
                 
                 cell["last_x"] = x
                 cell["last_y"] = y
