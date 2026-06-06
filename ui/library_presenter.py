@@ -349,39 +349,8 @@ class LibraryPresenter:
 
         # --- LIST VIEW NAVIGATION ---
         if self.app.current_view_mode == "list":
-            children = target.get_children()
-            if not children: return
-            
-            if event.keysym == "Home":
-                new_idx = 0
-            elif event.keysym == "End":
-                new_idx = len(children) - 1
-            else:
-                selected = target.selection()
-                current_idx = 0
-                if selected:
-                    try: current_idx = children.index(selected[0])
-                    except ValueError: pass
-                
-                # Treat Up/Left as -1, Down/Right as +1
-                if event.keysym in ("Up", "Left"): new_idx = current_idx - 1
-                elif event.keysym in ("Down", "Right"): new_idx = current_idx + 1
-                else:
-                    try: page_size = int(target.cget('height'))
-                    except Exception: page_size = 15 
-                        
-                    if event.keysym == 'Next': new_idx = current_idx + page_size
-                    elif event.keysym == 'Prior': new_idx = current_idx - page_size
-                    else: new_idx = current_idx
-                    
-            new_idx = max(0, min(new_idx, len(children) - 1))
-            new_item = children[new_idx]
-            
-            target.selection_set(new_item)
-            target.focus(new_item)
-            target.see(new_item)
-            self.app.on_item_select()
-            return "break"
+            self.app.root.after(10, self.app.on_item_select)
+            return
             
         # --- GRID VIEW NAVIGATION ---
         elif self.app.current_view_mode == "grid":
