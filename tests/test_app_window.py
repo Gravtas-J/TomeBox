@@ -191,7 +191,16 @@ def test_build_and_show_context_menu(mock_menu, app_instance):
     event = MagicMock()
     event.x_root = 100
     event.y_root = 200
+    event.x = 10
+    event.y = 10
+    
     app_instance.current_view_mode = "grid" 
+    
+    app_instance.grid_canvas = MagicMock()
+    app_instance.grid_canvas.get_index_at.return_value = 0
+    app_instance.grid_canvas.data = [{"title": "Grid Book", "asin": "123"}]
+    
+    app_instance.series_label = MagicMock()
     
     app_instance.show_context_menu(event)
     app_instance.context_menu.tk_popup.assert_called_with(100, 200)
@@ -275,6 +284,9 @@ def test_on_item_select_list_mode(app_instance):
     app_instance.library_manager.local_library = {"/fake/file.m4b": {"title": "Test Title"}}
     app_instance.author_label = MagicMock()
     app_instance.cover_label = MagicMock()
+    
+    # --- NEW: Mock the Series Label ---
+    app_instance.series_label = MagicMock()
     
     app_instance.on_item_select()
     

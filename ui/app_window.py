@@ -49,6 +49,7 @@ from core.controllers.metadata_manager import MetadataManager
 from core.controllers.conversion_manager import ConversionManager
 from core.controllers.system_manager import SystemManager
 from core.controllers.stats_manager import StatsManager, ACHIEVEMENTS
+from core.utils.image_cache import ImageCache
 
 from ui.bookmarks_presenter import BookmarksPresenter
 from ui.action_router import ActionRouter
@@ -104,6 +105,7 @@ class UiState:
         self.timer_countdown = tk.StringVar(value="")
         self.voice_boost = tk.BooleanVar(value=settings.get("voice_boost", False))
         self.skip_silence = tk.BooleanVar(value=settings.get("skip_silence", False))
+        
 class AAXManagerApp:
     @property
     def file_path(self): return getattr(self, '_active_book_path', "")
@@ -265,15 +267,19 @@ class AAXManagerApp:
         self.tray_icon = None
         self.browser_login_btn = None
 
-        
+        self.image_cache = ImageCache(max_size=100)
 
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.handle_window_close)
         self.root.bind("<F2>", lambda event: self.handle_action_on_selected("edit"))
-        for key in ("<Up>", "<Down>", "<Prior>", "<Next>", "<Home>", "<End>"):
+        for key in ("<Up>", "<Down>", "<Left>", "<Right>", "<Prior>", "<Next>", "<Home>", "<End>"):
             self.root.bind(key, self.library_presenter.handle_keyboard_scroll)
+            
         self.root.bind("<Key>", self.library_presenter.handle_alpha_jump, add="+")
         self.root.bind("<Delete>", lambda event: self.library_manager.handle_remove_clicked(self))
+
+        self.root.bind("<Control-a>", self.library_presenter.handle_select_all)
+        self.root.bind("<Command-a>", self.library_presenter.handle_select_all)
 
         def _focus_search():
             self.search_entry.focus_force() 
@@ -594,6 +600,7 @@ class AAXManagerApp:
         path = None
         if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
+            # Treeview already has native protection: it only selects if 'not in selection()'
             if item and item not in self.library_tree.selection():
                 self.library_tree.selection_set(item)
                 self.library_tree.focus(item)
@@ -604,6 +611,26 @@ class AAXManagerApp:
                 vals = self.library_tree.item(selected[0], 'values')
                 if len(vals) > 7: path = vals[7]
         else:
+            idx = self.grid_canvas.get_index_at(event.x, event.y)
+            
+            if idx is not None:
+                item_data = self.grid_canvas.data[idx]
+                asin = item_data.get("asin", "")
+                
+                if asin not in self.grid_canvas.active_asins:
+                    self._selected_grid_item = {'values': [
+                        item_data.get("title", ""),
+                        item_data.get("authors", ""),
+                        item_data.get("narrator", ""),
+                        item_data.get("series", ""),
+                        item_data.get("duration_str", ""),
+                        item_data.get("asin", ""),
+                        item_data.get("status", ""),
+                        item_data.get("path", "")
+                    ]}
+                    self.on_item_select()
+
+            # Grab the path of the primary selected item to determine which context menu to show
             grid_item = getattr(self, '_selected_grid_item', None)
             if grid_item:
                 vals = grid_item.get('values', [])
@@ -672,14 +699,32 @@ class AAXManagerApp:
                 self.clear_sidebar()
                 self._selected_local_path = None
                 return
+            
+            if getattr(self.grid_canvas, 'batch_selection', None):
+                self._selected_grid_items = self.grid_canvas.batch_selection
+                
+                # Apply the blue border to everything in the batch
+                all_asins = {item.get("asin") for item in self._selected_grid_items}
+                self.grid_canvas.set_active_asins(all_asins)
+            else:
+                # Normal click: Wipe the batch and highlight just the one book
+                self._selected_grid_items = None 
+                asin = self._selected_grid_item['values'][5]
+                self.grid_canvas.set_active_asins({asin})
+
             item = self._selected_grid_item
             title = item['values'][0]
             authors = item['values'][1]
             asin = item['values'][5]
 
+
         if hasattr(self, 'author_label'):
             self.author_label.config(text=authors)
-        
+        series_text = item['values'][3]
+        if series_text and series_text.strip():
+            self.series_label.config(text=series_text)
+        else:
+            self.series_label.config(text="")
         cover_path = None
         covers_dir = self.covers_dir
         
@@ -866,7 +911,7 @@ class AAXManagerApp:
                 messagebox.showwarning("Selection Required", "Select a title first.")
                 return
             item = self._selected_grid_item
-
+        self._selected_grid_items = None
         title = item['values'][0]
         asin = item['values'][5]
 
