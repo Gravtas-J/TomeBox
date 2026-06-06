@@ -193,6 +193,8 @@ def test_build_and_show_context_menu(mock_menu, app_instance):
     event.y_root = 200
     event.x = 10
     event.y = 10
+
+    event.state = 0
     
     app_instance.current_view_mode = "grid" 
     
