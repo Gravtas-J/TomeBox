@@ -155,8 +155,15 @@ class VirtualGridView(tk.Canvas):
         for cell in self.active_cells.values():
             idx = cell["current_index"]
             if idx is not None and idx < len(self.data):
-                cell_asin = self.data[idx].get("asin")
-                if cell_asin in self.active_asins:
+                item = self.data[idx]
+                raw_asin = item.get("asin", "")
+                path = item.get("path", "")
+                
+                # Rebuild the fingerprint
+                fp = raw_asin if raw_asin and raw_asin != "Unknown" else path
+                if not fp: fp = f"fallback_{idx}"
+                
+                if fp in self.active_asins:
                     self.itemconfig(cell["bg_id"], outline="#4a90e2")
                 else:
                     self.itemconfig(cell["bg_id"], outline="")
@@ -216,14 +223,18 @@ class VirtualGridView(tk.Canvas):
             cell = self.active_cells[idx]
             
             item = self.data[idx]
-            asin = item.get("asin", f"local_{idx}")
+            raw_asin = item.get("asin", "")
+            path = item.get("path", "")
             
-            # Inject new data only if recycled or swapped
-            if is_new or cell.get("current_asin") != asin:
+            fingerprint = raw_asin if raw_asin and raw_asin != "Unknown" else path
+            if not fingerprint:
+                fingerprint = f"fallback_{idx}"
+            
+            # Inject new data only if recycled or swapped based on the fingerprint
+            if is_new or cell.get("current_fingerprint") != fingerprint:
                 cover_path = item.get("cover_path")
                 
                 title = item.get("title", "Unknown")
-                # Expand truncation so it fills out two wrapped lines
                 display_title = title[:60] + "..." if len(title) > 60 else title
                 
                 authors = item.get("authors", "Unknown")
@@ -231,9 +242,10 @@ class VirtualGridView(tk.Canvas):
                     authors = ", ".join([a.get("name", "") for a in authors if isinstance(a, dict)])
                 display_author = authors[:40] + "..." if len(authors) > 40 else authors
                 
-                # Shrink cover height by 5px to give text more breathing room
                 cover_size = (self.cell_width - 20, self.cell_height - 90) 
-                photo = self.image_cache.get_thumbnail(asin, cover_path, title, authors, size=cover_size)
+                
+                # Pass the unique fingerprint to the image cache, NOT the raw ASIN
+                photo = self.image_cache.get_thumbnail(fingerprint, cover_path, title, authors, size=cover_size)
                 
                 self.itemconfig(cell["cover_id"], image=photo)
                 self.itemconfig(cell["title_id"], text=display_title)
@@ -241,9 +253,11 @@ class VirtualGridView(tk.Canvas):
                 
                 cell["photo_ref"] = photo
                 cell["current_index"] = idx
-                cell["current_asin"] = asin 
+                cell["current_asin"] = raw_asin 
+                cell["current_fingerprint"] = fingerprint 
                 
-                if asin in self.active_asins:
+                # Selection highlight relies on raw_asin
+                if fingerprint in self.active_asins:
                     self.itemconfig(cell["bg_id"], outline="#4a90e2")
                 else:
                     self.itemconfig(cell["bg_id"], outline="")

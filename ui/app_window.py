@@ -276,7 +276,7 @@ class AAXManagerApp:
             self.root.bind(key, self.library_presenter.handle_keyboard_scroll)
             
         self.root.bind("<Key>", self.library_presenter.handle_alpha_jump, add="+")
-        self.root.bind("<Delete>", lambda event: self.library_manager.handle_remove_clicked(self))
+        self.root.bind("<Delete>", self.handle_global_delete)
 
         self.root.bind("<Control-a>", self.library_presenter.handle_select_all)
         self.root.bind("<Command-a>", self.library_presenter.handle_select_all)
@@ -597,6 +597,9 @@ class AAXManagerApp:
         self.context_menu.add_command(label="🔗 Match Local File", command=lambda: self.handle_action_on_selected("match_local"))
 
     def show_context_menu(self, event):
+        # 0x0004 is Windows/Linux Ctrl. 0x20000 is Mac Command.
+        if hasattr(event, 'state') and (event.state & 0x0004 or getattr(event, 'state', 0) & 0x20000):
+            return
         path = None
         if self.current_view_mode == "list":
             item = self.library_tree.identify_row(event.y)
@@ -616,8 +619,11 @@ class AAXManagerApp:
             if idx is not None:
                 item_data = self.grid_canvas.data[idx]
                 asin = item_data.get("asin", "")
+                path = item_data.get("path", "")
+                fp = asin if asin and asin != "Unknown" else path
                 
-                if asin not in self.grid_canvas.active_asins:
+                # Only force a new selection if it isn't already in the batch!
+                if fp not in self.grid_canvas.active_asins:
                     self._selected_grid_item = {'values': [
                         item_data.get("title", ""),
                         item_data.get("authors", ""),
@@ -703,14 +709,19 @@ class AAXManagerApp:
             if getattr(self.grid_canvas, 'batch_selection', None):
                 self._selected_grid_items = self.grid_canvas.batch_selection
                 
-                # Apply the blue border to everything in the batch
-                all_asins = {item.get("asin") for item in self._selected_grid_items}
-                self.grid_canvas.set_active_asins(all_asins)
+                all_fps = set()
+                for item in self._selected_grid_items:
+                    raw = item.get("asin", "")
+                    fp = raw if raw and raw != "Unknown" else item.get("path", "")
+                    all_fps.add(fp)
+                self.grid_canvas.set_active_asins(all_fps)
             else:
                 # Normal click: Wipe the batch and highlight just the one book
                 self._selected_grid_items = None 
                 asin = self._selected_grid_item['values'][5]
-                self.grid_canvas.set_active_asins({asin})
+                path = self._selected_grid_item['values'][7]
+                fp = asin if asin and asin != "Unknown" else path
+                self.grid_canvas.set_active_asins({fp})
 
             item = self._selected_grid_item
             title = item['values'][0]
@@ -804,6 +815,18 @@ class AAXManagerApp:
             self.playback_presenter.pause_audio()
             self.playback.is_paused = False
             self.playback_presenter.resume_playback()
+            
+    def handle_global_delete(self, event):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        # If the user is typing in a text box, let them delete text!
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+            
+        # Otherwise, proceed with book removal
+        self.library_manager.handle_remove_clicked(self)
 
     def handle_window_close(self):
         if self.ui_state.minimize_to_tray.get():

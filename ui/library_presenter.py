@@ -438,11 +438,15 @@ class LibraryPresenter:
             grid_data = self.app.grid_canvas.data
             if not grid_data: return
             
-            # 1. Grab every ASIN currently visible under the active filter
-            all_asins = {item.get("asin") for item in grid_data}
+            # 1. Grab every fingerprint currently visible under the active filter
+            all_fps = set()
+            for item in grid_data:
+                raw = item.get("asin", "")
+                fp = raw if raw and raw != "Unknown" else item.get("path", "")
+                all_fps.add(fp)
             
             # 2. Apply the blue border instantly to the entire virtual grid
-            self.app.grid_canvas.set_active_asins(all_asins)
+            self.app.grid_canvas.set_active_asins(all_fps)
             
             # 3. Store the full list so the 'Remove' button can process batch deletions
             self.app._selected_grid_items = grid_data 
