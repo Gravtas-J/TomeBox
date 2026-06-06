@@ -125,7 +125,11 @@ class LibraryPresenter:
             filter_type=current_filter,
             shelf_filter=current_shelf
         )
-
+        total_books = len(self.app.library_manager.local_library) + len(self.app.library_manager.cloud_items)
+        if total_books > 0 and len(filtered_rows) == 0:
+            self._toggle_empty_filter_state(True)
+        else:
+            self._toggle_empty_filter_state(False)
         if hasattr(self.app, 'sort_combo'):
             sort_pref = self.app.ui_state.sort.get()
             
@@ -490,6 +494,25 @@ class LibraryPresenter:
                 
             return "break"
 
+    def _toggle_empty_filter_state(self, is_empty):
+        import tkinter as tk
+        
+        if not hasattr(self.app, 'filter_empty_label'):
+            # Attach to the master container holding the grid and tree views
+            parent = self.app.grid_canvas.master
+            self.app.filter_empty_label = tk.Label(
+                parent,
+                text="No books match your current filters.",
+                font=("Segoe UI", 16),
+                bg="#1e1e1e",
+                fg="#7f8c8d"
+            )
+            
+        if is_empty:
+            self.app.filter_empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            self.app.filter_empty_label.place_forget()
+            
     def handle_alpha_jump(self, event):
         import tkinter as tk
         from tkinter import ttk

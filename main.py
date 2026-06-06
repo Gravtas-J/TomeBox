@@ -206,6 +206,7 @@ def run_gui(base_dir):
         try:
             myappid = 'tomebox.audiomanager.desktop.1' 
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
     
