@@ -1,12 +1,13 @@
 from unittest.mock import MagicMock
 
+
 class FakeDBManager:
     def __init__(self):
         self.settings = {
             "active_profile": "Main",
             "paired_devices": {},
             "device_salt": "fake_salt_123",
-            "last_played_Main": None
+            "last_played_Main": None,
         }
 
     def hash_device_token(self, raw_token):
@@ -17,8 +18,10 @@ class FakeDBManager:
 
     def save_settings(self, new_settings):
         self.settings.update(new_settings)
+
     def save_local_db(self, library_dict):
         pass
+
 
 class FakeLibraryManager:
     def __init__(self):
@@ -53,28 +56,28 @@ class FakeTomebox:
         # FIX: Added missing path attributes for route resolution
         self.base_dir = "/fake/base"
         self.covers_dir = "/fake/covers"
-        
+
         # Pre-set this to skip the disk-scanning block in /api/library
         self._web_master_metadata = {}
-        
+
         self.db = FakeDBManager()
         self.settings = self.db.settings
         self.library_manager = FakeLibraryManager()
-        
+
         # Stub the api_client expected by refresh and auth routes
         self.api_client = MagicMock()
         self.api_client.is_authenticated.return_value = True
-        
+
         # Required for playback sync and progress updates
         self.playback_controller = MagicMock()
-        
+
         # Stub managers for download, conversion, and metadata routes
         class FakeDownloadManager:
             def __init__(self):
                 self.queue = []
                 self.is_processing = False
                 self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
-        
+
         self.download_manager = FakeDownloadManager()
         self.conversion_manager = MagicMock()
         self.metadata_manager = MagicMock()

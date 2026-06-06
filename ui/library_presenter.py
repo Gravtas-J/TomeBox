@@ -2,15 +2,16 @@ import os
 import tkinter as tk
 from tkinter import ttk
 
+
 class LibraryPresenter:
     def __init__(self, app):
         self.app = app
-        
+
         # Local UI State
         self.current_filtered_data = []
         self.current_sort_col = "Title"
         self.current_sort_descending = False
-        
+
         # Debounce timer for bulk imports
         self._refresh_timer = None
 
@@ -20,54 +21,62 @@ class LibraryPresenter:
         if self.app.current_view_mode == "list":
             selected = self.app.library_tree.selection()
             if selected:
-                vals = self.app.library_tree.item(selected[0], 'values')
-                if len(vals) > 5: target_asin = vals[5]
+                vals = self.app.library_tree.item(selected[0], "values")
+                if len(vals) > 5:
+                    target_asin = vals[5]
         else:
-            if getattr(self.app, '_selected_grid_item', None):
-                vals = self.app._selected_grid_item.get('values', [])
-                if len(vals) > 5: target_asin = vals[5]
+            if getattr(self.app, "_selected_grid_item", None):
+                vals = self.app._selected_grid_item.get("values", [])
+                if len(vals) > 5:
+                    target_asin = vals[5]
 
         # 2. Swap the UI Components
         if self.app.current_view_mode == "list":
             self.app.current_view_mode = "grid"
             self.app.view_btn.config(text="List View")
-            
-            if hasattr(self.app, 'cover_toggle'):
+
+            if hasattr(self.app, "cover_toggle"):
                 self.app.cover_toggle.pack(side=tk.RIGHT, padx=5)
-            if hasattr(self.app, 'sort_label'):
+            if hasattr(self.app, "sort_label"):
                 self.app.sort_label.pack(side=tk.LEFT, padx=(10, 5))
                 self.app.sort_combo.pack(side=tk.LEFT)
-            
+
             self.app.library_tree.grid_remove()
             self.app.h_scroll.grid_remove()
-            
-            if self.app.library_manager.cloud_items or self.app.library_manager.local_library:
+
+            if (
+                self.app.library_manager.cloud_items
+                or self.app.library_manager.local_library
+            ):
                 self.app.grid_canvas.grid(row=0, column=0, sticky="nsew")
-            
+
             self.app.v_scroll.config(command=self.app.grid_canvas.yview)
             self.app.grid_canvas.config(yscrollcommand=self.app.v_scroll.set)
         else:
             self.app.current_view_mode = "list"
             self.app.view_btn.config(text="Grid View")
-            
-            if hasattr(self.app, 'cover_toggle'):
+
+            if hasattr(self.app, "cover_toggle"):
                 self.app.cover_toggle.pack_forget()
-            if hasattr(self.app, 'sort_label'):
+            if hasattr(self.app, "sort_label"):
                 self.app.sort_label.pack_forget()
                 self.app.sort_combo.pack_forget()
-            
+
             self.app.grid_canvas.grid_remove()
-            
-            if self.app.library_manager.cloud_items or self.app.library_manager.local_library:
+
+            if (
+                self.app.library_manager.cloud_items
+                or self.app.library_manager.local_library
+            ):
                 self.app.library_tree.grid(row=0, column=0, sticky="nsew")
                 self.app.h_scroll.grid(row=1, column=0, sticky="ew")
-            
+
             self.app.v_scroll.config(command=self.app.library_tree.yview)
             self.app.library_tree.config(yscrollcommand=self.app.v_scroll.set)
-            
+
         # 3. Force an immediate refresh to populate the new view
         self._do_refresh_library_ui()
-        
+
         # 4. Snap the new view's focus to the memorized target
         if target_asin:
             self._focus_asin(target_asin)
@@ -83,7 +92,7 @@ class LibraryPresenter:
         if self.app.current_view_mode == "list":
             children = self.app.library_tree.get_children()
             for child in children:
-                vals = self.app.library_tree.item(child, 'values')
+                vals = self.app.library_tree.item(child, "values")
                 if len(vals) > 5 and vals[5] == target_asin:
                     self.app.library_tree.selection_set(child)
                     self.app.library_tree.focus(child)
@@ -97,12 +106,19 @@ class LibraryPresenter:
                     row = idx // self.app.grid_canvas.cols
                     fraction = row / max(1, self.app.grid_canvas.rows)
                     self.app.grid_canvas.yview_moveto(fraction)
-                    
-                    self.app._selected_grid_item = {'values': [
-                        item.get("title", ""), item.get("authors", ""), item.get("narrator", ""),
-                        item.get("series", ""), item.get("duration_str", ""), item.get("asin", ""),
-                        item.get("status", ""), item.get("path", "")
-                    ]}
+
+                    self.app._selected_grid_item = {
+                        "values": [
+                            item.get("title", ""),
+                            item.get("authors", ""),
+                            item.get("narrator", ""),
+                            item.get("series", ""),
+                            item.get("duration_str", ""),
+                            item.get("asin", ""),
+                            item.get("status", ""),
+                            item.get("path", ""),
+                        ]
+                    }
                     self.app.on_item_select()
                     break
 
@@ -123,136 +139,206 @@ class LibraryPresenter:
         filtered_rows, shelf_list = self.app.library_manager.get_view_data(
             search_query=search_query,
             filter_type=current_filter,
-            shelf_filter=current_shelf
+            shelf_filter=current_shelf,
         )
-        total_books = len(self.app.library_manager.local_library) + len(self.app.library_manager.cloud_items)
+        total_books = len(self.app.library_manager.local_library) + len(
+            self.app.library_manager.cloud_items
+        )
         if total_books > 0 and len(filtered_rows) == 0:
             self._toggle_empty_filter_state(True)
         else:
             self._toggle_empty_filter_state(False)
-        if hasattr(self.app, 'sort_combo'):
+        if hasattr(self.app, "sort_combo"):
             sort_pref = self.app.ui_state.sort.get()
-            
+
             def get_sort_key(row):
-                title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
-                if sort_pref == "Title (A-Z)": return title.lower()
-                elif sort_pref == "Author (A-Z)": return authors.lower()
-                else: 
+                (
+                    title,
+                    authors,
+                    narrator,
+                    series_str,
+                    duration_str,
+                    asin,
+                    status,
+                    row_path,
+                    date_str,
+                ) = row
+                if sort_pref == "Title (A-Z)":
+                    return title.lower()
+                elif sort_pref == "Author (A-Z)":
+                    return authors.lower()
+                else:
                     if row_path and row_path in self.app.library_manager.local_library:
-                        return self.app.library_manager.local_library[row_path].get("date_added", 0)
-                    return 0 
-                    
+                        return self.app.library_manager.local_library[row_path].get(
+                            "date_added", 0
+                        )
+                    return 0
+
             is_reverse = sort_pref == "Date Added (Newest)"
             filtered_rows.sort(key=get_sort_key, reverse=is_reverse)
 
         self.current_filtered_data = filtered_rows
 
-        if hasattr(self.app, 'shelf_combo'):
-            self.app.shelf_combo['values'] = shelf_list
+        if hasattr(self.app, "shelf_combo"):
+            self.app.shelf_combo["values"] = shelf_list
 
-        is_completely_empty = (not self.app.library_manager.cloud_items) and (not self.app.library_manager.local_library)
+        is_completely_empty = (not self.app.library_manager.cloud_items) and (
+            not self.app.library_manager.local_library
+        )
 
         if is_completely_empty:
             self.app.library_tree.grid_remove()
             self.app.h_scroll.grid_remove()
             self.app.grid_canvas.grid_remove()
             self.app.v_scroll.grid_remove()
-            self.app.empty_state_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
+            self.app.empty_state_frame.grid(
+                row=0, column=0, columnspan=2, sticky="nsew"
+            )
         else:
             self.app.empty_state_frame.grid_remove()
             self.app.v_scroll.grid(row=0, column=1, sticky="ns")
-            
+
             if self.app.current_view_mode == "list":
                 self.app.grid_canvas.grid_remove()
                 self.app.library_tree.grid(row=0, column=0, sticky="nsew")
                 self.app.h_scroll.grid(row=1, column=0, sticky="ew")
 
-                self.app.library_tree.tag_configure('warning', foreground='#ffaa00') 
-                self.app.library_tree.tag_configure('error', foreground='#ff4444')   
-                self.app.library_tree.tag_configure('finished', foreground='#777777')
-                self.app.library_tree.tag_configure('started', foreground='#4a90e2')
+                self.app.library_tree.tag_configure("warning", foreground="#ffaa00")
+                self.app.library_tree.tag_configure("error", foreground="#ff4444")
+                self.app.library_tree.tag_configure("finished", foreground="#777777")
+                self.app.library_tree.tag_configure("started", foreground="#4a90e2")
 
                 for row in filtered_rows:
-                    title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
-                    
+                    (
+                        title,
+                        authors,
+                        narrator,
+                        series_str,
+                        duration_str,
+                        asin,
+                        status,
+                        row_path,
+                        date_str,
+                    ) = row
+
                     tags = ()
-                    is_missing_file = "Downloaded" in status and row_path and "PLAYLIST" not in status and not os.path.exists(row_path)
+                    is_missing_file = (
+                        "Downloaded" in status
+                        and row_path
+                        and "PLAYLIST" not in status
+                        and not os.path.exists(row_path)
+                    )
                     is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
 
                     read_state = "Unread"
                     if row_path and row_path in self.app.library_manager.local_library:
                         local_data = self.app.library_manager.local_library[row_path]
-                        prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
+                        prog_sec = local_data.get("progress", {}).get(
+                            self.app.active_profile, 0
+                        )
                         dur_sec = (local_data.get("duration_min", 0) or 0) * 60
                         if dur_sec > 0:
-                            if prog_sec / dur_sec >= 0.95: read_state = "Finished"
-                            elif prog_sec > 0: read_state = "Started"
+                            if prog_sec / dur_sec >= 0.95:
+                                read_state = "Finished"
+                            elif prog_sec > 0:
+                                read_state = "Started"
 
                     display_status = status
                     if read_state == "Finished":
                         display_status = f"✔ {status}"
-                        tags = ('finished',)
+                        tags = ("finished",)
                     elif read_state == "Started":
                         display_status = f"◐ {status}"
-                        tags = ('started',)
+                        tags = ("started",)
 
                     if is_missing_file:
-                        tags = ('error',)
+                        tags = ("error",)
                     elif is_missing_duration:
-                        tags = ('warning',)
+                        tags = ("warning",)
 
-                    display_row = (title, authors, narrator, series_str, duration_str, asin, display_status, row_path, date_str)
-                    self.app.library_tree.insert("", "end", values=display_row, tags=tags)
+                    display_row = (
+                        title,
+                        authors,
+                        narrator,
+                        series_str,
+                        duration_str,
+                        asin,
+                        display_status,
+                        row_path,
+                        date_str,
+                    )
+                    self.app.library_tree.insert(
+                        "", "end", values=display_row, tags=tags
+                    )
 
                 if self.current_sort_col and self.current_sort_descending is not None:
-                    self.sort_treeview(self.app.library_tree, self.current_sort_col, self.current_sort_descending)
+                    self.sort_treeview(
+                        self.app.library_tree,
+                        self.current_sort_col,
+                        self.current_sort_descending,
+                    )
             else:
                 self.app.library_tree.grid_remove()
                 self.app.h_scroll.grid_remove()
                 self.app.grid_canvas.grid(row=0, column=0, sticky="nsew")
-                
+
                 # Format Data for Virtual Grid
                 grid_data = []
                 for row in filtered_rows:
-                    title, authors, narrator, series_str, duration_str, asin, status, row_path, date_str = row
-                    grid_data.append({
-                        "title": title,
-                        "authors": authors,
-                        "narrator": narrator,
-                        "series": series_str,
-                        "duration_str": duration_str,
-                        "asin": asin,
-                        "status": status,
-                        "path": row_path,
-                        "cover_path": os.path.join(self.app.covers_dir, f"{asin}.jpg"),
-                        "date_str": date_str
-                    })
-                
+                    (
+                        title,
+                        authors,
+                        narrator,
+                        series_str,
+                        duration_str,
+                        asin,
+                        status,
+                        row_path,
+                        date_str,
+                    ) = row
+                    grid_data.append(
+                        {
+                            "title": title,
+                            "authors": authors,
+                            "narrator": narrator,
+                            "series": series_str,
+                            "duration_str": duration_str,
+                            "asin": asin,
+                            "status": status,
+                            "path": row_path,
+                            "cover_path": os.path.join(
+                                self.app.covers_dir, f"{asin}.jpg"
+                            ),
+                            "date_str": date_str,
+                        }
+                    )
+
                 # Push data to engine (handles render instantly)
                 self.app.grid_canvas.set_data(grid_data)
-                
+
                 # Force highlight styling onto the active cell
                 self.app.on_item_select()
-                
+
         total_books = len(self.app.library_manager.local_library)
         formats = {}
-        
+
         for path, data in self.app.library_manager.local_library.items():
             fmt = data.get("format", "UNKNOWN").upper()
             formats[fmt] = formats.get(fmt, 0) + 1
-            
+
         self.app.ui_state.lib_count.set(f"Books found: {total_books}")
-        
+
         if formats:
             tooltip_text = "\n".join([f"{f}: {c}" for f, c in sorted(formats.items())])
         else:
             tooltip_text = "Library is empty."
-            
-        if hasattr(self.app, 'lib_count_tooltip'):
+
+        if hasattr(self.app, "lib_count_tooltip"):
             self.app.lib_count_tooltip.text = tooltip_text
 
     def sort_treeview(self, tree, col, descending):
-        data = [(tree.set(child, col), child) for child in tree.get_children('')]
+        data = [(tree.set(child, col), child) for child in tree.get_children("")]
+
         def sort_key(item):
             val = str(item[0])
             if col == "Duration":
@@ -260,89 +346,113 @@ class LibraryPresenter:
                     try:
                         parts = val.split("h ")
                         return int(parts[0]) * 60 + int(parts[1].replace("m", ""))
-                    except ValueError: pass
+                    except ValueError:
+                        pass
                 return -1
-            if val in ["", "N/A", "Unknown"]: return "\x00"
+            if val in ["", "N/A", "Unknown"]:
+                return "\x00"
             return val.lower()
 
         data.sort(key=sort_key, reverse=descending)
-        
+
         self.current_sort_col = col
         self.current_sort_descending = descending
         for index, (val, child) in enumerate(data):
-            tree.move(child, '', index)
-            
+            tree.move(child, "", index)
+
         for c in tree["columns"]:
             tree.heading(c, text=c)
-            
+
         arrow = " ▼" if descending else " ▲"
-        tree.heading(col, text=f"{col}{arrow}", command=lambda _col=col: self.sort_treeview(tree, _col, not descending))
+        tree.heading(
+            col,
+            text=f"{col}{arrow}",
+            command=lambda _col=col: self.sort_treeview(tree, _col, not descending),
+        )
 
     def handle_tree_double_click(self, event):
         import tkinter.font as tkfont
+
         tree = event.widget
         region = tree.identify_region(event.x, event.y)
-        
+
         if region == "separator":
             column_id = tree.identify_column(event.x)
-            if not column_id: return "break"
+            if not column_id:
+                return "break"
             col_name = tree.column(column_id, "id")
-            
+
             font = tkfont.nametofont("TkTextFont")
-            max_width = font.measure(tree.heading(column_id, "text")) + 30 
-            
+            max_width = font.measure(tree.heading(column_id, "text")) + 30
+
             for item in tree.get_children():
                 try:
                     width = font.measure(str(tree.set(item, col_name))) + 30
-                    if width > max_width: max_width = width
-                except Exception: pass
-            
+                    if width > max_width:
+                        max_width = width
+                except Exception:
+                    pass
+
             tree.column(column_id, width=min(max_width, 800))
             return "break"
         elif region in ("tree", "cell"):
-            if hasattr(self.app, 'playback_presenter'):
+            if hasattr(self.app, "playback_presenter"):
                 self.app.playback_presenter.master_play(event)
 
     def _on_global_scroll(self, event):
         widget = event.widget
         if isinstance(widget, str):
-            try: widget = self.app.root.nametowidget(widget)
-            except Exception: return
+            try:
+                widget = self.app.root.nametowidget(widget)
+            except Exception:
+                return
 
         target_canvas = None
         current = widget
-        
+
         while current:
-            if isinstance(current, (ttk.Treeview, tk.Text, tk.Listbox)): return
+            if isinstance(current, (ttk.Treeview, tk.Text, tk.Listbox)):
+                return
             if isinstance(current, tk.Canvas):
-                if hasattr(self.app, 'grid_canvas') and current == self.app.grid_canvas:
-                    if self.app.current_view_mode != "grid": return 
+                if hasattr(self.app, "grid_canvas") and current == self.app.grid_canvas:
+                    if self.app.current_view_mode != "grid":
+                        return
                     target_canvas = current
                     break
-            try: current = current.master
-            except AttributeError: break
+            try:
+                current = current.master
+            except AttributeError:
+                break
 
-        if not target_canvas: return
+        if not target_canvas:
+            return
 
-        num = getattr(event, 'num', 0)
-        delta = getattr(event, 'delta', 0)
+        num = getattr(event, "num", 0)
+        delta = getattr(event, "delta", 0)
 
-        if num == 4 or delta > 0: target_canvas.yview_scroll(-1, "units")
-        elif num == 5 or delta < 0: target_canvas.yview_scroll(1, "units")
+        if num == 4 or delta > 0:
+            target_canvas.yview_scroll(-1, "units")
+        elif num == 5 or delta < 0:
+            target_canvas.yview_scroll(1, "units")
 
     def handle_keyboard_scroll(self, event):
         import tkinter as tk
         from tkinter import ttk
+
         focused = self.app.root.focus_get()
-        
+
         # Don't hijack keys if the user is typing in the search bar
         if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
             return
-            
-        target = getattr(self.app, 'grid_canvas', None) if self.app.current_view_mode == "grid" else getattr(self.app, 'library_tree', None)
-        if not target: 
+
+        target = (
+            getattr(self.app, "grid_canvas", None)
+            if self.app.current_view_mode == "grid"
+            else getattr(self.app, "library_tree", None)
+        )
+        if not target:
             return
-            
+
         keys_handled = ("Prior", "Next", "Home", "End", "Up", "Down", "Left", "Right")
         if event.keysym not in keys_handled:
             return
@@ -351,64 +461,88 @@ class LibraryPresenter:
         if self.app.current_view_mode == "list":
             self.app.root.after(10, self.app.on_item_select)
             return
-            
+
         # --- GRID VIEW NAVIGATION ---
         elif self.app.current_view_mode == "grid":
             grid_data = self.app.grid_canvas.data
-            if not grid_data: return
-            
+            if not grid_data:
+                return
+
             # 1. Find the currently selected index
             current_idx = 0
-            if getattr(self.app, '_selected_grid_item', None):
-                asin = self.app._selected_grid_item['values'][5]
+            if getattr(self.app, "_selected_grid_item", None):
+                asin = self.app._selected_grid_item["values"][5]
                 for i, item in enumerate(grid_data):
                     if item.get("asin") == asin:
                         current_idx = i
                         break
-                        
+
             cols = max(1, self.app.grid_canvas.cols)
-            
+
             # 2. Estimate how many rows fit on the screen to calculate Page Up/Down jumps
-            visible_rows_count = max(1, int(self.app.grid_canvas.winfo_height() // self.app.grid_canvas.cell_height))
-            
+            visible_rows_count = max(
+                1,
+                int(
+                    self.app.grid_canvas.winfo_height()
+                    // self.app.grid_canvas.cell_height
+                ),
+            )
+
             # 3. Calculate new 1D Array Index based on 2D movements
-            if event.keysym == "Home": new_idx = 0
-            elif event.keysym == "End": new_idx = len(grid_data) - 1
-            elif event.keysym == "Left": new_idx = current_idx - 1
-            elif event.keysym == "Right": new_idx = current_idx + 1
-            elif event.keysym == "Up": new_idx = current_idx - cols
-            elif event.keysym == "Down": new_idx = current_idx + cols
-            elif event.keysym == "Prior": new_idx = current_idx - (cols * visible_rows_count)
-            elif event.keysym == "Next": new_idx = current_idx + (cols * visible_rows_count)
-            else: new_idx = current_idx
-            
+            if event.keysym == "Home":
+                new_idx = 0
+            elif event.keysym == "End":
+                new_idx = len(grid_data) - 1
+            elif event.keysym == "Left":
+                new_idx = current_idx - 1
+            elif event.keysym == "Right":
+                new_idx = current_idx + 1
+            elif event.keysym == "Up":
+                new_idx = current_idx - cols
+            elif event.keysym == "Down":
+                new_idx = current_idx + cols
+            elif event.keysym == "Prior":
+                new_idx = current_idx - (cols * visible_rows_count)
+            elif event.keysym == "Next":
+                new_idx = current_idx + (cols * visible_rows_count)
+            else:
+                new_idx = current_idx
+
             # Clamp to safe bounds
             new_idx = max(0, min(new_idx, len(grid_data) - 1))
-            
+
             # 4. Update the active selection tracking variables
             item = grid_data[new_idx]
-            self.app._selected_grid_item = {'values': [
-                item.get("title", ""), item.get("authors", ""), item.get("narrator", ""),
-                item.get("series", ""), item.get("duration_str", ""), item.get("asin", ""),
-                item.get("status", ""), item.get("path", ""), item.get("date_str", "")
-            ]}
-            self.app.on_item_select() # Triggers the UI sidebar + border updates
-            
+            self.app._selected_grid_item = {
+                "values": [
+                    item.get("title", ""),
+                    item.get("authors", ""),
+                    item.get("narrator", ""),
+                    item.get("series", ""),
+                    item.get("duration_str", ""),
+                    item.get("asin", ""),
+                    item.get("status", ""),
+                    item.get("path", ""),
+                    item.get("date_str", ""),
+                ]
+            }
+            self.app.on_item_select()  # Triggers the UI sidebar + border updates
+
             # 5. Smart Scrolling Math (Pixel-Perfect Method)
             # Calculate absolute pixel coordinates for the active cell
             row = new_idx // cols
             cell_h = self.app.grid_canvas.cell_height
             total_h = max(1, self.app.grid_canvas.rows * cell_h)
             canvas_h = self.app.grid_canvas.winfo_height()
-            
+
             item_top = row * cell_h
             item_bottom = item_top + cell_h
-            
+
             # Calculate absolute pixel coordinates for the current viewport
             top_frac = self.app.grid_canvas.yview()[0]
             current_top = top_frac * total_h
             current_bottom = current_top + canvas_h
-            
+
             # Snap the viewport if the cell steps out of bounds
             if item_top < current_top:
                 # Scroll up so the top of the cell hits the top edge
@@ -419,14 +553,15 @@ class LibraryPresenter:
                 self.app.grid_canvas.yview_moveto(new_top / total_h)
 
             return "break"
+
     def handle_select_all(self, event):
         import tkinter as tk
         from tkinter import ttk
-        
+
         focused = self.app.root.focus_get()
         if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
             return
-            
+
         if self.app.current_view_mode == "list":
             tree = self.app.library_tree
             children = tree.get_children()
@@ -436,41 +571,52 @@ class LibraryPresenter:
             return "break"
         else:
             grid_data = self.app.grid_canvas.data
-            if not grid_data: return
-            
+            if not grid_data:
+                return
+
             # 1. Grab every fingerprint currently visible under the active filter
             all_fps = set()
             for item in grid_data:
                 raw = item.get("asin", "")
                 fp = raw if raw and raw != "Unknown" else item.get("path", "")
                 all_fps.add(fp)
-            
+
             # 2. Apply the blue border instantly to the entire virtual grid
             self.app.grid_canvas.set_active_asins(all_fps)
-            
+
             # 3. Store the full list so the 'Remove' button can process batch deletions
-            self.app._selected_grid_items = grid_data 
-            
+            self.app._selected_grid_items = grid_data
+
             # 4. Populate the sidebar with the first item to keep the UI looking clean
             first = grid_data[0]
-            self.app._selected_grid_item = {'values': [
-                first.get("title", ""), first.get("authors", ""), first.get("narrator", ""),
-                first.get("series", ""), first.get("duration_str", ""), first.get("asin", ""),
-                first.get("status", ""), first.get("path", ""), first.get("date_str", "")
-            ]}
-            
-            if hasattr(self.app, 'author_label'):
+            self.app._selected_grid_item = {
+                "values": [
+                    first.get("title", ""),
+                    first.get("authors", ""),
+                    first.get("narrator", ""),
+                    first.get("series", ""),
+                    first.get("duration_str", ""),
+                    first.get("asin", ""),
+                    first.get("status", ""),
+                    first.get("path", ""),
+                    first.get("date_str", ""),
+                ]
+            }
+
+            if hasattr(self.app, "author_label"):
                 self.app.author_label.config(text=first.get("authors", ""))
-            if hasattr(self.app, 'series_label'):
+            if hasattr(self.app, "series_label"):
                 series = first.get("series", "")
-                self.app.series_label.config(text=series if series and series.strip() else "")
-                
+                self.app.series_label.config(
+                    text=series if series and series.strip() else ""
+                )
+
             return "break"
 
     def _toggle_empty_filter_state(self, is_empty):
         import tkinter as tk
-        
-        if not hasattr(self.app, 'filter_empty_label'):
+
+        if not hasattr(self.app, "filter_empty_label"):
             # Attach to the master container holding the grid and tree views
             parent = self.app.grid_canvas.master
             self.app.filter_empty_label = tk.Label(
@@ -478,53 +624,66 @@ class LibraryPresenter:
                 text="No books match your current filters.",
                 font=("Segoe UI", 16),
                 bg="#1e1e1e",
-                fg="#7f8c8d"
+                fg="#7f8c8d",
             )
-            
+
         if is_empty:
             self.app.filter_empty_label.place(relx=0.5, rely=0.5, anchor="center")
         else:
             self.app.filter_empty_label.place_forget()
-            
+
     def handle_alpha_jump(self, event):
         import tkinter as tk
         from tkinter import ttk
-        
-        if not getattr(event, 'char', None): return
+
+        if not getattr(event, "char", None):
+            return
         char = event.char.lower()
-        if not char or not char.isalnum(): return
-            
+        if not char or not char.isalnum():
+            return
+
         focused = self.app.root.focus_get()
-        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)): return
-        if self.app.current_view_mode != "list": return
-            
-        tree = getattr(self.app, 'library_tree', None)
-        if not tree: return
-            
-        sort_col = getattr(self, 'current_sort_col', 'Title')
-        if not sort_col: sort_col = 'Title'
-            
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+        if self.app.current_view_mode != "list":
+            return
+
+        tree = getattr(self.app, "library_tree", None)
+        if not tree:
+            return
+
+        sort_col = getattr(self, "current_sort_col", "Title")
+        if not sort_col:
+            sort_col = "Title"
+
         children = tree.get_children()
-        if not children: return
-            
+        if not children:
+            return
+
         selected = tree.selection()
         start_idx = 0
         if selected:
-            try: start_idx = children.index(selected[0]) + 1
-            except ValueError: pass
-                
+            try:
+                start_idx = children.index(selected[0]) + 1
+            except ValueError:
+                pass
+
         search_sequence = list(children[start_idx:]) + list(children[:start_idx])
-        
+
         for item in search_sequence:
-            try: val = str(tree.set(item, sort_col)).lower()
+            try:
+                val = str(tree.set(item, sort_col)).lower()
             except tk.TclError:
-                values = tree.item(item).get('values', [])
+                values = tree.item(item).get("values", [])
                 val = str(values[0]).lower() if values else ""
-                
-            if val.startswith("the "): val = val[4:]
-            elif val.startswith("a "): val = val[2:]
-            elif val.startswith("an "): val = val[3:]
-            
+
+            if val.startswith("the "):
+                val = val[4:]
+            elif val.startswith("a "):
+                val = val[2:]
+            elif val.startswith("an "):
+                val = val[3:]
+
             if val.startswith(char):
                 tree.selection_set(item)
                 tree.focus(item)

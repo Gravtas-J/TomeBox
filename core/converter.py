@@ -1,12 +1,14 @@
-import subprocess
-import os
 import json
-from core.utils.process_runner import ProcessRunner
+import os
+import subprocess
+
 from core.utils.fs import safe_unlink
+from core.utils.process_runner import ProcessRunner
+
 
 def resolve_cover_path(base_cover_path, asin):
     """
-    Intelligently hunts for the cover art to handle Audible's dropped leading 
+    Intelligently hunts for the cover art to handle Audible's dropped leading
     zeros and external metadata scraper naming conventions.
     """
     if not base_cover_path:
@@ -17,18 +19,21 @@ def resolve_cover_path(base_cover_path, asin):
 
     # List of possible filenames your system/scraper might have saved
     candidates = [
-        base_cover_path,                                  # The raw 9-digit expectation
-        os.path.join(cover_dir, f"{padded_asin}.jpg"),    # The 10-digit padded reality
-        os.path.join(cover_dir, f"{padded_asin}.png"),    # Scraper might have grabbed a PNG
-        os.path.join(cover_dir, "cover.jpg"),             # Standard generic scraper output
-        os.path.join(cover_dir, "folder.jpg")             # Alternative standard output
+        base_cover_path,  # The raw 9-digit expectation
+        os.path.join(cover_dir, f"{padded_asin}.jpg"),  # The 10-digit padded reality
+        os.path.join(
+            cover_dir, f"{padded_asin}.png"
+        ),  # Scraper might have grabbed a PNG
+        os.path.join(cover_dir, "cover.jpg"),  # Standard generic scraper output
+        os.path.join(cover_dir, "folder.jpg"),  # Alternative standard output
     ]
 
     for candidate in candidates:
         if os.path.exists(candidate):
             return candidate  # Found it!
-            
-    return None # Truly missing
+
+    return None  # Truly missing
+
 
 class AudioConverter:
     def __init__(self, logger):
@@ -37,10 +42,11 @@ class AudioConverter:
         self.current_process = None
         self.is_cancelled = False
 
-    def concat_to_m4b(self, file_paths, output_path, title="Audiobook", logger=None, progress_cb=None):
-        import tempfile
+    def concat_to_m4b(
+        self, file_paths, output_path, title="Audiobook", logger=None, progress_cb=None
+    ):
         import os
-
+        import tempfile
 
         if not file_paths:
             return False
@@ -49,41 +55,45 @@ class AudioConverter:
 
         fd_concat, concat_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
         fd_meta, metadata_txt_path = tempfile.mkstemp(suffix=".txt", text=True)
-        
+
         base, ext = os.path.splitext(output_path)
         temp_out_path = f"{output_path}.tmp.m4b"
 
         try:
-            with os.fdopen(fd_concat, 'w', encoding='utf-8') as f_concat:
+            with os.fdopen(fd_concat, "w", encoding="utf-8") as f_concat:
                 for path in file_paths:
-                    safe_path = path.replace('\\', '/').replace("'", "'\\''")
+                    safe_path = path.replace("\\", "/").replace("'", "'\\''")
                     f_concat.write(f"file '{safe_path}'\n")
 
             first_artist = "Unknown Author"
             first_album = title
             first_series = ""
-            total_duration_sec = 0  
-            
+            total_duration_sec = 0
+
             try:
                 first_data = self.get_metadata_and_chapters(file_paths[0])
                 first_tags = first_data.get("format", {}).get("tags", {})
-                first_artist = first_tags.get("artist") or first_tags.get("album_artist") or "Unknown Author"
+                first_artist = (
+                    first_tags.get("artist")
+                    or first_tags.get("album_artist")
+                    or "Unknown Author"
+                )
                 first_album = first_tags.get("album") or title
                 first_series = first_tags.get("series") or first_tags.get("show") or ""
             except Exception:
                 pass
 
-            with os.fdopen(fd_meta, 'w', encoding='utf-8') as f_meta:
+            with os.fdopen(fd_meta, "w", encoding="utf-8") as f_meta:
                 f_meta.write(";FFMETADATA1\n")
                 f_meta.write(f"title={title}\n")
                 f_meta.write(f"artist={first_artist}\n")
                 f_meta.write(f"album_artist={first_artist}\n")
                 f_meta.write(f"album={first_album}\n")
-                
+
                 if first_series:
                     f_meta.write(f"show={first_series}\n")
                     f_meta.write(f"series={first_series}\n")
-                    
+
                 f_meta.write("genre=Audiobook\n\n")
 
                 current_start_ms = 0
@@ -109,27 +119,47 @@ class AudioConverter:
                         current_start_ms = end_ms
 
             cmd = [
-                "ffmpeg", "-y",
-                "-fflags", "+genpts",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", concat_txt_path,
-                "-i", metadata_txt_path,
-                "-i", file_paths[0],
-                "-map", "0:a",
-                "-map", "2:v?",
-                "-map_metadata", "1",
-                "-c:v", "copy",
-                "-disposition:v", "attached_pic"
+                "ffmpeg",
+                "-y",
+                "-fflags",
+                "+genpts",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_txt_path,
+                "-i",
+                metadata_txt_path,
+                "-i",
+                file_paths[0],
+                "-map",
+                "0:a",
+                "-map",
+                "2:v?",
+                "-map_metadata",
+                "1",
+                "-c:v",
+                "copy",
+                "-disposition:v",
+                "attached_pic",
             ]
 
             if needs_reencode:
                 cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100"])
             else:
                 cmd.extend(["-c:a", "copy"])
-                
+
             # NEW: Pipe progress output to the safe temporary file
-            cmd.extend(["-movflags", "+faststart+use_metadata_tags", "-progress", "pipe:1", temp_out_path]) 
+            cmd.extend(
+                [
+                    "-movflags",
+                    "+faststart+use_metadata_tags",
+                    "-progress",
+                    "pipe:1",
+                    temp_out_path,
+                ]
+            )
 
             self.is_cancelled = False
             self.current_process = ProcessRunner.run_async(
@@ -137,15 +167,15 @@ class AudioConverter:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                encoding='utf-8',
-                errors='replace'
+                encoding="utf-8",
+                errors="replace",
             )
 
             last_percent = -1
             for line in self.current_process.stdout:
-                if getattr(self, 'is_cancelled', False):
+                if getattr(self, "is_cancelled", False):
                     self.current_process.terminate()
-                    break 
+                    break
 
                 line = line.strip()
                 if line.startswith("out_time_us=") and total_duration_sec > 0:
@@ -155,22 +185,29 @@ class AudioConverter:
                             out_time_us = int(val)
                             if out_time_us > 0:
                                 current_time_sec = out_time_us / 1000000.0
-                                percent = int((current_time_sec / total_duration_sec) * 100)
+                                percent = int(
+                                    (current_time_sec / total_duration_sec) * 100
+                                )
                                 if percent > last_percent and percent <= 100:
-                                    if progress_cb: progress_cb(percent)
+                                    if progress_cb:
+                                        progress_cb(percent)
                                     last_percent = percent
                     except ValueError:
                         pass
 
             self.current_process.wait()
-            
+
             # --- CANCELLATION & CLEANUP LOGIC ---
-            if getattr(self, 'is_cancelled', False):
+            if getattr(self, "is_cancelled", False):
                 safe_unlink(temp_out_path, self.logger)
                 return False
-                
-            success = self.current_process.returncode == 0 and os.path.exists(temp_out_path) and os.path.getsize(temp_out_path) > 0
-            
+
+            success = (
+                self.current_process.returncode == 0
+                and os.path.exists(temp_out_path)
+                and os.path.getsize(temp_out_path) > 0
+            )
+
             if success:
                 # Rename the successful temp file to the final intended name
                 os.replace(temp_out_path, output_path)
@@ -181,12 +218,13 @@ class AudioConverter:
                 return False
 
         except Exception as e:
-            if getattr(self, 'current_process', None):
+            if getattr(self, "current_process", None):
                 self.current_process.kill()
             safe_unlink(temp_out_path, self.logger)
-            if logger: logger(f"Concat aborted: {e}")
+            if logger:
+                logger(f"Concat aborted: {e}")
             return False
-            
+
         finally:
             safe_unlink(concat_txt_path, self.logger)
             safe_unlink(metadata_txt_path, self.logger)
@@ -199,19 +237,32 @@ class AudioConverter:
             try:
                 self.current_process.terminate()  # Sends SIGTERM to ffmpeg.exe
                 self.logger("FFmpeg process terminated by user.")
-            except Exception as e:
-                pass # Process might have already finished
-            
+            except Exception:
+                pass  # Process might have already finished
+
     def get_metadata_and_chapters(self, filepath):
-        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", filepath]
+        cmd = [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_chapters",
+            filepath,
+        ]
         try:
-            result = ProcessRunner.run_blocking(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
+            result = ProcessRunner.run_blocking(
+                cmd, capture_output=True, text=True, encoding="utf-8", check=True
+            )
             data = json.loads(result.stdout)
-            
+
             # Normalize all tag keys to lowercase to fix macOS / FFmpeg build discrepancies
             if "format" in data and "tags" in data["format"]:
-                data["format"]["tags"] = {k.lower(): v for k, v in data["format"]["tags"].items()}
-                
+                data["format"]["tags"] = {
+                    k.lower(): v for k, v in data["format"]["tags"].items()
+                }
+
             raw_dur = data["format"].get("duration", 0)
             try:
                 data["format"]["duration"] = float(raw_dur)
@@ -221,15 +272,28 @@ class AudioConverter:
             if "chapters" in data:
                 for chapter in data["chapters"]:
                     if "tags" in chapter:
-                        chapter["tags"] = {k.lower(): v for k, v in chapter["tags"].items()}
-                        
+                        chapter["tags"] = {
+                            k.lower(): v for k, v in chapter["tags"].items()
+                        }
+
             return data
         except Exception as e:
             self.logger(f"FFprobe error on {filepath}: {e}")
             return {}
 
-    def convert_to_m4b(self, input_path, output_path, title, authors, cover_path, drm_flags, total_duration, progress_cb=None):
+    def convert_to_m4b(
+        self,
+        input_path,
+        output_path,
+        title,
+        authors,
+        cover_path,
+        drm_flags,
+        total_duration,
+        progress_cb=None,
+    ):
         import os
+
         actual_cover = None
         if cover_path:
             raw_asin, _ = os.path.splitext(os.path.basename(cover_path))
@@ -241,59 +305,87 @@ class AudioConverter:
         cmd = ["ffmpeg", "-y"]
         if drm_flags:
             cmd.extend(drm_flags)
-            
+
         cmd.extend(["-i", input_path])
 
         # --- APPLY RESOLVED COVER ---
         if actual_cover:
-            cmd.extend([
-                "-i", actual_cover, 
-                "-map", "0:a", 
-                "-map", "1:v", 
-                "-c:v", "mjpeg", 
-                "-disposition:v", "attached_pic",
-                "-map_chapters", "0"
-            ])
+            cmd.extend(
+                [
+                    "-i",
+                    actual_cover,
+                    "-map",
+                    "0:a",
+                    "-map",
+                    "1:v",
+                    "-c:v",
+                    "mjpeg",
+                    "-disposition:v",
+                    "attached_pic",
+                    "-map_chapters",
+                    "0",
+                ]
+            )
         else:
             # Fallback: Convert audio only without crashing if cover is truly gone
             cmd.extend(["-map", "0:a", "-map_chapters", "0"])
 
-        cmd.extend([
-            "-c:a", "copy",
-            "-metadata", f"title={title}",
-            "-metadata", f"album={title}",
-            "-metadata", "genre=Audiobook"
-        ])
-        
+        cmd.extend(
+            [
+                "-c:a",
+                "copy",
+                "-metadata",
+                f"title={title}",
+                "-metadata",
+                f"album={title}",
+                "-metadata",
+                "genre=Audiobook",
+            ]
+        )
+
         if authors:
-            cmd.extend(["-metadata", f"artist={authors}", "-metadata", f"album_artist={authors}"])
+            cmd.extend(
+                [
+                    "-metadata",
+                    f"artist={authors}",
+                    "-metadata",
+                    f"album_artist={authors}",
+                ]
+            )
 
         cmd.extend(["-progress", "pipe:1", temp_out_path])
-        
+
         # Reset the cancellation flag for this specific run
-        self.is_cancelled = False 
-        
+        self.is_cancelled = False
+
         try:
             # TRAP 1: MISSING FFMPEG
             try:
                 self.current_process = ProcessRunner.run_async(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, 
-                    universal_newlines=True
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    universal_newlines=True,
                 )
             except FileNotFoundError:
-                raise Exception("CRITICAL: FFmpeg not found. Please ensure FFmpeg is installed and added to your system PATH.")
+                raise Exception(
+                    "CRITICAL: FFmpeg not found. Please ensure FFmpeg is installed and added to your system PATH."
+                )
 
             last_percent = -1
             for line in self.current_process.stdout:
-                
                 # INSTANT BAILOUT if the user clicked cancel or hit Alt-F4
-                if getattr(self, 'is_cancelled', False):
+                if getattr(self, "is_cancelled", False):
                     self.current_process.terminate()
-                    break 
+                    break
 
                 line = line.strip()
                 # Safety check added here to ensure total_duration isn't None
-                if line.startswith("out_time_us=") and total_duration and total_duration > 0:
+                if (
+                    line.startswith("out_time_us=")
+                    and total_duration
+                    and total_duration > 0
+                ):
                     try:
                         val = line.split("=")[1]
                         if val != "N/A":
@@ -302,28 +394,33 @@ class AudioConverter:
                                 current_time_sec = out_time_us / 1000000.0
                                 percent = int((current_time_sec / total_duration) * 100)
                                 if percent > last_percent and percent <= 100:
-                                    if progress_cb: progress_cb(percent)
+                                    if progress_cb:
+                                        progress_cb(percent)
                                     last_percent = percent
                     except ValueError:
                         pass
 
             self.current_process.wait()
-            
+
             # Post-processing checks
-            if getattr(self, 'is_cancelled', False):
+            if getattr(self, "is_cancelled", False):
                 raise Exception("Conversion cancelled by user.")
-                
+
             if self.current_process.returncode != 0:
-                raise Exception(f"FFmpeg process failed with exit code {self.current_process.returncode}.")
-            
+                raise Exception(
+                    f"FFmpeg process failed with exit code {self.current_process.returncode}."
+                )
+
             # TRAP 2: PERMISSION DENIED / DRIVE FULL
             try:
                 os.replace(temp_out_path, output_path)
             except OSError as e:
-                raise Exception(f"File System Error: Could not save the final audiobook. (Check permissions and drive space). Details: {e}")
-                
+                raise Exception(
+                    f"File System Error: Could not save the final audiobook. (Check permissions and drive space). Details: {e}"
+                )
+
             return True
-            
+
         except Exception as e:
             # THE AFTERMATH CLEANUP
             safe_unlink(temp_out_path, self.logger)
@@ -332,29 +429,35 @@ class AudioConverter:
             self.current_process = None
             safe_unlink(temp_out_path, self.logger)
 
-    def split_into_chapters(self, input_path, target_dir, chapters, drm_flags, progress_cb=None):
+    def split_into_chapters(
+        self, input_path, target_dir, chapters, drm_flags, progress_cb=None
+    ):
         import subprocess
         import time
+
         from core.utils.process_runner import ProcessRunner
+
         total_chaps = len(chapters)
-        self.is_cancelled = False 
-        
-        created_files = [] 
-        
+        self.is_cancelled = False
+
+        created_files = []
+
         for idx, chapter in enumerate(chapters):
-            if getattr(self, 'is_cancelled', False):
+            if getattr(self, "is_cancelled", False):
                 self._cleanup_split_files(created_files, target_dir)
                 raise Exception("Chapter splitting cancelled by user.")
-                
+
             if progress_cb:
                 progress_cb(((idx + 1) / total_chaps) * 100)
-                
+
             chap_title = chapter.get("tags", {}).get("title", f"Chapter {idx + 1}")
-            safe_chap_title = "".join([c for c in chap_title if c.isalnum() or c in [' ', '-', '_']]).rstrip()
-            
+            safe_chap_title = "".join(
+                [c for c in chap_title if c.isalnum() or c in [" ", "-", "_"]]
+            ).rstrip()
+
             out_name = f"{idx + 1:03d} - {safe_chap_title}.m4b"
             out_path = os.path.join(target_dir, out_name)
-            
+
             base, ext = os.path.splitext(out_path)
             temp_out_path = f"{out_path}.tmp.m4b"
 
@@ -364,29 +467,36 @@ class AudioConverter:
             duration = end - start
 
             cmd = ["ffmpeg", "-y"]
-            
-            # --- FIXED: Fast Input Seeking (resets timestamps to 0:00) ---
+
             cmd.extend(["-ss", str(start)])
             if drm_flags:
                 cmd.extend(drm_flags)
             cmd.extend(["-i", input_path])
             cmd.extend(["-t", str(duration)])
-            
-            # --- FIXED: Explicitly map audio, cover art, and strip global chapters ---
-            cmd.extend([
-                "-c:a", "copy",
-                "-c:v", "copy",
-                "-map", "0:a",
-                "-map", "0:v?",
-                "-map_chapters", "-1",
-                temp_out_path
-            ])
-            
+
+            cmd.extend(
+                [
+                    "-c:a",
+                    "copy",
+                    "-c:v",
+                    "copy",
+                    "-map",
+                    "0:a",
+                    "-map",
+                    "0:v?",
+                    "-map_chapters",
+                    "-1",
+                    temp_out_path,
+                ]
+            )
+
             try:
-                self.current_process = ProcessRunner.run_async(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
+                self.current_process = ProcessRunner.run_async(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+
                 while self.current_process.poll() is None:
-                    if getattr(self, 'is_cancelled', False):
+                    if getattr(self, "is_cancelled", False):
                         self.current_process.terminate()
                         break
                     time.sleep(0.5)
@@ -394,27 +504,30 @@ class AudioConverter:
                 pass
             finally:
                 self.current_process = None
-                
-            if getattr(self, 'is_cancelled', False):
+
+            if getattr(self, "is_cancelled", False):
                 safe_unlink(temp_out_path, self.logger)
                 self._cleanup_split_files(created_files, target_dir)
                 raise Exception("Chapter splitting cancelled by user.")
-                
+
             if os.path.exists(temp_out_path):
                 try:
                     os.replace(temp_out_path, out_path)
                     created_files.append(out_path)
                 except OSError:
                     safe_unlink(temp_out_path, self.logger)
-                
+
         return True
 
     def _cleanup_split_files(self, created_files, target_dir):
         """Helper to nuke all generated chapter files if the user aborts."""
         import os
+
         for f in created_files:
             safe_unlink(f, self.logger)
-        try: 
-            os.rmdir(target_dir) # rmdir safely fails if directory isn't empty, no need to change
-        except OSError: 
+        try:
+            os.rmdir(
+                target_dir
+            )  # rmdir safely fails if directory isn't empty, no need to change
+        except OSError:
             pass

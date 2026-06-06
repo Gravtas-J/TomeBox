@@ -1,29 +1,33 @@
 import os
 import sys
-import pytest
-import subprocess
 import threading
 from unittest.mock import MagicMock
+
+import pytest
+
 from core.player import AudioPlayer
 
 # --- Fixtures ---
 
+
 @pytest.fixture
 def player():
     return AudioPlayer(
-        logger=MagicMock(), 
-        on_complete_cb=MagicMock(), 
-        on_error_cb=MagicMock()
+        logger=MagicMock(), on_complete_cb=MagicMock(), on_error_cb=MagicMock()
     )
 
+
 # --- Playback Logic & Command Construction ---
+
 
 def test_play_success_and_command_construction(player, monkeypatch):
     """Verifies FFplay command line construction including complex audio filters."""
     # 1. Mock FFprobe to pretend the file has a valid audio stream
     mock_probe_res = MagicMock()
     mock_probe_res.stdout = "aac\n"
-    monkeypatch.setattr("core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res))
+    monkeypatch.setattr(
+        "core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res)
+    )
 
     # 2. Mock the async FFplay process runner
     mock_proc = MagicMock()
@@ -32,9 +36,9 @@ def test_play_success_and_command_construction(player, monkeypatch):
 
     # Prevent the monitor thread from actually running
     monkeypatch.setattr(threading.Thread, "start", MagicMock())
-    
+
     # Test Unix-style volume logic first
-    monkeypatch.setattr(os, "name", "posix") 
+    monkeypatch.setattr(os, "name", "posix")
 
     # Execute Play with extreme speed to test the filter chain multiplier
     res = player.play(
@@ -46,7 +50,7 @@ def test_play_success_and_command_construction(player, monkeypatch):
         voice_boost=True,
         skip_silence=True,
         drm_flags=["-activation_bytes", "deadbeef"],
-        audio_device="Speakers"
+        audio_device="Speakers",
     )
 
     assert res is True
@@ -55,7 +59,7 @@ def test_play_success_and_command_construction(player, monkeypatch):
     # Verify the exact command sent to FFplay
     mock_run_async.assert_called_once()
     cmd = mock_run_async.call_args[0][0]
-    
+
     assert "ffplay" in cmd
     assert "-ss" in cmd
     assert "10.5" in cmd
@@ -76,35 +80,43 @@ def test_play_success_and_command_construction(player, monkeypatch):
     env = mock_run_async.call_args[1]["env"]
     assert env["SDL_AUDIO_DEVICE_NAME"] == "Speakers"
 
+
 def test_play_slow_speed_chaining(player, monkeypatch):
     """Verifies that speeds < 0.5 are chained correctly."""
     mock_probe_res = MagicMock()
     mock_probe_res.stdout = "aac\n"
-    monkeypatch.setattr("core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res))
-    
+    monkeypatch.setattr(
+        "core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res)
+    )
+
     mock_run_async = MagicMock()
     monkeypatch.setattr("core.player.ProcessRunner.run_async", mock_run_async)
     monkeypatch.setattr(threading.Thread, "start", MagicMock())
 
-    player.play("/fake.m4b", 0, 10, 0.25, 100, False, False) # 0.25 speed
-    
+    player.play("/fake.m4b", 0, 10, 0.25, 100, False, False)  # 0.25 speed
+
     cmd = mock_run_async.call_args[0][0]
     filters = cmd[cmd.index("-af") + 1]
     # To get 0.25, it should chain 0.5 and 0.5
     assert "atempo=0.5,atempo=0.5" in filters
 
+
 def test_play_aborts_on_missing_audio_stream(player, monkeypatch):
     """Verifies playback bails out if FFprobe finds no audio streams (e.g. corrupt file)."""
     mock_probe_res = MagicMock()
-    mock_probe_res.stdout = "   \n" # Empty string means no stream found
-    monkeypatch.setattr("core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res))
+    mock_probe_res.stdout = "   \n"  # Empty string means no stream found
+    monkeypatch.setattr(
+        "core.player.ProcessRunner.run_blocking", MagicMock(return_value=mock_probe_res)
+    )
 
     res = player.play("/fake.m4b", 0, 10, 1.0, 100, False, False)
 
     assert res is False
     player.on_error.assert_called_once_with("NO_AUDIO")
 
+
 # --- Process Monitoring & Hooks ---
+
 
 def test_monitor_success_and_error(player):
     """Verifies the background thread triggers the correct UI hooks on exit."""
@@ -122,7 +134,9 @@ def test_monitor_success_and_error(player):
     player._monitor(mock_proc)
     player.on_error.assert_called_once_with(1)
 
+
 # --- Process Termination & Volume (OS Specific) ---
+
 
 def test_stop_windows_taskkill(player, monkeypatch):
     """Verifies Windows uses the aggressive taskkill command."""
@@ -142,6 +156,7 @@ def test_stop_windows_taskkill(player, monkeypatch):
     assert "9999" in cmd
     assert player.process is None
 
+
 def test_stop_unix_kill_and_fallback(player, monkeypatch):
     """Verifies Unix uses kill(), with a fallback to terminate() if it fails."""
     monkeypatch.setattr(os, "name", "posix")
@@ -159,6 +174,7 @@ def test_stop_unix_kill_and_fallback(player, monkeypatch):
     mock_proc.kill.side_effect = Exception("Kill denied")
     player.stop()
     mock_proc.terminate.assert_called_once()
+
 
 def test_set_volume_windows_pycaw(player, monkeypatch):
     """Verifies Windows volume mapping via the external pycaw library."""
