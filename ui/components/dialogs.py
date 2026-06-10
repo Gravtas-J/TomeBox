@@ -6,7 +6,6 @@ from tkinter import messagebox, ttk
 
 import qrcode
 import requests
-import sounddevice as sd
 from PIL import Image, ImageTk
 
 
@@ -96,6 +95,7 @@ def open_error_log_window(app):
 def open_audio_device_settings(app):
     """Queries the OS for audio hardware and displays a selection menu."""
     try:
+        import sounddevice as sd
         devices = []
 
         # Find the WASAPI host API index on Windows
