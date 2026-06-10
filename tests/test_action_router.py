@@ -249,7 +249,7 @@ def test_scrape_apply_complete_reloads_cover(router, mock_app, monkeypatch):
         is_manual=False,
     )
 
-    mock_app.library_presenter.cover_cache.clear.assert_called_once()
+    mock_app.image_cache.clear.assert_called_once()
     mock_app.library_presenter.refresh_library_ui.assert_called()
     mock_app.metadata_manager.fetch_display_metadata.assert_called_with(
         "C:/audio/book.m4b"
