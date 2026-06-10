@@ -502,15 +502,29 @@ class MetadataManager:
                     local_data["progress"] = {}
 
                 if status == "Unread":
+                    local_data["read_status"] = "Unread"
                     local_data["progress"][prof] = 0
                     local_data["last_position"] = 0
                     local_data["last_time"] = 0
                     local_data["last_chapter"] = 0
                 elif status == "Finished":
-                    target_prog = dur_sec if dur_sec > 0 else 360000
-                    local_data["progress"][prof] = target_prog
-                    local_data["last_position"] = target_prog
-                    local_data["last_time"] = target_prog
+                    local_data["read_status"] = "Finished"
+                    chapters = local_data.get("chapters")
+                    if chapters:
+                        try:
+                            total = float(chapters[-1].get("end_time", 0)) or 0.0
+                        except (TypeError, ValueError):
+                            total = 0.0
+                    else:
+                        total = float(dur_sec or 0)
+
+                    if total > 0:
+                        local_data["progress"][prof] = total
+                        local_data["last_position"] = total
+                        # relative fields are recomputed from the absolute position on load;
+                        # never store an absolute here, and don't leave a stale one behind
+                        local_data.pop("last_time", None)
+                        local_data.pop("last_chapter", None)
 
             if new_asin:
                     for item in getattr(self.library_manager, "cloud_items", []):

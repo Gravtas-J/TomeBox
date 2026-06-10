@@ -233,15 +233,17 @@ class LibraryPresenter:
                     read_state = "Unread"
                     if row_path and row_path in self.app.library_manager.local_library:
                         local_data = self.app.library_manager.local_library[row_path]
-                        prog_sec = local_data.get("progress", {}).get(
-                            self.app.active_profile, 0
-                        )
-                        dur_sec = (local_data.get("duration_min", 0) or 0) * 60
-                        if dur_sec > 0:
-                            if prog_sec / dur_sec >= 0.95:
-                                read_state = "Finished"
-                            elif prog_sec > 0:
-                                read_state = "Started"
+                        explicit = local_data.get("read_status")
+                        if explicit in ("Finished", "Unread"):
+                            read_state = explicit
+                        else:
+                            prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
+                            dur_sec = (local_data.get("duration_min", 0) or 0) * 60
+                            if dur_sec > 0:
+                                if prog_sec / dur_sec >= 0.95:
+                                    read_state = "Finished"
+                                elif prog_sec > 0:
+                                    read_state = "Started"
 
                     display_status = status
                     if read_state == "Finished":

@@ -92,7 +92,16 @@ class PlaybackController:
         base_start = float(chapter.get("start_time", 0))
         base_end = float(chapter.get("end_time", 0))
         self.chapter_duration = base_end - base_start
-
+        if (
+                self.current_chapter_idx >= len(self.chapters) - 1
+                and self.current_play_time >= self.chapter_duration
+        ):
+            self.current_chapter_idx = 0
+            self.current_play_time = 0.0
+            chapter = self.chapters[0]
+            base_start = float(chapter.get("start_time", 0))
+            base_end = float(chapter.get("end_time", 0))
+            self.chapter_duration = base_end - base_start
         if getattr(self, "is_playlist", False):
             actual_start_time = self.current_play_time
         else:
@@ -126,6 +135,7 @@ class PlaybackController:
         self.is_paused = False
         self._last_tick_time = time.time()
         self._play_start_time = time.time()
+        self._terminal_segment = self.current_chapter_idx >= len(self.chapters) - 1
 
         self._tick_session += 1
         threading.Thread(
@@ -217,6 +227,11 @@ class PlaybackController:
         if not self.is_playing:
             return
         if time.time() - getattr(self, "_play_start_time", 0) < 1.5:
+            if getattr(self, "_terminal_segment", False) and self.chapters:
+                self.is_playing = False
+                self._tick_session += 1
+                self.event_bus.publish("playback.chapter_end")
+                return
             self.is_playing = False
             self.logger.error(
                 "Playback engine crashed instantly. Halting to prevent infinite loop."

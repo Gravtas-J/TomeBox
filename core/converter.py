@@ -275,6 +275,11 @@ class AudioConverter:
                         chapter["tags"] = {
                             k.lower(): v for k, v in chapter["tags"].items()
                         }
+                real_dur = data["format"]["duration"]
+                if real_dur > 0 and data["chapters"]:
+                    last = data["chapters"][-1]
+                    if float(last.get("end_time", 0) or 0) > real_dur:
+                        last["end_time"] = real_dur
 
             return data
         except Exception as e:

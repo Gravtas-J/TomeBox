@@ -89,6 +89,12 @@ class PlaybackPresenter:
                         chapter.get("end_time", 0)
                     ) - float(chapter.get("start_time", 0))
 
+                    if self.app.playback.chapter_duration > 0:
+                        self.app.playback.current_play_time = max(
+                            0.0,
+                            min(self.app.playback.current_play_time, self.app.playback.chapter_duration),
+                        )
+
                     self.update_info()
                     curr_str = self.format_time(self.app.playback.current_play_time)
                     dur_str = self.format_time(self.app.playback.chapter_duration)
@@ -217,7 +223,9 @@ class PlaybackPresenter:
             ]
 
         abs_pos = None
-        if (
+        if local_data.get("read_status") == "Finished":
+            abs_pos = 0.0          # finished → ready to replay from the top, no tail seek
+        elif (
             "progress" in local_data
             and self.app.active_profile in local_data["progress"]
         ):
@@ -254,7 +262,11 @@ class PlaybackPresenter:
         self.app.playback.chapter_duration = float(chapter.get("end_time", 0)) - float(
             chapter.get("start_time", 0)
         )
-
+        if self.app.playback.chapter_duration > 0:
+            self.app.playback.current_play_time = max(
+                0.0,
+                min(self.app.playback.current_play_time, self.app.playback.chapter_duration),
+            )
         curr_str = self.format_time(self.app.playback.current_play_time)
         dur_str = self.format_time(self.app.playback.chapter_duration)
         self.view.time_label.config(text=f"{curr_str} / {dur_str}")
@@ -571,8 +583,14 @@ class PlaybackPresenter:
             self.update_info()
             self.app.root.after(200, self.resume_playback)
         else:
+            finished_path = self.app.file_path
+            local_data = self.app.library_manager.local_library.get(finished_path)
+            if local_data is not None:
+                local_data["read_status"] = "Finished"
+                self.app.library_manager.db.save_local_db(self.app.library_manager.local_library)
             self.app.stats_manager.add_stat("books_finished", 1)
             self.view.info_label.config(text="Finished Book")
+            self.app.library_presenter.refresh_library_ui()
 
     def prev_chapter(self):
         self.save_playback_state()
