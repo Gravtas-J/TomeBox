@@ -1,14 +1,16 @@
-from concurrent.futures import ThreadPoolExecutor
-import traceback
-import time
 import threading
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+
 
 class AppThreadPool:
     """Centralized thread manager with task throttling capabilities."""
+
     def __init__(self, max_workers=10, logger=None):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.logger = logger
-        
+
         # Throttling state
         self._api_lock = threading.Lock()
         self._last_api_call = 0.0
@@ -20,7 +22,7 @@ class AppThreadPool:
             future = self.executor.submit(self._throttled_wrapper, fn, *args, **kwargs)
         else:
             future = self.executor.submit(fn, *args, **kwargs)
-            
+
         future.add_done_callback(self._handle_exception)
         return future
 
@@ -32,7 +34,7 @@ class AppThreadPool:
             if elapsed < self.api_throttle_delay:
                 time.sleep(self.api_throttle_delay - elapsed)
             self._last_api_call = time.time()
-            
+
         return fn(*args, **kwargs)
 
     def _handle_exception(self, future):

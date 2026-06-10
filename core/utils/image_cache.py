@@ -1,17 +1,20 @@
 import os
 import textwrap
 from collections import OrderedDict
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+
+from PIL import Image, ImageDraw, ImageFont, ImageTk
+
 
 class ImageCache:
     """
-    LRU Cache for Tkinter PhotoImages. 
+    LRU Cache for Tkinter PhotoImages.
     Handles on-the-fly thumbnail generation and dummy card creation.
     """
+
     def __init__(self, max_size=100):
         self.max_size = max_size
         self.cache = OrderedDict()
-        
+
         # Try to load a nice font, fallback to default if not found
         try:
             # Arial is standard on Windows/Mac, fallback works everywhere else
@@ -21,13 +24,20 @@ class ImageCache:
             self.title_font = ImageFont.load_default()
             self.author_font = ImageFont.load_default()
 
-    def get_thumbnail(self, asin, filepath, title="Unknown Title", author="Unknown Author", size=(200, 200)):
+    def get_thumbnail(
+        self,
+        asin,
+        filepath,
+        title="Unknown Title",
+        author="Unknown Author",
+        size=(200, 200),
+    ):
         """
-        Retrieves a cached PhotoImage. If it doesn't exist, it loads/resizes the 
+        Retrieves a cached PhotoImage. If it doesn't exist, it loads/resizes the
         real cover or generates a fallback dummy card.
         """
         cache_key = f"{asin}_{size[0]}x{size[1]}"
-        
+
         # 1. Check cache (and move to end to mark as recently used)
         if cache_key in self.cache:
             self.cache.move_to_end(cache_key)
@@ -42,16 +52,16 @@ class ImageCache:
                     img = img.convert("RGB")
                 # Thumbnail modifies the image in place, preserving aspect ratio
                 img.thumbnail(size, Image.Resampling.LANCZOS)
-                
+
                 # Pad it to make it exactly the requested size (for uniform grid)
                 final_img = Image.new("RGB", size, (30, 30, 30))
                 offset_x = (size[0] - img.width) // 2
                 offset_y = (size[1] - img.height) // 2
                 final_img.paste(img, (offset_x, offset_y))
                 img = final_img
-                
-            except Exception as e:
-                img = None # Fallback to dummy
+
+            except Exception:
+                img = None  # Fallback to dummy
 
         # 3. Generate Dummy Card if no image was found/valid
         if img is None:
@@ -63,7 +73,7 @@ class ImageCache:
         # 5. Manage LRU Cache size
         self.cache[cache_key] = photo
         if len(self.cache) > self.max_size:
-            self.cache.popitem(last=False) # Remove oldest
+            self.cache.popitem(last=False)  # Remove oldest
 
         return photo
 
@@ -75,8 +85,8 @@ class ImageCache:
 
         # Wrap text to fit
         margin = 15
-        max_chars_per_line = int((size[0] - (margin * 2)) / 10) # rough estimate
-        
+        max_chars_per_line = int((size[0] - (margin * 2)) / 10)  # rough estimate
+
         title_lines = textwrap.wrap(title, width=max_chars_per_line)
         author_lines = textwrap.wrap(author, width=max_chars_per_line)
 
@@ -86,7 +96,9 @@ class ImageCache:
             # Use textbbox to center text
             bbox = draw.textbbox((0, 0), line, font=self.title_font)
             w = bbox[2] - bbox[0]
-            draw.text(((size[0] - w) / 2, y_text), line, font=self.title_font, fill="#ecf0f1")
+            draw.text(
+                ((size[0] - w) / 2, y_text), line, font=self.title_font, fill="#ecf0f1"
+            )
             y_text += (bbox[3] - bbox[1]) + 5
 
         # Draw Author near the bottom
@@ -94,7 +106,9 @@ class ImageCache:
         for line in author_lines:
             bbox = draw.textbbox((0, 0), line, font=self.author_font)
             w = bbox[2] - bbox[0]
-            draw.text(((size[0] - w) / 2, y_text), line, font=self.author_font, fill="#95a5a6")
+            draw.text(
+                ((size[0] - w) / 2, y_text), line, font=self.author_font, fill="#95a5a6"
+            )
             y_text -= (bbox[3] - bbox[1]) + 5
 
         return img

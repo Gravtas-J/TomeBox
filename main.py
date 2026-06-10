@@ -1,9 +1,8 @@
-import os
-import sys
-import ctypes
 import argparse
+import ctypes
+import os
 import platform
-import time
+import sys
 
 # Add the root directory to the system path so imports work cleanly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -16,45 +15,47 @@ def parse_args():
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run as a headless server with no GUI. Web companion only."
+        help="Run as a headless server with no GUI. Web companion only.",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=8000,
-        help="Port for the companion web server (default: 8000)"
+        help="Port for the companion web server (default: 8000)",
     )
     parser.add_argument(
         "--host",
         default="0.0.0.0",
-        help="Host interface to bind to (default: 0.0.0.0 for all interfaces)"
+        help="Host interface to bind to (default: 0.0.0.0 for all interfaces)",
     )
     return parser.parse_args()
 
 
 def run_headless(base_dir, host, port):
     """Runs only the FastAPI companion server with no GUI."""
-    import uvicorn
     import asyncio
-    from core.utils.logger import setup_logger
-    from core.database import DatabaseManager
-    from core.controllers.library_manager import LibraryManager
+
+    import uvicorn
+
     from api.audible_client import AudibleClient
+    from core.controllers.library_manager import LibraryManager
+    from core.database import DatabaseManager
+    from core.utils.logger import setup_logger
     from server.web_app import create_server_app
-    
-    if sys.platform == 'win32':
+
+    if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
+
     logger = setup_logger(base_dir)
     logger("=" * 60)
     logger("TomeBox Headless Server starting...")
     logger(f"Base directory: {base_dir}")
     logger("=" * 60)
-    
+
     # Build a minimal app instance with just the components the web server needs
     class HeadlessApp:
         pass
-    
+
     app = HeadlessApp()
     app.base_dir = base_dir
     app.covers_dir = os.path.join(base_dir, "covers")
@@ -62,20 +63,18 @@ def run_headless(base_dir, host, port):
     app.settings = app.db.load_settings()
     app.api = AudibleClient()
     app.library_manager = LibraryManager(
-        db_manager=app.db,
-        api_client=app.api,
-        base_dir=base_dir
+        db_manager=app.db, api_client=app.api, base_dir=base_dir
     )
-    
+
     # The web server expects these attributes — stub the GUI-only ones
     app.root = None
     app.file_path = None
     app.sync_playhead_from_remote = lambda position: None
-    
+
     # Print pairing info to console
     auth_token = app.settings.get("auth_token", "")
     import socket
-    
+
     def get_all_local_ips():
         """Returns a list of all non-loopback IPv4 addresses on this machine."""
         ips = []
@@ -87,7 +86,7 @@ def run_headless(base_dir, host, port):
             s.close()
         except Exception:
             pass
-        
+
         # Also enumerate all bound interfaces in case there are multiple networks
         try:
             hostname = socket.gethostname()
@@ -96,15 +95,16 @@ def run_headless(base_dir, host, port):
                     ips.append(ip)
         except Exception:
             pass
-        
+
         return ips or ["127.0.0.1"]
-    
+
     def print_qr_to_terminal(url, logger):
         import qrcode
+
         qr = qrcode.QRCode(border=1)
         qr.add_data(url)
         qr.make(fit=True)
-        
+
         # Render to terminal
         matrix = qr.get_matrix()
         for row in matrix:
@@ -112,6 +112,7 @@ def run_headless(base_dir, host, port):
             for cell in row:
                 line += "██" if cell else "  "
             logger(line)
+
     local_ips = get_all_local_ips()
 
     logger("")
@@ -131,13 +132,19 @@ def run_headless(base_dir, host, port):
     logger("Scan this QR code with your phone to pair instantly:")
     logger("")
     logger("If the QR code above is cut off in your terminal, you can:")
-    logger(f"  - Open this URL on your phone: http://{ip}:{port}/auth?token={auth_token}")
-    logger(f"  - View the QR in the log file: {os.path.join(base_dir, 'logs', 'tomebox.log')}")
-    print_qr_to_terminal(f"http://{local_ips[0]}:{port}/auth?token={auth_token}", logger)
+    logger(
+        f"  - Open this URL on your phone: http://{ip}:{port}/auth?token={auth_token}"
+    )
+    logger(
+        f"  - View the QR in the log file: {os.path.join(base_dir, 'logs', 'tomebox.log')}"
+    )
+    print_qr_to_terminal(
+        f"http://{local_ips[0]}:{port}/auth?token={auth_token}", logger
+    )
     api = create_server_app(app)
     config = uvicorn.Config(api, host=host, port=port, log_config=None)
     server = uvicorn.Server(config)
-    
+
     try:
         server.run()
     except KeyboardInterrupt:
@@ -145,27 +152,35 @@ def run_headless(base_dir, host, port):
     finally:
         logger("TomeBox Headless Server stopped.")
 
+
 def setup_tkinter_exception_handler(root, logger):
     def handler(exc, val, tb):
         import traceback
-        logger.error(f"Tkinter callback exception:\n{''.join(traceback.format_exception(exc, val, tb))}")
+
+        logger.error(
+            f"Tkinter callback exception:\n{''.join(traceback.format_exception(exc, val, tb))}"
+        )
+
     root.report_callback_exception = handler
+
 
 def show_splash(root, base_dir):
     """Draws a borderless splash screen centered on the screen."""
     import os
     import tkinter as tk
+
     from PIL import Image, ImageTk
+
     from core.utils.paths import get_resource_path
 
     splash_path = get_resource_path("tomebox-splash.png")
-    
+
     if not os.path.exists(splash_path):
         return None
 
     splash = tk.Toplevel(root)
     splash.overrideredirect(True)  # Removes the window border and title bar
-    
+
     # Keep the splash on top of other windows
     splash.attributes("-topmost", True)
 
@@ -192,56 +207,61 @@ def show_splash(root, base_dir):
         # Force the OS to draw the window immediately before moving on
         splash.update()
         return splash
-        
+
     except Exception:
         splash.destroy()
         return None
 
+
 def run_gui(base_dir):
     """Runs the standard desktop application."""
     from tkinterdnd2 import TkinterDnD
+
     from ui.app_window import AAXManagerApp
-    
-    if platform.system() == 'Windows':
+
+    if platform.system() == "Windows":
         try:
-            myappid = 'tomebox.audiomanager.desktop.1' 
+            myappid = "tomebox.audiomanager.desktop.1"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
-    
+
     root = TkinterDnD.Tk()
-    
+
     # Hide the main window immediately so it doesn't flash on screen
     root.withdraw()
-    
+
     # 1. Fire up the splash screen
     splash = show_splash(root, base_dir)
-    
+
     # 2. Run the heavy initializations
     app = AAXManagerApp(root, base_dir)
     saved_palette = app.settings.get("classic_palette", "dark")
     app.palette_controller.apply_palette(saved_palette)
-    
+
     # 3. Tear down the splash and reveal the main app
     if splash:
         splash.destroy()
-        
+
     root.deiconify()
     root.mainloop()
 
+
 def main():
     args = parse_args()
-    
+
     # Resolve base_dir correctly for both source and frozen EXE
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         # When installed, route all mutable data to Local AppData
-        base_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'TomeBox')
+        base_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TomeBox"
+        )
         os.makedirs(base_dir, exist_ok=True)
     else:
         # In source code, keep it portable in the project root
         base_dir = os.path.dirname(os.path.abspath(__file__))
-    
+
     if args.headless:
         run_headless(base_dir, args.host, args.port)
     else:

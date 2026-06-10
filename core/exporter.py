@@ -1,20 +1,33 @@
 import csv
 import html
+
 from core.utils.text import format_series_list
+
+
 class LibraryExporter:
     @staticmethod
     def _sanitize_csv(value):
         """Prevents CSV Injection (Excel Macro execution) if metadata starts with command chars."""
         val_str = str(value)
-        if val_str and val_str[0] in ('=', '+', '-', '@'):
+        if val_str and val_str[0] in ("=", "+", "-", "@"):
             return "'" + val_str
         return val_str
 
     @staticmethod
     def export_csv(output_file, local_library, cloud_items):
-        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        with open(output_file, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Title", "Author(s)", "Series", "Duration (mins)", "ASIN", "Status", "Local Path"])
+            writer.writerow(
+                [
+                    "Title",
+                    "Author(s)",
+                    "Series",
+                    "Duration (mins)",
+                    "ASIN",
+                    "Status",
+                    "Local Path",
+                ]
+            )
 
             # ---> FIX: Create lookup maps for both ASIN (Primary) and Title (Fallback)
             local_by_asin = {}
@@ -31,47 +44,59 @@ class LibraryExporter:
                 title = item.get("title", "Unknown")
                 asin = item.get("asin", "Unknown")
                 processed_asins.add(asin)
-                
+
                 raw_authors = item.get("authors") or []
-                authors = ", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)])
-                
+                authors = ", ".join(
+                    [a.get("name", "") for a in raw_authors if isinstance(a, dict)]
+                )
+
                 series_str = format_series_list(item.get("series"))
 
                 duration = item.get("runtime_length_min") or 0
 
                 # ---> FIX: Match logic prioritized by ASIN then Title
                 local_data = local_by_asin.get(asin) or local_by_title.get(title)
-                
-                status = f"Downloaded ({local_data['format']})" if local_data else "Cloud Only"
-                local_path = local_data['path'] if local_data else ""
 
-                writer.writerow([
-                    LibraryExporter._sanitize_csv(title), 
-                    LibraryExporter._sanitize_csv(authors), 
-                    LibraryExporter._sanitize_csv(series_str), 
-                    duration, 
-                    asin, 
-                    status, 
-                    local_path
-                ])
+                status = (
+                    f"Downloaded ({local_data['format']})"
+                    if local_data
+                    else "Cloud Only"
+                )
+                local_path = local_data["path"] if local_data else ""
+
+                writer.writerow(
+                    [
+                        LibraryExporter._sanitize_csv(title),
+                        LibraryExporter._sanitize_csv(authors),
+                        LibraryExporter._sanitize_csv(series_str),
+                        duration,
+                        asin,
+                        status,
+                        local_path,
+                    ]
+                )
 
             # Export local files that aren't in the cloud list
             for path, data in local_library.items():
                 local_asin = data.get("asin", "Unknown")
                 if local_asin not in processed_asins:
-                    writer.writerow([
-                        LibraryExporter._sanitize_csv(data["title"]), 
-                        "Local File", "N/A", "N/A", 
-                        local_asin, 
-                        f"Downloaded ({data.get('format', 'Unknown')})", 
-                        path
-                    ])
+                    writer.writerow(
+                        [
+                            LibraryExporter._sanitize_csv(data["title"]),
+                            "Local File",
+                            "N/A",
+                            "N/A",
+                            local_asin,
+                            f"Downloaded ({data.get('format', 'Unknown')})",
+                            path,
+                        ]
+                    )
 
     @staticmethod
     def export_html(output_file, local_library, cloud_items):
         # 1. Initialize a list to accumulate parts
         parts = []
-        
+
         parts.append("""
         <!DOCTYPE html>
         <html>
@@ -105,24 +130,38 @@ class LibraryExporter:
         for item in cloud_items:
             raw_title = item.get("title", "Unknown")
             cloud_titles.append(raw_title)
-            
+
             title = html.escape(raw_title)
             raw_authors = item.get("authors") or []
-            authors = html.escape(", ".join([a.get("name", "") for a in raw_authors if isinstance(a, dict)]))
-            
+            authors = html.escape(
+                ", ".join(
+                    [a.get("name", "") for a in raw_authors if isinstance(a, dict)]
+                )
+            )
+
             series_str = html.escape(format_series_list(item.get("series")))
 
             images = item.get("product_images", {})
             img_url = html.escape(images.get("500") or images.get("252") or "")
-            
+
             local_data = local_titles.get(raw_title)
             is_downloaded = bool(local_data)
             status_class = "downloaded" if is_downloaded else "cloud"
-            
-            local_format = local_data.get('format', 'Unknown') if local_data else 'Unknown'
-            status_text = html.escape(f"Downloaded ({local_format})") if is_downloaded else "Cloud Only"
 
-            img_tag = f'<img src="{img_url}" class="cover-art" alt="Cover">' if img_url else '<div class="cover-art">No Cover Art</div>'
+            local_format = (
+                local_data.get("format", "Unknown") if local_data else "Unknown"
+            )
+            status_text = (
+                html.escape(f"Downloaded ({local_format})")
+                if is_downloaded
+                else "Cloud Only"
+            )
+
+            img_tag = (
+                f'<img src="{img_url}" class="cover-art" alt="Cover">'
+                if img_url
+                else '<div class="cover-art">No Cover Art</div>'
+            )
 
             parts.append(f"""
                 <div class="card">
@@ -140,8 +179,8 @@ class LibraryExporter:
         for path, data in local_library.items():
             if data["title"] not in cloud_titles:
                 safe_title = html.escape(data.get("title", "Unknown"))
-                safe_format = html.escape(data.get('format', 'Unknown'))
-                
+                safe_format = html.escape(data.get("format", "Unknown"))
+
                 parts.append(f"""
                     <div class="card">
                         <div class="cover-art">Local File</div>

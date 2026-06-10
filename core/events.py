@@ -1,6 +1,6 @@
 class EventBus:
     """A lightweight, centralized Publish/Subscribe event bus."""
-    
+
     def __init__(self):
         # Dictionary mapping topics to a list of callable handlers
         self._subscribers = {}
@@ -9,7 +9,7 @@ class EventBus:
         """Registers a callback function to a specific topic."""
         if topic not in self._subscribers:
             self._subscribers[topic] = []
-            
+
         if handler not in self._subscribers[topic]:
             self._subscribers[topic].append(handler)
 
@@ -25,7 +25,7 @@ class EventBus:
         """Fires an event, broadcasting the kwargs to all registered handlers."""
         if topic not in self._subscribers:
             return
-            
+
         for handler in self._subscribers[topic]:
             handler(**kwargs)
 

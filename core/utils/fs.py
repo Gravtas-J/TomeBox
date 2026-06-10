@@ -1,5 +1,6 @@
 import os
 
+
 def safe_unlink(path, logger=None):
     """Safely deletes a file if it exists, logging any permission/lock errors."""
     if path and os.path.isfile(path):

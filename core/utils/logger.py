@@ -1,7 +1,8 @@
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import sys
+from logging.handlers import RotatingFileHandler
+
 
 class CallableLogger:
     def __init__(self, logger):
@@ -13,13 +14,14 @@ class CallableLogger:
     def error(self, msg, exc_info=False):
         """Passes error logs through, optionally with stack traces."""
         self._logger.error(msg, exc_info=exc_info)
-        
+
     def exception(self, msg):
         """Automatically captures and logs the current exception stack trace."""
         self._logger.exception(msg)
-        
+
     def __getattr__(self, name):
         return getattr(self._logger, name)
+
 
 def setup_logger(base_dir, debug_mode=False):
     """Configures a rotating, thread-safe logger for the entire application."""
@@ -29,7 +31,7 @@ def setup_logger(base_dir, debug_mode=False):
 
     # Create the root logger
     logger = logging.getLogger("TomeBox")
-    
+
     # Set global level
     level = logging.DEBUG if debug_mode else logging.INFO
     logger.setLevel(level)
@@ -38,13 +40,12 @@ def setup_logger(base_dir, debug_mode=False):
     if not logger.handlers:
         # Formatter: [2026-04-24 10:15:30] [ERROR] [DownloadManager] Connection timed out.
         formatter = logging.Formatter(
-            fmt="[%(asctime)s] [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            fmt="[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
         # 1. Rotating File Handler (Max 5MB per file, keep last 3 backups)
         file_handler = RotatingFileHandler(
-            log_file_path, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+            log_file_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)

@@ -2,29 +2,28 @@ from core.utils.text import format_series_list
 
 # (description, input, expected output)
 CASES = [
-    ("entry with a sequence number",
-     [{"title": "Stormlight", "sequence": "1"}],
-     "Stormlight (Bk 1)"),
-
-    ("entry with no sequence key",
-     [{"title": "Stormlight"}],
-     "Stormlight"),
-
-    ("entry with empty-string sequence",
-     [{"title": "Stormlight", "sequence": ""}],
-     "Stormlight"),
-
-    ("multiple entries — one with seq, one without",
-     [{"title": "Mistborn", "sequence": "1"}, {"title": "Cosmere"}],
-     "Mistborn (Bk 1), Cosmere"),
-
-    ("None as input",
-     None,
-     ""),
-
-    ("entries with no title are skipped",
-     [{"sequence": "1"}, {"title": "Real"}],
-     "Real"),
+    (
+        "entry with a sequence number",
+        [{"title": "Stormlight", "sequence": "1"}],
+        "Stormlight (Bk 1)",
+    ),
+    ("entry with no sequence key", [{"title": "Stormlight"}], "Stormlight"),
+    (
+        "entry with empty-string sequence",
+        [{"title": "Stormlight", "sequence": ""}],
+        "Stormlight",
+    ),
+    (
+        "multiple entries — one with seq, one without",
+        [{"title": "Mistborn", "sequence": "1"}, {"title": "Cosmere"}],
+        "Mistborn (Bk 1), Cosmere",
+    ),
+    ("None as input", None, ""),
+    (
+        "entries with no title are skipped",
+        [{"sequence": "1"}, {"title": "Real"}],
+        "Real",
+    ),
 ]
 
 

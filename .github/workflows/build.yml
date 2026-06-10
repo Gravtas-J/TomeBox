@@ -2,7 +2,7 @@ name: Build TomeBox
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "linted" ]
   workflow_dispatch:
 
 env:
