@@ -488,11 +488,40 @@ class MetadataManager:
 
             local_data["title"] = new_data.get("title", "")
             local_data["authors"] = new_data.get("authors", "")
-            local_data["narrator"] = new_data.get(
-                "narrator", ""
-            )  # <-- FIX 1: Save to database
+            local_data["narrator"] = new_data.get("narrator", "")
             local_data["series"] = new_data.get("series", "")
             local_data["asin"] = new_asin
+
+            # --- PROCESS STATUS OVERRIDE ---
+            if "status_override" in new_data:
+                prof = new_data.get("active_profile", "Main")
+                status = new_data["status_override"]
+                dur_sec = new_data.get("duration_sec", 0)
+
+                if "progress" not in local_data:
+                    local_data["progress"] = {}
+
+                if status == "Unread":
+                    local_data["progress"][prof] = 0
+                    local_data["last_position"] = 0
+                    local_data["last_time"] = 0
+                    local_data["last_chapter"] = 0
+                elif status == "Finished":
+                    target_prog = dur_sec if dur_sec > 0 else 360000
+                    local_data["progress"][prof] = target_prog
+                    local_data["last_position"] = target_prog
+                    local_data["last_time"] = target_prog
+
+            if new_asin:
+                    for item in getattr(self.library_manager, "cloud_items", []):
+                        if item.get("asin") == new_asin:
+                            item["title"] = local_data["title"]
+                            # Cloud items expect authors as a list of dicts
+                            if local_data["authors"]:
+                                item["authors"] = [{"name": a.strip()} for a in local_data["authors"].split(",")]
+                            if local_data["series"]:
+                                item["series"] = [{"title": local_data["series"], "sequence": ""}]
+                            break
 
             self.library_manager.local_library[filepath] = local_data
             self.library_manager.db.save_local_db(self.library_manager.local_library)

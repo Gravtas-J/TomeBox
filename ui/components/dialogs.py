@@ -1140,16 +1140,22 @@ def open_match_to_audible_window(app, filepath):
 
         def on_done(filepath=None, title=None, **kwargs):
             def safe_update():
-                app.refresh_library_ui()
+                if hasattr(app, "image_cache"):
+                    app.image_cache.clear()
+                
+                # Route through the presenter (fixes the old god-class call)
+                if hasattr(app, "library_presenter"):
+                    app.library_presenter.refresh_library_ui()
+                elif hasattr(app, "refresh_library_ui"):
+                    app.refresh_library_ui()
+
                 if win.winfo_exists():
                     win.destroy()
                     app.root.lift()
                     app.root.focus_force()
 
             app.root.after(0, safe_update)
-            app.metadata_manager.event_bus.unsubscribe(
-                "metadata.apply_complete", on_done
-            )
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
         def on_error(error_msg=None, **kwargs):
@@ -1306,7 +1312,32 @@ def open_manual_metadata_window(app, filepath):
     ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(
         row=4, column=1, sticky="w", pady=5
     )
+    # --- STATUS DROPDOWN ---
+    active_prof = getattr(app, "active_profile", "Main")
+    
+    # Check both the dictionary and the flat fallback field 
+    prog_dict = local_data.get("progress", {}).get(active_prof, 0)
+    prog_flat = local_data.get("last_position", 0)
+    prog = max(prog_dict, prog_flat)
+    
+    dur_min = local_data.get("duration_min", 0)
+    dur_sec = dur_min * 60 if dur_min else 0
 
+    if dur_sec > 0 and prog >= (dur_sec * 0.95):
+        current_status = "Finished"
+    elif prog > 0:
+        current_status = "Started"
+    else:
+        current_status = "Unread"
+
+    ttk.Label(form_frame, text="Read Status:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
+    status_var = tk.StringVar(value=current_status)
+    
+    combo_values = ["Unread", "Finished"]
+    if current_status == "Started":
+        combo_values.insert(1, "Started")
+
+    ttk.Combobox(form_frame, textvariable=status_var, values=combo_values, state="readonly", width=35).grid(row=5, column=1, sticky="w", pady=5)
     # --- Options ---
     options_frame = ttk.Frame(main_frame)
     options_frame.pack(fill="x", pady=5)
@@ -1315,8 +1346,9 @@ def open_manual_metadata_window(app, filepath):
         options_frame, text="Embed tags into audio file (FFmpeg)", variable=embed_var
     ).pack(side=tk.LEFT)
 
-    status_var = tk.StringVar(value="")
-    ttk.Label(main_frame, textvariable=status_var, font=("Segoe UI", 9)).pack(
+    # Rename the feedback variable to avoid shadowing the combobox
+    feedback_var = tk.StringVar(value="")
+    ttk.Label(main_frame, textvariable=feedback_var, font=("Segoe UI", 9)).pack(
         anchor="w", pady=5
     )
 
@@ -1325,20 +1357,27 @@ def open_manual_metadata_window(app, filepath):
     btn_frame.pack(fill="x", side=tk.BOTTOM)
 
     def do_save():
-        status_var.set("Saving...")
+        feedback_var.set("Saving...")
         save_btn.config(state=tk.DISABLED)
         win.update_idletasks()
 
+        # status_var.get() is now safely reading from the combobox
         new_data = {
             "title": title_var.get().strip(),
             "authors": author_var.get().strip(),
             "narrator": narrator_var.get().strip(),
             "series": series_var.get().strip(),
             "asin": asin_var.get().strip(),
+            "status_override": status_var.get(), 
+            "duration_sec": dur_sec,
+            "active_profile": active_prof
         }
 
         def on_done(filepath=None, title=None, **kwargs):
             def safe_update():
+                if hasattr(app, "image_cache"):
+                    app.image_cache.clear()
+                
                 app.library_presenter.refresh_library_ui()
                 app.metadata_manager.fetch_display_metadata(filepath)
                 if win.winfo_exists():
@@ -1347,15 +1386,13 @@ def open_manual_metadata_window(app, filepath):
                     app.root.focus_force()
 
             app.root.after(0, safe_update)
-            app.metadata_manager.event_bus.unsubscribe(
-                "metadata.apply_complete", on_done
-            )
+            app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
 
         def on_error(error_msg=None, **kwargs):
             def safe_update():
                 if win.winfo_exists():
-                    status_var.set(f"Error: {error_msg}")
+                    feedback_var.set(f"Error: {error_msg}")
                     if save_btn.winfo_exists():
                         save_btn.config(state=tk.NORMAL)
 
@@ -1368,7 +1405,13 @@ def open_manual_metadata_window(app, filepath):
         app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
         app.metadata_manager.event_bus.subscribe("metadata.error", on_error)
 
-        # Pass the selected cover path to the backend
+        is_loaded = getattr(app, "file_path", None) == filepath
+        
+        if is_loaded:
+            if hasattr(app, "playback_presenter"):
+                app.playback_presenter.unload_current_file()
+            app.file_path = None 
+
         app.metadata_manager.apply_manual_metadata(
             filepath,
             new_data,

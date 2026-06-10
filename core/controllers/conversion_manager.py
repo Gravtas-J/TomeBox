@@ -185,6 +185,10 @@ class ConversionManager:
 
         self.thread_pool.submit(worker)
 
+    def get_duration(self, filepath):
+        data = self.get_metadata_and_chapters(filepath)
+        return float(data.get("format", {}).get("duration", 0) or 0)
+    
     def convert_batch(self, file_list):
         def worker():
             total = len(file_list)

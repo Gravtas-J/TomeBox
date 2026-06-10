@@ -308,7 +308,7 @@ class ActionRouter:
     def on_scrape_apply_complete(self, filepath, title, is_manual=False):
         def update():
             self.reset_ui_if_idle()
-            self.app.library_presenter.cover_cache.clear()
+            self.app.image_cache.clear()
             self.app.library_presenter.refresh_library_ui()
             self.app.metadata_manager.fetch_display_metadata(filepath)
             if self.app.file_path == filepath:
