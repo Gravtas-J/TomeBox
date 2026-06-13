@@ -235,7 +235,9 @@ def test_book_start_and_complete(router, mock_app):
 
 
 def test_scrape_apply_complete_reloads_cover(router, mock_app, monkeypatch):
-    # Mock messagebox to prevent Tkinter from crashing the test!
+
+    mock_app._is_batch_editing = False
+    
     monkeypatch.setattr("ui.action_router.messagebox", MagicMock())
 
     # Simulate the user currently listening to the book being scraped

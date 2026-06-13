@@ -1,10 +1,18 @@
 import tkinter as tk
 from unittest.mock import MagicMock
-
+import os
+import sys
 import pytest
 
 from ui.components.virtual_grid import VirtualGridView
 
+if sys.platform == "win32" and "CI" not in os.environ:
+    base_tcl = r"C:\Users\Jesse\AppData\Local\Programs\Python\Python311\tcl\tcl8.6"
+    base_tk = r"C:\Users\Jesse\AppData\Local\Programs\Python\Python311\tcl\tk8.6"
+    
+    if os.path.exists(base_tcl):
+        os.environ["TCL_LIBRARY"] = base_tcl
+        os.environ["TK_LIBRARY"] = base_tk
 
 @pytest.fixture(scope="module")
 def tk_root():
