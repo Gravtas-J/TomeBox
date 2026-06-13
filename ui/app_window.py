@@ -1045,7 +1045,53 @@ class AAXManagerApp:
 
             self.download_manager.queue_batch(missing_items, save_dir)
 
+    def _collect_selected_paths(self):
+        paths = []
+        if self.current_view_mode == "list":
+            selected = getattr(self, "library_tree", None)
+            if selected:
+                for item_id in selected.selection():
+                    vals = selected.item(item_id).get("values", [])
+                    if len(vals) > 7 and vals[7]:
+                        paths.append(vals[7])
+        else:
+            if getattr(self, "_selected_grid_items", None):
+                for item in self._selected_grid_items:
+                    path = item.get("path") or (item.get("values", []) and item["values"][7])
+                    if path:
+                        paths.append(path)
+            elif getattr(self, "_selected_grid_item", None):
+                vals = self._selected_grid_item.get("values", [])
+                if len(vals) > 7 and vals[7]:
+                    paths.append(vals[7])
+        
+        return list(dict.fromkeys(paths))
+
+    def edit_selected_metadata(self):
+        from tkinter import messagebox
+        from ui.components.dialogs import open_manual_metadata_window, open_bulk_metadata_window
+
+        paths = self._collect_selected_paths()
+        valid_paths = [p for p in paths if p in self.library_manager.local_library]
+
+        if not valid_paths:
+            messagebox.showwarning(
+                "Selection Required", 
+                "Please select at least one downloaded title to edit.",
+                parent=self.root
+            )
+            return
+
+        if len(valid_paths) == 1:
+            open_manual_metadata_window(self, valid_paths[0])
+        else:
+            open_bulk_metadata_window(self, valid_paths)
+
     def handle_action_on_selected(self, action_type):
+        if action_type == "edit":
+            self.edit_selected_metadata()
+            return
+
         if self.current_view_mode == "list":
             selected = self.library_tree.focus()
             if not selected:
@@ -1085,11 +1131,7 @@ class AAXManagerApp:
             if action_type == "scrape":
                 self.start_scrape_thread(local_path)
                 return
-            elif action_type == "edit":
-                from ui.components.dialogs import open_manual_metadata_window
-
-                open_manual_metadata_window(self, local_path)
-                return
+            
             elif action_type == "convert":
                 if is_playlist:
                     messagebox.showinfo(

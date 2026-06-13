@@ -525,18 +525,23 @@ class MetadataManager:
                         # never store an absolute here, and don't leave a stale one behind
                         local_data.pop("last_time", None)
                         local_data.pop("last_chapter", None)
-
             if new_asin:
-                    for item in getattr(self.library_manager, "cloud_items", []):
-                        if item.get("asin") == new_asin:
-                            item["title"] = local_data["title"]
-                            # Cloud items expect authors as a list of dicts
-                            if local_data["authors"]:
-                                item["authors"] = [{"name": a.strip()} for a in local_data["authors"].split(",")]
-                            if local_data["series"]:
-                                item["series"] = [{"title": local_data["series"], "sequence": ""}]
-                            break
+                # Patch the live cloud_items so the edit shows immediately this session
+                for item in getattr(self.library_manager, "cloud_items", []):
+                    if item.get("asin") == new_asin:
+                        item["title"] = local_data["title"]
+                        if local_data["authors"]:
+                            item["authors"] = [{"name": a.strip()} for a in local_data["authors"].split(",")]
+                        if local_data["series"]:
+                            item["series"] = [{"title": local_data["series"], "sequence": ""}]
+                        break
 
+                # Persist the edit so it survives a cloud refresh
+                self.library_manager._save_metadata_override(new_asin, {
+                    "title": local_data["title"],
+                    "authors": [{"name": a.strip()} for a in local_data["authors"].split(",")] if local_data["authors"] else [],
+                    "series":  [{"title": local_data["series"], "sequence": ""}] if local_data["series"] else [],
+                })
             self.library_manager.local_library[filepath] = local_data
             self.library_manager.db.save_local_db(self.library_manager.local_library)
 
@@ -580,7 +585,6 @@ class MetadataManager:
                     ]
                 )
 
-                # <-- FIX 2: Embed narrator as standard 'composer' tag
                 if local_data.get("narrator"):
                     cmd.extend(["-metadata", f"composer={local_data['narrator']}"])
 

@@ -271,7 +271,7 @@ class LibraryManager:
                     self.cloud_items = json.load(f)
             except Exception:
                 self.cloud_items = []
-
+        self._apply_metadata_overrides()
         self._build_master_metadata()
 
     def _build_master_metadata(self):
@@ -491,11 +491,29 @@ class LibraryManager:
         shelf_list = ["All Shelves"] + sorted(list(all_unique_shelves))
         return filtered_rows, shelf_list
 
+    def _save_metadata_override(self, asin, fields):
+        if not asin:
+            return
+        settings = self.db.load_settings()
+        overrides = settings.setdefault("metadata_overrides", {})
+        overrides[asin] = fields
+        self.db.save_settings(settings)
+
+    def _apply_metadata_overrides(self):
+        overrides = self.db.load_settings().get("metadata_overrides", {})
+        if not overrides:
+            return
+        for item in self.cloud_items:
+            ov = overrides.get(item.get("asin"))
+            if ov:
+                item.update(ov)
+
     def fetch_cloud_library(self):
         if not self.api.auth:
             raise Exception("Not authenticated")
 
         self.cloud_items = self.api.fetch_library()
+        self._apply_metadata_overrides()
         self._build_master_metadata()
 
         try:
@@ -891,15 +909,26 @@ class LibraryManager:
 
         file_path = state_dict["file_path"]
         if file_path in self.local_library:
-            self.local_library[file_path]["last_chapter"] = state_dict["chapter_idx"]
-            self.local_library[file_path]["last_time"] = state_dict["rel_time"]
-            self.local_library[file_path]["last_position"] = state_dict["abs_time"]
+            entry = self.local_library[file_path]
 
-            if "progress" not in self.local_library[file_path]:
-                self.local_library[file_path]["progress"] = {}
-            self.local_library[file_path]["progress"][active_profile] = state_dict[
-                "abs_time"
-            ]
+            # remember where we were before overwriting, to detect a re-listen
+            prev_progress = entry.get("progress", {}).get(active_profile, 0)
+
+            entry["last_chapter"] = state_dict["chapter_idx"]
+            entry["last_time"] = state_dict["rel_time"]
+            entry["last_position"] = state_dict["abs_time"]
+
+            if "progress" not in entry:
+                entry["progress"] = {}
+            entry["progress"][active_profile] = state_dict["abs_time"]
+
+            # Finished book whose playhead jumped back well before the end → being
+            # re-listened, so drop the flag and let progress drive the status again.
+            if (
+                entry.get("read_status") == "Finished"
+                and state_dict["abs_time"] < prev_progress - 60
+            ):
+                entry.pop("read_status", None)
 
             self.db.save_local_db(self.local_library)
 
@@ -932,6 +961,7 @@ class LibraryManager:
                     f"Background sync: Detected library change. Old: {len(self.cloud_items)}, New: {len(new_items)}"
                 )
                 self.cloud_items = new_items
+                self._apply_metadata_overrides()
                 self._build_master_metadata()
 
                 try:

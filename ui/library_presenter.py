@@ -122,13 +122,77 @@ class LibraryPresenter:
                     self.app.on_item_select()
                     break
 
+    def _capture_selected_asin(self):
+        """ASIN of the currently selected book in the active view, or None."""
+        try:
+            if self.app.current_view_mode == "list":
+                sel = self.app.library_tree.selection()
+                if sel:
+                    vals = self.app.library_tree.item(sel[0], "values")
+                    if len(vals) > 5:
+                        return vals[5]
+            else:
+                item = getattr(self.app, "_selected_grid_item", None)
+                if item:
+                    vals = item.get("values")
+                    if vals and len(vals) > 5:
+                        return vals[5]
+                    if item.get("asin"):
+                        return item.get("asin")
+        except Exception:
+            pass
+        return None
+    
     def refresh_library_ui(self, *args):
         """Debounces the refresh so bulk imports don't freeze the UI."""
         if self._refresh_timer:
             self.app.root.after_cancel(self._refresh_timer)
         self._refresh_timer = self.app.root.after(150, self._do_refresh_library_ui)
 
+    def _compute_read_state(self, row_path):
+        if not (row_path and row_path in self.app.library_manager.local_library):
+            return "Unread"
+        local_data = self.app.library_manager.local_library[row_path]
+        prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
+        if prog_sec <= 0:
+            return "Unread"
+        if local_data.get("read_status") == "Finished":
+            return "Finished"
+        dur_sec = (local_data.get("duration_min", 0) or 0) * 60
+        if dur_sec > 0 and prog_sec / dur_sec >= 0.95:
+            return "Finished"
+        return "Started"
+    
+    def update_status_for_path(self, file_path):
+        """Repaint one row's read badge without rebuilding the list."""
+        if not file_path or self.app.current_view_mode != "list":
+            return
+        for iid in self.app.library_tree.get_children():
+            vals = self.app.library_tree.item(iid, "values")
+            if len(vals) > 7 and vals[7] == file_path:
+                tags = self.app.library_tree.item(iid, "tags")
+                if tags and tags[0] in ("error", "warning"):
+                    return  # leave missing-file / missing-duration rows alone
+                base = vals[6]
+                for p in ("✔ ", "◐ "):
+                    if base.startswith(p):
+                        base = base[len(p):]
+                        break
+                state = self._compute_read_state(file_path)
+                if state == "Finished":
+                    base, tag = f"✔ {base}", ("finished",)
+                elif state == "Started":
+                    base, tag = f"◐ {base}", ("started",)
+                else:
+                    tag = ()
+                new_vals = list(vals)
+                new_vals[6] = base
+                self.app.library_tree.item(iid, values=new_vals, tags=tag)
+                return
+            
     def _do_refresh_library_ui(self):
+        selected_asin = self._capture_selected_asin()  
+
         for row in self.app.library_tree.get_children():
             self.app.library_tree.delete(row)
 
@@ -229,21 +293,22 @@ class LibraryPresenter:
                         and not os.path.exists(row_path)
                     )
                     is_missing_duration = duration_str in ["0h 0m", "N/A", ""]
+                    read_state = self._compute_read_state(row_path)
+                    # read_state = "Unread"
+                    # if row_path and row_path in self.app.library_manager.local_library:
+                    #     local_data = self.app.library_manager.local_library[row_path]
+                    #     prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
 
-                    read_state = "Unread"
-                    if row_path and row_path in self.app.library_manager.local_library:
-                        local_data = self.app.library_manager.local_library[row_path]
-                        explicit = local_data.get("read_status")
-                        if explicit in ("Finished", "Unread"):
-                            read_state = explicit
-                        else:
-                            prog_sec = local_data.get("progress", {}).get(self.app.active_profile, 0)
-                            dur_sec = (local_data.get("duration_min", 0) or 0) * 60
-                            if dur_sec > 0:
-                                if prog_sec / dur_sec >= 0.95:
-                                    read_state = "Finished"
-                                elif prog_sec > 0:
-                                    read_state = "Started"
+                    #     if prog_sec <= 0:
+                    #         read_state = "Unread"            
+                    #     elif local_data.get("read_status") == "Finished":
+                    #         read_state = "Finished"       
+                    #     else:
+                    #         dur_sec = (local_data.get("duration_min", 0) or 0) * 60
+                    #         if dur_sec > 0 and prog_sec / dur_sec >= 0.95:
+                    #             read_state = "Finished"
+                    #         else:
+                    #             read_state = "Started"
 
                     display_status = status
                     if read_state == "Finished":
@@ -337,6 +402,8 @@ class LibraryPresenter:
 
         if hasattr(self.app, "lib_count_tooltip"):
             self.app.lib_count_tooltip.text = tooltip_text
+        if selected_asin:                               
+            self._focus_asin(selected_asin)
 
     def sort_treeview(self, tree, col, descending):
         data = [(tree.set(child, col), child) for child in tree.get_children("")]

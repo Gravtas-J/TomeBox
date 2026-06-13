@@ -102,6 +102,8 @@ class PlaybackController:
             base_start = float(chapter.get("start_time", 0))
             base_end = float(chapter.get("end_time", 0))
             self.chapter_duration = base_end - base_start
+            self.logger.info("Restarting finished book from the beginning.")
+            self.event_bus.publish("playback.book_replayed", file_path=self.file_path)
         if getattr(self, "is_playlist", False):
             actual_start_time = self.current_play_time
         else:

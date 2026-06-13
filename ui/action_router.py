@@ -37,6 +37,10 @@ class ActionRouter:
         self.event_bus.subscribe(
             "download.batch_finish", lambda **kw: self.on_dl_batch_finish()
         )
+        self.event_bus.subscribe(
+            "playback.book_replayed",
+            lambda **kw: self.on_book_replayed(kw.get("file_path")),
+        )
 
         # --- Metadata Events ---
         self.event_bus.subscribe(
@@ -104,7 +108,13 @@ class ActionRouter:
             "library.file_removed",
             lambda **kw: self.on_library_file_removed(kw.get("filepath")),
         )
-
+        self.event_bus.subscribe(
+            "library.state_saved",
+            lambda **kw: self.app.root.after(
+                0,
+                lambda fp=kw.get("file_path"): self.app.library_presenter.update_status_for_path(fp),
+            ),
+        )
         # --- UI Dialog Events (Safe Threading) ---
         self.event_bus.subscribe(
             "ui.show_error",
@@ -165,6 +175,19 @@ class ActionRouter:
         if filepath and filepath == self.app.file_path:
             self.app.root.after(0, self.app.playback_presenter.unload_current_file)
 
+    def on_book_replayed(self, file_path):
+        def update():
+            lm = self.app.library_manager
+            entry = lm.local_library.get(file_path)
+            if entry:
+                entry.pop("read_status", None)
+                entry.setdefault("progress", {})[self.app.active_profile] = 0
+                entry["last_position"] = 0
+                entry["last_chapter"] = 0
+                entry["last_time"] = 0
+                lm.db.save_local_db(lm.local_library)
+                self.app.library_presenter.refresh_library_ui()
+        self.app.root.after(0, update)
     # --- Queue Drawer Management ---
     def remove_queue_ui_row(self, task_id):
         if task_id in self.app.queue_ui_elements:
@@ -306,6 +329,8 @@ class ActionRouter:
         self.app.root.after(0, self.reset_ui_if_idle)
 
     def on_scrape_apply_complete(self, filepath, title, is_manual=False):
+        if getattr(self.app, "_is_batch_editing", False):
+            return
         def update():
             self.reset_ui_if_idle()
             self.app.image_cache.clear()

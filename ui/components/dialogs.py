@@ -1193,6 +1193,183 @@ def open_match_to_audible_window(app, filepath):
 
     win.focus_set()
 
+def open_bulk_metadata_window(app, filepaths):
+    """Opens a specialized dialog for editing metadata across multiple files iteratively."""
+    if not filepaths:
+        return
+
+    win = tk.Toplevel(app.root)
+    win.title(f"Bulk Edit Metadata ({len(filepaths)} items)")
+    win.geometry("550x380")
+    win.transient(app.root)
+    win.grab_set()
+
+    style = ttk.Style()
+    bg_color = style.lookup("TFrame", "background") or "#1e1e1e"
+    win.configure(bg=bg_color)
+
+    main_frame = ttk.Frame(win, padding=10)
+    main_frame.pack(fill="both", expand=True)
+
+    # --- Dirty Tracking: Find shared values ---
+    authors_set = set()
+    series_set = set()
+
+    for path in filepaths:
+        data = app.library_manager.local_library.get(path, {})
+        authors_set.add(data.get("authors", "").strip())
+        series_set.add(data.get("series", "").strip())
+
+    initial_author = list(authors_set)[0] if len(authors_set) == 1 else "<multiple values>"
+    initial_series = list(series_set)[0] if len(series_set) == 1 else "<multiple values>"
+
+    # --- Scaffold the Form Layout ---
+    form_frame = ttk.Frame(main_frame)
+    form_frame.pack(fill="x", pady=10)
+
+    ttk.Label(form_frame, text="Title:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+    title_var = tk.StringVar(value=f"{len(filepaths)} titles selected")
+    ttk.Entry(form_frame, textvariable=title_var, width=38, state="disabled").grid(row=0, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Author(s):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+    author_var = tk.StringVar(value=initial_author)
+    ttk.Entry(form_frame, textvariable=author_var, width=38).grid(row=1, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Narrator:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+    ttk.Entry(form_frame, textvariable=tk.StringVar(value="<multiple values>"), width=38, state="disabled").grid(row=2, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Series:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+    series_var = tk.StringVar(value=initial_series)
+    ttk.Entry(form_frame, textvariable=series_var, width=38).grid(row=3, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="ASIN:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+    ttk.Entry(form_frame, textvariable=tk.StringVar(value="<multiple values>"), width=38, state="disabled").grid(row=4, column=1, sticky="w", pady=5)
+
+    ttk.Label(form_frame, text="Read Status:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
+    status_var = tk.StringVar(value="— Keep current —")
+    ttk.Combobox(form_frame, textvariable=status_var, values=["— Keep current —", "Unread", "Finished"], state="readonly", width=35).grid(row=5, column=1, sticky="w", pady=5)
+
+    # --- Options ---
+    options_frame = ttk.Frame(main_frame)
+    options_frame.pack(fill="x", pady=5)
+    
+    embed_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(options_frame, text="Embed tags into audio files (FFmpeg)", variable=embed_var).pack(side=tk.LEFT)
+
+    feedback_var = tk.StringVar(value="")
+    ttk.Label(main_frame, textvariable=feedback_var, font=("Segoe UI", 9)).pack(anchor="w", pady=5)
+
+    # --- Controls ---
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(fill="x", side=tk.BOTTOM)
+
+    def do_save():
+        # Lock the UI
+        save_btn.config(state=tk.DISABLED)
+        cancel_btn.config(state=tk.DISABLED)
+        win.protocol("WM_DELETE_WINDOW", lambda: None) # Prevent X-ing out during save
+
+        new_author = author_var.get().strip()
+        new_series = series_var.get().strip()
+        new_status = status_var.get()
+        embed = embed_var.get()
+
+        total_files = len(filepaths)
+        state = {"completed": 0, "errors": 0}
+
+        def update_feedback():
+            feedback_var.set(f"Saving batch... ({state['completed'] + state['errors']} / {total_files} processed)")
+            win.update_idletasks()
+
+        update_feedback()
+
+        # --- Event Bus Listeners ---
+        def on_done(filepath=None, **kwargs):
+            if filepath in filepaths:
+                state["completed"] += 1
+                app.root.after(0, check_finished)
+
+        def on_err(error_msg=None, **kwargs):
+            state["errors"] += 1
+            app.root.after(0, check_finished)
+
+        def check_finished():
+            update_feedback()
+            # Wait until all submitted background tasks have fired an event
+            if state["completed"] + state["errors"] >= total_files:
+                def safe_update():
+                    if hasattr(app, "image_cache"):
+                        app.image_cache.clear()
+                    app.library_presenter.refresh_library_ui()
+                    
+                    if win.winfo_exists():
+                        win.destroy()
+                        app.root.lift()
+                        app.root.focus_force()
+
+                    # Release the popup suppression flag
+                    app._is_batch_editing = False 
+                    
+                    from tkinter import messagebox
+                    if state["errors"] == 0:
+                        messagebox.showinfo("Success", f"Bulk metadata applied to {state['completed']} items.", parent=app.root)
+                    else:
+                        messagebox.showwarning("Finished with Errors", f"Processed {total_files} items.\nSuccess: {state['completed']}\nErrors: {state['errors']}", parent=app.root)
+
+                # Small delay to let the user see the 100% completion state
+                app.root.after(250, safe_update)
+                app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
+                app.metadata_manager.event_bus.unsubscribe("metadata.error", on_err)
+
+        app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
+        app.metadata_manager.event_bus.subscribe("metadata.error", on_err)
+
+        # Tell ActionRouter to ignore events while we batch process
+        app._is_batch_editing = True  
+
+        # --- The Iterative Submission Loop ---
+        for path in filepaths:
+            local = app.library_manager.local_library.get(path, {})
+
+            payload = {
+                "title": local.get("title", ""),
+                "narrator": local.get("narrator", ""),
+                "asin": local.get("asin", ""),
+                "active_profile": getattr(app, "active_profile", "Main"),
+            }
+
+            if new_author != initial_author and new_author != "<multiple values>":
+                payload["authors"] = new_author
+            else:
+                payload["authors"] = local.get("authors", "")
+
+            if new_series != initial_series and new_series != "<multiple values>":
+                payload["series"] = new_series
+            else:
+                payload["series"] = local.get("series", "")
+
+            if new_status != "— Keep current —":
+                payload["status_override"] = new_status
+                dur_min = local.get("duration_min", 0)
+                payload["duration_sec"] = dur_min * 60 if dur_min else 0
+
+            if getattr(app, "file_path", None) == path:
+                if hasattr(app, "playback_presenter"):
+                    app.playback_presenter.unload_current_file()
+                app.file_path = None
+
+            app.metadata_manager.apply_manual_metadata(
+                path,
+                payload,
+                embed_to_file=embed,
+                new_cover_path=None
+            )
+
+    save_btn = ttk.Button(btn_frame, text="Save Batch", command=do_save)
+    save_btn.pack(side=tk.RIGHT, padx=5)
+
+    cancel_btn = ttk.Button(btn_frame, text="Cancel", command=win.destroy)
+    cancel_btn.pack(side=tk.RIGHT, padx=5)
 
 def open_manual_metadata_window(app, filepath):
     import os
@@ -1372,7 +1549,8 @@ def open_manual_metadata_window(app, filepath):
             "duration_sec": dur_sec,
             "active_profile": active_prof
         }
-
+        if status_var.get() != current_status:
+            new_data["status_override"] = status_var.get()
         def on_done(filepath=None, title=None, **kwargs):
             def safe_update():
                 if hasattr(app, "image_cache"):

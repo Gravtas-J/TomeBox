@@ -22,7 +22,7 @@ jobs:
     - name: Install system dependencies for Tkinter
       run: |
         sudo apt-get update
-        sudo apt-get install -y xvfb
+        sudo apt-get install -y libportaudio2 xvfb
 
     - name: Install Python dependencies
       run: |
