@@ -528,8 +528,51 @@ class LibraryPresenter:
 
         # --- LIST VIEW NAVIGATION ---
         if self.app.current_view_mode == "list":
-            self.app.root.after(10, self.app.on_item_select)
-            return
+            tree = self.app.library_tree
+
+            # Arrows already work via the Treeview's own nav — just sync the sidebar.
+            if event.keysym not in ("Prior", "Next", "Home", "End"):
+                self.app.root.after(10, self.app.on_item_select)
+                return
+
+            children = tree.get_children()
+            if not children:
+                return "break"
+
+            # current row: focus, then selection, then first row
+            current = tree.focus()
+            if not current:
+                sel = tree.selection()
+                current = sel[0] if sel else children[0]
+            try:
+                idx = children.index(current)
+            except ValueError:
+                idx = 0
+
+            # rows that fit in the viewport, for page jumps
+            try:
+                row_h = int(ttk.Style().lookup("Treeview", "rowheight")) or 20
+            except (TypeError, ValueError):
+                row_h = 20
+            page = max(1, tree.winfo_height() // row_h)
+
+            if event.keysym == "Home":
+                new_idx = 0
+            elif event.keysym == "End":
+                new_idx = len(children) - 1
+            elif event.keysym == "Prior":
+                new_idx = idx - page
+            else:  # "Next"
+                new_idx = idx + page
+
+            new_idx = max(0, min(new_idx, len(children) - 1))
+            target = children[new_idx]
+
+            tree.selection_set(target)
+            tree.focus(target)
+            tree.see(target)
+            self.app.on_item_select()
+            return "break"
 
         # --- GRID VIEW NAVIGATION ---
         elif self.app.current_view_mode == "grid":
