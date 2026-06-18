@@ -61,9 +61,9 @@ class LibraryManager:
             folders = settings.get("library_folders", [])
 
             # Normalize the ignored list exactly how import_folder does it
-            ignored_files = {
-                os.path.normpath(p) for p in settings.get("ignored_files", [])
-            }
+            # ignored_files = {
+            #     os.path.normpath(p) for p in settings.get("ignored_files", [])
+            # }
 
             if not folders:
                 return
@@ -100,8 +100,8 @@ class LibraryManager:
                             full_path = os.path.normpath(os.path.join(root_dir, f))
 
                             # Gatekeeper 1: User explicitly ignored it
-                            if full_path in ignored_files:
-                                continue
+                            # if full_path in ignored_files:
+                            #     continue
 
                             # Gatekeeper 2: It's not in the library yet
                             if full_path not in tracked_files:
@@ -530,6 +530,7 @@ class LibraryManager:
 
     # library_manager.py
     def handle_remove_clicked(self, app):
+        #retained as a removal-history tracker; no longer gates imports
         items_to_remove = []
 
         # 1. Grab selection based on view mode
@@ -1246,10 +1247,9 @@ class LibraryManager:
 
                         if f.lower().endswith(valid_exts):
                             full_path = os.path.normpath(os.path.join(root_dir, f))
-                            if full_path not in ignored_set:
-                                report["discovered_files"].append(full_path)
-                            else:
-                                report["skipped_ignored"].append(full_path)
+                            report["discovered_files"].append(full_path)
+                            # else:
+                            #     report["skipped_ignored"].append(full_path)
 
                 if not report["discovered_files"]:
                     if logger:
