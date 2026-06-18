@@ -15,6 +15,9 @@ from core.converter import AudioConverter
 from core.events import default_bus
 from core.utils.process_runner import ProcessRunner
 
+from mutagen.mp4 import MP4, MP4Cover
+
+
 
 class MetadataManager:
     def __init__(
@@ -79,7 +82,108 @@ class MetadataManager:
     def is_applying(self):
         with self._apply_lock:
             return self._active_applies > 0
-        
+    
+
+    def embed_tags_in_place(self, filepath, title="", author="",
+                            narrator="", series="", cover_path=None):
+        """
+        Write tags straight into the file — no re-encode, no full-file rewrite.
+        mutagen handles .m4b/.m4a/.mp4 (MP4 atoms) and .mp3 (ID3v2); the audio
+        stream and chapter atoms are left untouched. Unknown containers fall
+        back to the FFmpeg remux. Raises on failure so the worker reports it.
+        """
+        ext = os.path.splitext(filepath)[1].lower()
+
+        cover_bytes = None
+        if cover_path and os.path.exists(cover_path):
+            try:
+                with open(cover_path, "rb") as fh:
+                    cover_bytes = fh.read()
+            except OSError:
+                cover_bytes = None
+        is_png = bool(cover_bytes) and cover_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+        if ext in (".m4b", ".m4a", ".mp4"):
+            from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
+
+            audio = MP4(filepath)
+            audio["\xa9nam"] = [title]          # title  → ©nam
+            audio["\xa9ART"] = [author]         # artist → ©ART
+            if narrator:
+                audio["\xa9wrt"] = [narrator]   # composer (narrator) → ©wrt
+            if series:
+                audio["----:com.apple.iTunes:SERIES"] = [
+                    MP4FreeForm(series.encode("utf-8"))
+                ]
+            if cover_bytes:
+                fmt = MP4Cover.FORMAT_PNG if is_png else MP4Cover.FORMAT_JPEG
+                audio["covr"] = [MP4Cover(cover_bytes, imageformat=fmt)]
+            audio.save()
+            return
+
+        if ext == ".mp3":
+            from mutagen.id3 import (
+                ID3, ID3NoHeaderError, TIT2, TPE1, TCOM, TXXX, APIC,
+            )
+
+            try:
+                tags = ID3(filepath)
+            except ID3NoHeaderError:
+                tags = ID3()
+            tags.setall("TIT2", [TIT2(encoding=3, text=title)])
+            tags.setall("TPE1", [TPE1(encoding=3, text=author)])
+            if narrator:
+                tags.setall("TCOM", [TCOM(encoding=3, text=narrator)])
+            if series:
+                tags.delall("TXXX:SERIES")
+                tags.add(TXXX(encoding=3, desc="SERIES", text=series))
+            if cover_bytes:
+                mime = "image/png" if is_png else "image/jpeg"
+                tags.delall("APIC")
+                tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover",
+                              data=cover_bytes))
+            tags.save(filepath)
+            return
+
+        # exotic container → remux fallback
+        self._embed_with_ffmpeg(
+            filepath, title=title, author=author,
+            narrator=narrator, series=series, cover_path=cover_path,
+        )
+
+    def _embed_with_ffmpeg(self, filepath, title="", author="",
+                           narrator="", series="", cover_path=None):
+        ext = os.path.splitext(filepath)[1].lower()
+        temp_out = filepath + f".tmp{ext}"
+        cmd = ["ffmpeg", "-y", "-i", filepath]
+        if cover_path and os.path.exists(cover_path):
+            cmd.extend(["-i", cover_path, "-map", "0:a", "-map", "1:v",
+                        "-c", "copy", "-disposition:v", "attached_pic"])
+        else:
+            cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
+        cmd.extend(["-map_chapters", "0",
+                    "-metadata", f"title={title}",
+                    "-metadata", f"artist={author}"])
+        if narrator:
+            cmd.extend(["-metadata", f"composer={narrator}"])
+        if series:
+            cmd.extend(["-metadata", f"show={series}",
+                        "-metadata", f"series={series}"])
+        cmd.append(temp_out)
+        try:
+            res = ProcessRunner.run_blocking(cmd, capture_output=True)
+            if res.returncode == 0 and os.path.exists(temp_out):
+                os.replace(temp_out, filepath)
+            else:
+                err = getattr(res, "stderr", None) or "Unknown Error"
+                raise Exception(f"FFmpeg failed with code {res.returncode}.\n{err}")
+        finally:
+            if os.path.exists(temp_out):
+                try:
+                    os.remove(temp_out)
+                except OSError:
+                    pass
+
     def extract_embedded_cover(self, filepath, output_path):
         """Extracts embedded cover art from an audio file using FFmpeg."""
 
@@ -552,91 +656,16 @@ class MetadataManager:
                 self.library_manager.local_library[filepath] = local_data
                 self.library_manager.db.save_local_db(self.library_manager.local_library)
 
-                # Optional FFmpeg Embed - with Directory Safeguards
-                if (
-                    embed_to_file
-                    and os.path.isfile(filepath)
-                    and filepath.lower().endswith((".m4b", ".mp3", ".m4a"))
-                ):
-                    ext = os.path.splitext(filepath)[1].lower()
-                    temp_out = filepath + f".tmp{ext}"
-
-                    cmd = ["ffmpeg", "-y", "-i", filepath]
-
-                    if os.path.exists(dest_cover):
-                        cmd.extend(
-                            [
-                                "-i",
-                                dest_cover,
-                                "-map",
-                                "0:a",
-                                "-map",
-                                "1:v",
-                                "-c",
-                                "copy",
-                                "-disposition:v",
-                                "attached_pic",
-                            ]
-                        )
-                    else:
-                        cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
-
-                    cmd.extend(
-                        [
-                            "-map_chapters",
-                            "0",
-                            "-metadata",
-                            f"title={local_data['title']}",
-                            "-metadata",
-                            f"artist={local_data['authors']}",
-                        ]
+                # Write tags straight into the file (no re-encode); FFmpeg fallback inside.
+                if embed_to_file and os.path.isfile(filepath):
+                    self.embed_tags_in_place(
+                        filepath,
+                        title=local_data["title"],
+                        author=local_data["authors"],
+                        narrator=local_data.get("narrator", ""),
+                        series=local_data["series"],
+                        cover_path=dest_cover if os.path.exists(dest_cover) else None,
                     )
-
-                    if local_data.get("narrator"):
-                        cmd.extend(["-metadata", f"composer={local_data['narrator']}"])
-
-                    if local_data["series"]:
-                        cmd.extend(
-                            [
-                                "-metadata",
-                                f"show={local_data['series']}",
-                                "-metadata",
-                                f"series={local_data['series']}",
-                            ]
-                        )
-
-                    cmd.append(temp_out)
-
-                    try:
-                        res = ProcessRunner.run_blocking(cmd, capture_output=True)
-                        if res.returncode == 0 and os.path.exists(temp_out):
-                            try:
-                                os.replace(temp_out, filepath)
-                            except OSError as e:
-                                if hasattr(self, "logger"):
-                                    self.logger(f"Manual Apply OS Error: {e}")
-                                raise Exception(
-                                    "Could not save file. Ensure it is not actively playing."
-                                )
-                        else:
-                            err_msg = (
-                                res.stderr
-                                if hasattr(res, "stderr") and res.stderr
-                                else "Unknown Error"
-                            )
-                            raise Exception(
-                                f"FFmpeg failed with code {res.returncode}.\nDetails: {err_msg}"
-                            )
-                    except Exception as e:
-                        if hasattr(self, "logger"):
-                            self.logger(f"Manual Apply Error: {e}")
-                        self.event_bus.publish("metadata.error", error_msg=str(e))
-                    finally:
-                        if os.path.exists(temp_out):
-                            try:
-                                os.remove(temp_out)
-                            except OSError:
-                                pass
 
                 self.event_bus.publish(
                     "metadata.apply_complete",
