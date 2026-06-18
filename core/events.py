@@ -22,12 +22,14 @@ class EventBus:
                 del self._subscribers[topic]
 
     def publish(self, topic: str, **kwargs):
-        """Fires an event, broadcasting the kwargs to all registered handlers."""
         if topic not in self._subscribers:
             return
-
-        for handler in self._subscribers[topic]:
-            handler(**kwargs)
+        # snapshot: handlers may unsubscribe themselves mid-dispatch
+        for handler in list(self._subscribers[topic]):
+            try:
+                handler(**kwargs)
+            except Exception as e:
+                print(f"[EventBus] '{topic}' handler error: {e}")
 
 
 # Global singleton instance for the application to share

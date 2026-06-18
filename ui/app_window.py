@@ -1070,7 +1070,12 @@ class AAXManagerApp:
     def edit_selected_metadata(self):
         from tkinter import messagebox
         from ui.components.dialogs import open_manual_metadata_window, open_bulk_metadata_window
-
+        if self.metadata_manager.is_applying:
+            messagebox.showinfo(
+                "Edit in progress",
+                "A metadata edit is still finishing. Give it a second and try again.",
+            )
+            return
         paths = self._collect_selected_paths()
         valid_paths = [p for p in paths if p in self.library_manager.local_library]
 

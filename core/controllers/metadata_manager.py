@@ -1,5 +1,5 @@
 import os
-
+import threading
 import requests
 
 try:
@@ -33,7 +33,9 @@ class MetadataManager:
         self.logger = logger
         self.covers_dir = covers_dir
         self.thread_pool = thread_pool
-        self.start_workers = start_workers  # Store the flag
+        self.start_workers = start_workers  
+        self._apply_lock = threading.Lock()
+        self._active_applies = 0
 
         # Callbacks to update the UI
         self.on_search_complete = callbacks.get("on_search_complete")
@@ -73,7 +75,11 @@ class MetadataManager:
                 "metadata.error",
                 lambda **kw: callbacks["on_error"](kw.get("error_msg")),
             )
-
+    @property
+    def is_applying(self):
+        with self._apply_lock:
+            return self._active_applies > 0
+        
     def extract_embedded_cover(self, filepath, output_path):
         """Extracts embedded cover art from an audio file using FFmpeg."""
 
@@ -462,183 +468,191 @@ class MetadataManager:
         """Applies manual user edits to the database, processes custom covers, and optionally embeds via FFmpeg."""
 
         def worker():
-            local_data = self.library_manager.local_library.get(filepath, {})
-            old_asin = local_data.get("asin")
-            new_asin = new_data.get("asin")
+            try:
+                local_data = self.library_manager.local_library.get(filepath, {})
+                old_asin = local_data.get("asin")
+                new_asin = new_data.get("asin")
 
-            dest_cover = os.path.join(self.covers_dir, f"{new_asin}.jpg")
+                dest_cover = os.path.join(self.covers_dir, f"{new_asin}.jpg")
 
-            if new_cover_path and os.path.exists(new_cover_path):
-                try:
-                    img = Image.open(new_cover_path)
-                    if img.mode in ("RGBA", "P"):
-                        img = img.convert("RGB")
-                    img.save(dest_cover, "JPEG")
-                except Exception as e:
-                    if hasattr(self, "logger"):
-                        self.logger(f"Error saving custom cover: {e}")
-
-            elif old_asin and new_asin and old_asin != new_asin:
-                old_cover = os.path.join(self.covers_dir, f"{old_asin}.jpg")
-                if os.path.exists(old_cover) and not os.path.exists(dest_cover):
+                if new_cover_path and os.path.exists(new_cover_path):
                     try:
-                        os.rename(old_cover, dest_cover)
-                    except OSError:
-                        pass
+                        img = Image.open(new_cover_path)
+                        if img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+                        img.save(dest_cover, "JPEG")
+                    except Exception as e:
+                        if hasattr(self, "logger"):
+                            self.logger(f"Error saving custom cover: {e}")
 
-            local_data["title"] = new_data.get("title", "")
-            local_data["authors"] = new_data.get("authors", "")
-            local_data["narrator"] = new_data.get("narrator", "")
-            local_data["series"] = new_data.get("series", "")
-            local_data["asin"] = new_asin
-
-            # --- PROCESS STATUS OVERRIDE ---
-            if "status_override" in new_data:
-                prof = new_data.get("active_profile", "Main")
-                status = new_data["status_override"]
-                dur_sec = new_data.get("duration_sec", 0)
-
-                if "progress" not in local_data:
-                    local_data["progress"] = {}
-
-                if status == "Unread":
-                    local_data["read_status"] = "Unread"
-                    local_data["progress"][prof] = 0
-                    local_data["last_position"] = 0
-                    local_data["last_time"] = 0
-                    local_data["last_chapter"] = 0
-                elif status == "Finished":
-                    local_data["read_status"] = "Finished"
-                    chapters = local_data.get("chapters")
-                    if chapters:
+                elif old_asin and new_asin and old_asin != new_asin:
+                    old_cover = os.path.join(self.covers_dir, f"{old_asin}.jpg")
+                    if os.path.exists(old_cover) and not os.path.exists(dest_cover):
                         try:
-                            total = float(chapters[-1].get("end_time", 0)) or 0.0
-                        except (TypeError, ValueError):
-                            total = 0.0
-                    else:
-                        total = float(dur_sec or 0)
-
-                    if total > 0:
-                        local_data["progress"][prof] = total
-                        local_data["last_position"] = total
-                        # relative fields are recomputed from the absolute position on load;
-                        # never store an absolute here, and don't leave a stale one behind
-                        local_data.pop("last_time", None)
-                        local_data.pop("last_chapter", None)
-            if new_asin:
-                # Patch the live cloud_items so the edit shows immediately this session
-                for item in getattr(self.library_manager, "cloud_items", []):
-                    if item.get("asin") == new_asin:
-                        item["title"] = local_data["title"]
-                        if local_data["authors"]:
-                            item["authors"] = [{"name": a.strip()} for a in local_data["authors"].split(",")]
-                        if local_data["series"]:
-                            item["series"] = [{"title": local_data["series"], "sequence": ""}]
-                        break
-
-                # Persist the edit so it survives a cloud refresh
-                self.library_manager._save_metadata_override(new_asin, {
-                    "title": local_data["title"],
-                    "authors": [{"name": a.strip()} for a in local_data["authors"].split(",")] if local_data["authors"] else [],
-                    "series":  [{"title": local_data["series"], "sequence": ""}] if local_data["series"] else [],
-                })
-            self.library_manager.local_library[filepath] = local_data
-            self.library_manager.db.save_local_db(self.library_manager.local_library)
-
-            # Optional FFmpeg Embed - with Directory Safeguards
-            if (
-                embed_to_file
-                and os.path.isfile(filepath)
-                and filepath.lower().endswith((".m4b", ".mp3", ".m4a"))
-            ):
-                ext = os.path.splitext(filepath)[1].lower()
-                temp_out = filepath + f".tmp{ext}"
-
-                cmd = ["ffmpeg", "-y", "-i", filepath]
-
-                if os.path.exists(dest_cover):
-                    cmd.extend(
-                        [
-                            "-i",
-                            dest_cover,
-                            "-map",
-                            "0:a",
-                            "-map",
-                            "1:v",
-                            "-c",
-                            "copy",
-                            "-disposition:v",
-                            "attached_pic",
-                        ]
-                    )
-                else:
-                    cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
-
-                cmd.extend(
-                    [
-                        "-map_chapters",
-                        "0",
-                        "-metadata",
-                        f"title={local_data['title']}",
-                        "-metadata",
-                        f"artist={local_data['authors']}",
-                    ]
-                )
-
-                if local_data.get("narrator"):
-                    cmd.extend(["-metadata", f"composer={local_data['narrator']}"])
-
-                if local_data["series"]:
-                    cmd.extend(
-                        [
-                            "-metadata",
-                            f"show={local_data['series']}",
-                            "-metadata",
-                            f"series={local_data['series']}",
-                        ]
-                    )
-
-                cmd.append(temp_out)
-
-                try:
-                    res = ProcessRunner.run_blocking(cmd, capture_output=True)
-                    if res.returncode == 0 and os.path.exists(temp_out):
-                        try:
-                            os.replace(temp_out, filepath)
-                        except OSError as e:
-                            if hasattr(self, "logger"):
-                                self.logger(f"Manual Apply OS Error: {e}")
-                            raise Exception(
-                                "Could not save file. Ensure it is not actively playing."
-                            )
-                    else:
-                        err_msg = (
-                            res.stderr
-                            if hasattr(res, "stderr") and res.stderr
-                            else "Unknown Error"
-                        )
-                        raise Exception(
-                            f"FFmpeg failed with code {res.returncode}.\nDetails: {err_msg}"
-                        )
-                except Exception as e:
-                    if hasattr(self, "logger"):
-                        self.logger(f"Manual Apply Error: {e}")
-                    self.event_bus.publish("metadata.error", error_msg=str(e))
-                finally:
-                    if os.path.exists(temp_out):
-                        try:
-                            os.remove(temp_out)
+                            os.rename(old_cover, dest_cover)
                         except OSError:
                             pass
 
-            self.event_bus.publish(
-                "metadata.apply_complete",
-                filepath=filepath,
-                title=local_data["title"],
-                is_manual=True,
-            )
+                local_data["title"] = new_data.get("title", "")
+                local_data["authors"] = new_data.get("authors", "")
+                local_data["narrator"] = new_data.get("narrator", "")
+                local_data["series"] = new_data.get("series", "")
+                local_data["asin"] = new_asin
+
+                # --- PROCESS STATUS OVERRIDE ---
+                if "status_override" in new_data:
+                    prof = new_data.get("active_profile", "Main")
+                    status = new_data["status_override"]
+                    dur_sec = new_data.get("duration_sec", 0)
+
+                    if "progress" not in local_data:
+                        local_data["progress"] = {}
+
+                    if status == "Unread":
+                        local_data["read_status"] = "Unread"
+                        local_data["progress"][prof] = 0
+                        local_data["last_position"] = 0
+                        local_data["last_time"] = 0
+                        local_data["last_chapter"] = 0
+                    elif status == "Finished":
+                        local_data["read_status"] = "Finished"
+                        chapters = local_data.get("chapters")
+                        if chapters:
+                            try:
+                                total = float(chapters[-1].get("end_time", 0)) or 0.0
+                            except (TypeError, ValueError):
+                                total = 0.0
+                        else:
+                            total = float(dur_sec or 0)
+
+                        if total > 0:
+                            local_data["progress"][prof] = total
+                            local_data["last_position"] = total
+                            # relative fields are recomputed from the absolute position on load;
+                            # never store an absolute here, and don't leave a stale one behind
+                            local_data.pop("last_time", None)
+                            local_data.pop("last_chapter", None)
+                if new_asin:
+                    # Patch the live cloud_items so the edit shows immediately this session
+                    for item in getattr(self.library_manager, "cloud_items", []):
+                        if item.get("asin") == new_asin:
+                            item["title"] = local_data["title"]
+                            if local_data["authors"]:
+                                item["authors"] = [{"name": a.strip()} for a in local_data["authors"].split(",")]
+                            if local_data["series"]:
+                                item["series"] = [{"title": local_data["series"], "sequence": ""}]
+                            break
+
+                    # Persist the edit so it survives a cloud refresh
+                    self.library_manager._save_metadata_override(new_asin, {
+                        "title": local_data["title"],
+                        "authors": [{"name": a.strip()} for a in local_data["authors"].split(",")] if local_data["authors"] else [],
+                        "series":  [{"title": local_data["series"], "sequence": ""}] if local_data["series"] else [],
+                    })
+                self.library_manager.local_library[filepath] = local_data
+                self.library_manager.db.save_local_db(self.library_manager.local_library)
+
+                # Optional FFmpeg Embed - with Directory Safeguards
+                if (
+                    embed_to_file
+                    and os.path.isfile(filepath)
+                    and filepath.lower().endswith((".m4b", ".mp3", ".m4a"))
+                ):
+                    ext = os.path.splitext(filepath)[1].lower()
+                    temp_out = filepath + f".tmp{ext}"
+
+                    cmd = ["ffmpeg", "-y", "-i", filepath]
+
+                    if os.path.exists(dest_cover):
+                        cmd.extend(
+                            [
+                                "-i",
+                                dest_cover,
+                                "-map",
+                                "0:a",
+                                "-map",
+                                "1:v",
+                                "-c",
+                                "copy",
+                                "-disposition:v",
+                                "attached_pic",
+                            ]
+                        )
+                    else:
+                        cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
+
+                    cmd.extend(
+                        [
+                            "-map_chapters",
+                            "0",
+                            "-metadata",
+                            f"title={local_data['title']}",
+                            "-metadata",
+                            f"artist={local_data['authors']}",
+                        ]
+                    )
+
+                    if local_data.get("narrator"):
+                        cmd.extend(["-metadata", f"composer={local_data['narrator']}"])
+
+                    if local_data["series"]:
+                        cmd.extend(
+                            [
+                                "-metadata",
+                                f"show={local_data['series']}",
+                                "-metadata",
+                                f"series={local_data['series']}",
+                            ]
+                        )
+
+                    cmd.append(temp_out)
+
+                    try:
+                        res = ProcessRunner.run_blocking(cmd, capture_output=True)
+                        if res.returncode == 0 and os.path.exists(temp_out):
+                            try:
+                                os.replace(temp_out, filepath)
+                            except OSError as e:
+                                if hasattr(self, "logger"):
+                                    self.logger(f"Manual Apply OS Error: {e}")
+                                raise Exception(
+                                    "Could not save file. Ensure it is not actively playing."
+                                )
+                        else:
+                            err_msg = (
+                                res.stderr
+                                if hasattr(res, "stderr") and res.stderr
+                                else "Unknown Error"
+                            )
+                            raise Exception(
+                                f"FFmpeg failed with code {res.returncode}.\nDetails: {err_msg}"
+                            )
+                    except Exception as e:
+                        if hasattr(self, "logger"):
+                            self.logger(f"Manual Apply Error: {e}")
+                        self.event_bus.publish("metadata.error", error_msg=str(e))
+                    finally:
+                        if os.path.exists(temp_out):
+                            try:
+                                os.remove(temp_out)
+                            except OSError:
+                                pass
+
+                self.event_bus.publish(
+                    "metadata.apply_complete",
+                    filepath=filepath,
+                    title=local_data["title"],
+                    is_manual=True,
+                )
+            except Exception as e:
+                self.event_bus.publish("metadata.error", error_msg=str(e))
+            finally:
+                with self._apply_lock:
+                    self._active_applies = max(0, self._active_applies - 1)
 
         if self.start_workers:
+            with self._apply_lock:
+                self._active_applies += 1
             self.thread_pool.submit(worker, task_type="api")
 
     def fetch_from_google_books(self, title):

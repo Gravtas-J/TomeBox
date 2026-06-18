@@ -1140,20 +1140,10 @@ def open_match_to_audible_window(app, filepath):
 
         def on_done(filepath=None, title=None, **kwargs):
             def safe_update():
-                if hasattr(app, "image_cache"):
-                    app.image_cache.clear()
-                
-                # Route through the presenter (fixes the old god-class call)
-                if hasattr(app, "library_presenter"):
-                    app.library_presenter.refresh_library_ui()
-                elif hasattr(app, "refresh_library_ui"):
-                    app.refresh_library_ui()
-
                 if win.winfo_exists():
                     win.destroy()
                     app.root.lift()
                     app.root.focus_force()
-
             app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
@@ -1553,16 +1543,10 @@ def open_manual_metadata_window(app, filepath):
             new_data["status_override"] = status_var.get()
         def on_done(filepath=None, title=None, **kwargs):
             def safe_update():
-                if hasattr(app, "image_cache"):
-                    app.image_cache.clear()
-                
-                app.library_presenter.refresh_library_ui()
-                app.metadata_manager.fetch_display_metadata(filepath)
                 if win.winfo_exists():
                     win.destroy()
                     app.root.lift()
                     app.root.focus_force()
-
             app.root.after(0, safe_update)
             app.metadata_manager.event_bus.unsubscribe("metadata.apply_complete", on_done)
             app.metadata_manager.event_bus.unsubscribe("metadata.error", on_error)
