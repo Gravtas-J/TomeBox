@@ -1190,7 +1190,7 @@ def open_bulk_metadata_window(app, filepaths):
 
     win = tk.Toplevel(app.root)
     win.title(f"Bulk Edit Metadata ({len(filepaths)} items)")
-    win.geometry("550x380")
+    win.geometry("400x280")
     win.transient(app.root)
     win.grab_set()
 
@@ -1204,36 +1204,40 @@ def open_bulk_metadata_window(app, filepaths):
     # --- Dirty Tracking: Find shared values ---
     authors_set = set()
     series_set = set()
+    narrators_set = set()
 
     for path in filepaths:
         data = app.library_manager.local_library.get(path, {})
         authors_set.add(data.get("authors", "").strip())
         series_set.add(data.get("series", "").strip())
+        narrators_set.add(data.get("narrator", "").strip())
 
     initial_author = list(authors_set)[0] if len(authors_set) == 1 else "<multiple values>"
     initial_series = list(series_set)[0] if len(series_set) == 1 else "<multiple values>"
+    initial_narrator = list(narrators_set)[0] if len(narrators_set) == 1 else "<multiple values>"
 
     # --- Scaffold the Form Layout ---
     form_frame = ttk.Frame(main_frame)
     form_frame.pack(fill="x", pady=10)
 
-    ttk.Label(form_frame, text="Title:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-    title_var = tk.StringVar(value=f"{len(filepaths)} titles selected")
-    ttk.Entry(form_frame, textvariable=title_var, width=38, state="disabled").grid(row=0, column=1, sticky="w", pady=5)
+    # ttk.Label(form_frame, text="Title:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+    # title_var = tk.StringVar(value=f"{len(filepaths)} titles selected")
+    # ttk.Entry(form_frame, textvariable=title_var, width=38, state="disabled").grid(row=0, column=1, sticky="w", pady=5)
 
     ttk.Label(form_frame, text="Author(s):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
     author_var = tk.StringVar(value=initial_author)
     ttk.Entry(form_frame, textvariable=author_var, width=38).grid(row=1, column=1, sticky="w", pady=5)
 
     ttk.Label(form_frame, text="Narrator:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
-    ttk.Entry(form_frame, textvariable=tk.StringVar(value="<multiple values>"), width=38, state="disabled").grid(row=2, column=1, sticky="w", pady=5)
+    narrator_var = tk.StringVar(value=initial_narrator)
+    ttk.Entry(form_frame, textvariable=narrator_var, width=38).grid(row=2, column=1, sticky="w", pady=5)
 
     ttk.Label(form_frame, text="Series:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
     series_var = tk.StringVar(value=initial_series)
     ttk.Entry(form_frame, textvariable=series_var, width=38).grid(row=3, column=1, sticky="w", pady=5)
 
-    ttk.Label(form_frame, text="ASIN:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
-    ttk.Entry(form_frame, textvariable=tk.StringVar(value="<multiple values>"), width=38, state="disabled").grid(row=4, column=1, sticky="w", pady=5)
+    # ttk.Label(form_frame, text="ASIN:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+    # ttk.Entry(form_frame, textvariable=tk.StringVar(value="<multiple values>"), width=38, state="disabled").grid(row=4, column=1, sticky="w", pady=5)
 
     ttk.Label(form_frame, text="Read Status:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
     status_var = tk.StringVar(value="— Keep current —")
@@ -1261,6 +1265,7 @@ def open_bulk_metadata_window(app, filepaths):
 
         new_author = author_var.get().strip()
         new_series = series_var.get().strip()
+        new_narrator = narrator_var.get().strip()
         new_status = status_var.get()
         embed = embed_var.get()
 
@@ -1323,7 +1328,6 @@ def open_bulk_metadata_window(app, filepaths):
 
             payload = {
                 "title": local.get("title", ""),
-                "narrator": local.get("narrator", ""),
                 "asin": local.get("asin", ""),
                 "active_profile": getattr(app, "active_profile", "Main"),
             }
@@ -1332,6 +1336,11 @@ def open_bulk_metadata_window(app, filepaths):
                 payload["authors"] = new_author
             else:
                 payload["authors"] = local.get("authors", "")
+
+            if new_narrator != initial_narrator and new_narrator != "<multiple values>":
+                payload["narrator"] = new_narrator
+            else:
+                payload["narrator"] = local.get("narrator", "")
 
             if new_series != initial_series and new_series != "<multiple values>":
                 payload["series"] = new_series
