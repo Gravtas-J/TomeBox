@@ -390,6 +390,7 @@ class LibraryPresenter:
                                 self.app.covers_dir, f"{asin}.jpg"
                             ),
                             "date_str": date_str,
+                            "read_state": self._compute_read_state(row_path),
                         }
                     )
 

@@ -70,6 +70,13 @@ class VirtualGridView(tk.Canvas):
                     width=self.cell_width - 20,
                     state="hidden",
                 ),
+                "badge_bg_id": self.create_oval(
+                    0, 0, 0, 0, fill="", outline="#1e1e1e", width=2, state="hidden"
+                ),
+                "badge_text_id": self.create_text(
+                    0, 0, text="", fill="white",
+                    font=("Segoe UI", 10, "bold"), anchor="center", state="hidden",
+                ),
                 "author_id": self.create_text(
                     0,
                     0,
@@ -82,6 +89,8 @@ class VirtualGridView(tk.Canvas):
                 "photo_ref": None,  # Prevents Tkinter garbage collection
                 "current_index": None,
                 "current_asin": None,
+                "current_read_state": None,
+                "badge_visible": False,
                 "last_x": -9999,
                 "last_y": -9999,
                 "is_hidden": True,
@@ -212,6 +221,8 @@ class VirtualGridView(tk.Canvas):
                     self.itemconfig(cell["cover_id"], state="hidden")
                     self.itemconfig(cell["title_id"], state="hidden")
                     self.itemconfig(cell["author_id"], state="hidden")
+                    self.itemconfig(cell["badge_bg_id"], state="hidden")
+                    self.itemconfig(cell["badge_text_id"], state="hidden")
                     cell["is_hidden"] = True
                 self.unused_pool.append(cell)
             return
@@ -267,7 +278,12 @@ class VirtualGridView(tk.Canvas):
                 fingerprint = f"fallback_{idx}"
 
             # Inject new data only if recycled or swapped based on the fingerprint
-            if is_new or cell.get("current_fingerprint") != fingerprint:
+            read_state = item.get("read_state", "Unread")
+            if (
+                is_new
+                or cell.get("current_fingerprint") != fingerprint
+                or cell.get("current_read_state") != read_state
+            ):
                 cover_path = item.get("cover_path")
 
                 title = item.get("title", "Unknown")
@@ -296,6 +312,21 @@ class VirtualGridView(tk.Canvas):
                 cell["current_asin"] = raw_asin
                 cell["current_fingerprint"] = fingerprint
 
+                cell["current_read_state"] = read_state
+                if read_state == "Finished":
+                    self.itemconfig(cell["badge_bg_id"], fill="#2ecc71")
+                    self.itemconfig(cell["badge_text_id"], text="✔")
+                    cell["badge_visible"] = True
+                elif read_state == "Started":
+                    self.itemconfig(cell["badge_bg_id"], fill="#4a90e2")
+                    self.itemconfig(cell["badge_text_id"], text="◐")
+                    cell["badge_visible"] = True
+                else:
+                    cell["badge_visible"] = False
+                badge_state = "normal" if (cell["badge_visible"] and not cell["is_hidden"]) else "hidden"
+                self.itemconfig(cell["badge_bg_id"], state=badge_state)
+                self.itemconfig(cell["badge_text_id"], state=badge_state)
+
                 # Selection highlight relies on raw_asin
                 if fingerprint in self.active_asins:
                     self.itemconfig(cell["bg_id"], outline="#4a90e2")
@@ -322,6 +353,11 @@ class VirtualGridView(tk.Canvas):
                 # Push the anchors up so wrapped text doesn't bleed out of the cell
                 self.coords(cell["title_id"], x + 10, y + self.cell_height - 75)
                 self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
+                r = 11
+                cx = x + self.cell_width - 25
+                cy = y + 25
+                self.coords(cell["badge_bg_id"], cx - r, cy - r, cx + r, cy + r)
+                self.coords(cell["badge_text_id"], cx, cy)
 
                 cell["last_x"] = x
                 cell["last_y"] = y
@@ -331,4 +367,7 @@ class VirtualGridView(tk.Canvas):
                 self.itemconfig(cell["cover_id"], state="normal")
                 self.itemconfig(cell["title_id"], state="normal")
                 self.itemconfig(cell["author_id"], state="normal")
+                if cell["badge_visible"]:
+                    self.itemconfig(cell["badge_bg_id"], state="normal")
+                    self.itemconfig(cell["badge_text_id"], state="normal")
                 cell["is_hidden"] = False
