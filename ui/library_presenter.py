@@ -14,6 +14,50 @@ class LibraryPresenter:
 
         # Debounce timer for bulk imports
         self._refresh_timer = None
+    
+    _COL_INDEX = {
+        "Title": 0, "Author": 1, "Narrator": 2, "Series": 3,
+        "Duration": 4, "ASIN": 5, "Status": 6, "File Path": 7, "Date Added": 8,
+    }
+
+    def _sort_filtered_rows(self, rows):
+        """Sort row tuples by the active sort — shared by both list and grid."""
+        col = self.current_sort_col or "Title"
+        descending = bool(self.current_sort_descending)
+        idx = self._COL_INDEX.get(col, 0)
+        lib = self.app.library_manager.local_library
+
+        def key(row):
+            if col == "Date Added":                       # sort by real timestamp
+                rp = row[7]
+                return lib[rp].get("date_added", 0) if rp in lib else 0
+            val = str(row[idx]) if idx < len(row) else ""
+            if col == "Duration":
+                if "h " in val and "m" in val:
+                    try:
+                        p = val.split("h ")
+                        return int(p[0]) * 60 + int(p[1].replace("m", ""))
+                    except ValueError:
+                        pass
+                return -1
+            if val in ("", "N/A", "Unknown"):
+                return "\x00"
+            return val.lower()
+
+        rows.sort(key=key, reverse=descending)
+
+    def _draw_sort_indicator(self):
+        """Repaint the header arrow + (re)bind click-to-sort for every column."""
+        tree = self.app.library_tree
+        col = self.current_sort_col or "Title"
+        descending = bool(self.current_sort_descending)
+        for c in tree["columns"]:
+            tree.heading(c, text=c,
+                         command=lambda _c=c: self.sort_treeview(tree, _c, False))
+        arrow = " ▼" if descending else " ▲"
+        tree.heading(col, text=f"{col}{arrow}",
+                     command=lambda: self.sort_treeview(tree, col, not descending))
+        
 
     def toggle_library_view(self):
         # 1. Capture the currently selected item BEFORE we switch views
@@ -212,35 +256,8 @@ class LibraryPresenter:
             self._toggle_empty_filter_state(True)
         else:
             self._toggle_empty_filter_state(False)
-        if hasattr(self.app, "sort_combo"):
-            sort_pref = self.app.ui_state.sort.get()
 
-            def get_sort_key(row):
-                (
-                    title,
-                    authors,
-                    narrator,
-                    series_str,
-                    duration_str,
-                    asin,
-                    status,
-                    row_path,
-                    date_str,
-                ) = row
-                if sort_pref == "Title (A-Z)":
-                    return title.lower()
-                elif sort_pref == "Author (A-Z)":
-                    return authors.lower()
-                else:
-                    if row_path and row_path in self.app.library_manager.local_library:
-                        return self.app.library_manager.local_library[row_path].get(
-                            "date_added", 0
-                        )
-                    return 0
-
-            is_reverse = sort_pref == "Date Added (Newest)"
-            filtered_rows.sort(key=get_sort_key, reverse=is_reverse)
-
+        self._sort_filtered_rows(filtered_rows)
         self.current_filtered_data = filtered_rows
 
         if hasattr(self.app, "shelf_combo"):
@@ -339,11 +356,7 @@ class LibraryPresenter:
                     )
 
                 if self.current_sort_col and self.current_sort_descending is not None:
-                    self.sort_treeview(
-                        self.app.library_tree,
-                        self.current_sort_col,
-                        self.current_sort_descending,
-                    )
+                    self._draw_sort_indicator()
             else:
                 self.app.library_tree.grid_remove()
                 self.app.h_scroll.grid_remove()
@@ -406,38 +419,10 @@ class LibraryPresenter:
             self._focus_asin(selected_asin)
 
     def sort_treeview(self, tree, col, descending):
-        data = [(tree.set(child, col), child) for child in tree.get_children("")]
-
-        def sort_key(item):
-            val = str(item[0])
-            if col == "Duration":
-                if "h " in val and "m" in val:
-                    try:
-                        parts = val.split("h ")
-                        return int(parts[0]) * 60 + int(parts[1].replace("m", ""))
-                    except ValueError:
-                        pass
-                return -1
-            if val in ["", "N/A", "Unknown"]:
-                return "\x00"
-            return val.lower()
-
-        data.sort(key=sort_key, reverse=descending)
-
+        """Header click → set the shared sort and re-render both views from it."""
         self.current_sort_col = col
         self.current_sort_descending = descending
-        for index, (val, child) in enumerate(data):
-            tree.move(child, "", index)
-
-        for c in tree["columns"]:
-            tree.heading(c, text=c)
-
-        arrow = " ▼" if descending else " ▲"
-        tree.heading(
-            col,
-            text=f"{col}{arrow}",
-            command=lambda _col=col: self.sort_treeview(tree, _col, not descending),
-        )
+        self.refresh_library_ui()
 
     def handle_tree_double_click(self, event):
         import tkinter.font as tkfont
