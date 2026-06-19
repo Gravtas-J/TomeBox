@@ -246,3 +246,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+TomeBox's own source code is released under the MIT License (see LICENSE).
+Prebuilt releases bundle third-party components — notably Mutagen, licensed under the GNU GPL v2.0 or later. Because these are distributed as part of the packaged builds, the combined binary releases of TomeBox are provided under the terms of the GPL v2.0 or later. The complete corresponding source is available in this repository.
+See THIRD_PARTY_LICENSES.md for all bundled dependencies and their licenses.

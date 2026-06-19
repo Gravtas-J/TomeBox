@@ -16,7 +16,6 @@ start_tomebox.vbs
 *.exe
 migrate_to_sqlite.py
 /old
-*.md
 /logs
 /release
 /release copy

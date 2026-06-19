@@ -1,5 +1,6 @@
 import math
 import tkinter as tk
+from tkinter import font as tkfont
 
 
 class VirtualGridView(tk.Canvas):
@@ -25,6 +26,9 @@ class VirtualGridView(tk.Canvas):
         self.image_cache = image_cache
         self.cell_width = cell_width
         self.cell_height = cell_height
+        self._title_font = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+        self._title_line_h = self._title_font.metrics("linespace")
+        self._title_wrap = self.cell_width - 20
 
         self.on_click_cb = on_click_cb
         self.on_double_click_cb = on_double_click_cb
@@ -52,6 +56,20 @@ class VirtualGridView(tk.Canvas):
         self.bind("<Button-4>", self._on_mousewheel_mac)
         self.bind("<Button-5>", self._on_mousewheel_mac)
 
+    def _title_line_count(self, text):
+        """How many lines `text` wraps to at the title width."""
+        if not text:
+            return 1
+        lines, cur = 1, ""
+        for word in text.split():
+            trial = word if not cur else f"{cur} {word}"
+            if self._title_font.measure(trial) <= self._title_wrap:
+                cur = trial
+            else:
+                lines += 1
+                cur = word
+        return lines
+
     def _init_pool(self, size):
         """Creates raw canvas vector shapes instead of expensive Tkinter frames."""
         for _ in range(size):
@@ -70,6 +88,13 @@ class VirtualGridView(tk.Canvas):
                     width=self.cell_width - 20,
                     state="hidden",
                 ),
+                "badge_bg_id": self.create_oval(
+                    0, 0, 0, 0, fill="", outline="#1e1e1e", width=2, state="hidden"
+                ),
+                "badge_text_id": self.create_text(
+                    0, 0, text="", fill="white",
+                    font=("Segoe UI", 10, "bold"), anchor="center", state="hidden",
+                ),
                 "author_id": self.create_text(
                     0,
                     0,
@@ -82,6 +107,8 @@ class VirtualGridView(tk.Canvas):
                 "photo_ref": None,  # Prevents Tkinter garbage collection
                 "current_index": None,
                 "current_asin": None,
+                "current_read_state": None,
+                "badge_visible": False,
                 "last_x": -9999,
                 "last_y": -9999,
                 "is_hidden": True,
@@ -212,6 +239,8 @@ class VirtualGridView(tk.Canvas):
                     self.itemconfig(cell["cover_id"], state="hidden")
                     self.itemconfig(cell["title_id"], state="hidden")
                     self.itemconfig(cell["author_id"], state="hidden")
+                    self.itemconfig(cell["badge_bg_id"], state="hidden")
+                    self.itemconfig(cell["badge_text_id"], state="hidden")
                     cell["is_hidden"] = True
                 self.unused_pool.append(cell)
             return
@@ -267,9 +296,15 @@ class VirtualGridView(tk.Canvas):
                 fingerprint = f"fallback_{idx}"
 
             # Inject new data only if recycled or swapped based on the fingerprint
-            if is_new or cell.get("current_fingerprint") != fingerprint:
+            content_changed = False
+            read_state = item.get("read_state", "Unread")
+            if (
+                is_new
+                or cell.get("current_fingerprint") != fingerprint
+                or cell.get("current_read_state") != read_state
+            ):
                 cover_path = item.get("cover_path")
-
+                content_changed = True
                 title = item.get("title", "Unknown")
                 display_title = title[:60] + "..." if len(title) > 60 else title
 
@@ -289,12 +324,28 @@ class VirtualGridView(tk.Canvas):
 
                 self.itemconfig(cell["cover_id"], image=photo)
                 self.itemconfig(cell["title_id"], text=display_title)
+                cell["title_lines"] = self._title_line_count(display_title)
                 self.itemconfig(cell["author_id"], text=display_author)
 
                 cell["photo_ref"] = photo
                 cell["current_index"] = idx
                 cell["current_asin"] = raw_asin
                 cell["current_fingerprint"] = fingerprint
+
+                cell["current_read_state"] = read_state
+                if read_state == "Finished":
+                    self.itemconfig(cell["badge_bg_id"], fill="#2ecc71")
+                    self.itemconfig(cell["badge_text_id"], text="✔")
+                    cell["badge_visible"] = True
+                elif read_state == "Started":
+                    self.itemconfig(cell["badge_bg_id"], fill="#4a90e2")
+                    self.itemconfig(cell["badge_text_id"], text="◐")
+                    cell["badge_visible"] = True
+                else:
+                    cell["badge_visible"] = False
+                badge_state = "normal" if (cell["badge_visible"] and not cell["is_hidden"]) else "hidden"
+                self.itemconfig(cell["badge_bg_id"], state=badge_state)
+                self.itemconfig(cell["badge_text_id"], state=badge_state)
 
                 # Selection highlight relies on raw_asin
                 if fingerprint in self.active_asins:
@@ -309,20 +360,23 @@ class VirtualGridView(tk.Canvas):
             y = row * self.cell_height
 
             # THE PERFORMANCE FIX: Diff Check vectors before commanding Tkinter
-            if cell["last_x"] != x or cell["last_y"] != y:
-                self.coords(
-                    cell["bg_id"],
-                    x + 2,
-                    y + 2,
-                    x + self.cell_width - 2,
-                    y + self.cell_height - 2,
-                )
+            if cell["last_x"] != x or cell["last_y"] != y or content_changed:
+                self.coords(cell["bg_id"], x + 2, y + 2, x + self.cell_width - 2, y + self.cell_height - 2)
                 self.coords(cell["cover_id"], x + (self.cell_width // 2), y + 10)
 
-                # Push the anchors up so wrapped text doesn't bleed out of the cell
                 self.coords(cell["title_id"], x + 10, y + self.cell_height - 75)
-                self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
+                # author hugs the title's real bottom instead of a fixed offset
+                title_top = y + self.cell_height - 75
+                self.coords(cell["title_id"], x + 10, title_top)
+                # bbox under-reports while hidden, so place by measured line count
+                author_y = title_top + cell.get("title_lines", 1) * self._title_line_h + 4
+                self.coords(cell["author_id"], x + 10, author_y)
 
+                r = 11
+                cx = x + self.cell_width - 25
+                cy = y + 25
+                self.coords(cell["badge_bg_id"], cx - r, cy - r, cx + r, cy + r)
+                self.coords(cell["badge_text_id"], cx, cy)
                 cell["last_x"] = x
                 cell["last_y"] = y
 
@@ -331,4 +385,7 @@ class VirtualGridView(tk.Canvas):
                 self.itemconfig(cell["cover_id"], state="normal")
                 self.itemconfig(cell["title_id"], state="normal")
                 self.itemconfig(cell["author_id"], state="normal")
+                if cell["badge_visible"]:
+                    self.itemconfig(cell["badge_bg_id"], state="normal")
+                    self.itemconfig(cell["badge_text_id"], state="normal")
                 cell["is_hidden"] = False

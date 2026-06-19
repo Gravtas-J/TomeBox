@@ -168,12 +168,28 @@ def setup_library_view(app, parent):
     )
 
     def on_sort_change(event):
-        app.settings["sort_pref"] = app.ui_state.sort.get()
+        pref = app.ui_state.sort.get()
+        app.settings["sort_pref"] = pref
         if hasattr(app, "db"):
             app.db.save_settings(app.settings)
+        col, desc = {
+            "Title (A-Z)": ("Title", False),
+            "Author (A-Z)": ("Author", False),
+            "Date Added (Newest)": ("Date Added", True),
+        }.get(pref, ("Date Added", True))
+        app.library_presenter.current_sort_col = col
+        app.library_presenter.current_sort_descending = desc
         app.library_presenter.refresh_library_ui()
 
     app.sort_combo.bind("<<ComboboxSelected>>", on_sort_change)
+
+    _c, _d = {
+        "Title (A-Z)": ("Title", False),
+        "Author (A-Z)": ("Author", False),
+        "Date Added (Newest)": ("Date Added", True),
+    }.get(app.ui_state.sort.get(), ("Date Added", True))
+    app.library_presenter.current_sort_col = _c
+    app.library_presenter.current_sort_descending = _d
 
     app.view_btn = ttk.Button(
         filter_frame,
