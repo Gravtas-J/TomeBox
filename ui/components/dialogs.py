@@ -1364,12 +1364,11 @@ def open_bulk_metadata_window(app, filepaths):
                 new_cover_path=None
             )
 
-    save_btn = ttk.Button(btn_frame, text="Save Batch", command=do_save)
-    save_btn.pack(side=tk.RIGHT, padx=5)
-
     cancel_btn = ttk.Button(btn_frame, text="Cancel", command=win.destroy)
     cancel_btn.pack(side=tk.RIGHT, padx=5)
-
+    
+    save_btn = ttk.Button(btn_frame, text="Save Batch", command=do_save)
+    save_btn.pack(side=tk.RIGHT, padx=5)
 def open_manual_metadata_window(app, filepath):
     import os
     from tkinter import filedialog
@@ -1531,6 +1530,15 @@ def open_manual_metadata_window(app, filepath):
         combo_values.insert(1, "Started")
 
     ttk.Combobox(form_frame, textvariable=status_var, values=combo_values, state="readonly", width=35).grid(row=5, column=1, sticky="w", pady=5)
+    def _clear_entry_highlight(event):
+        try:
+            event.widget.selection_clear()
+        except tk.TclError:
+            pass
+
+    for child in form_frame.winfo_children():
+        if isinstance(child, ttk.Entry) and not isinstance(child, ttk.Combobox):
+            child.bind("<FocusOut>", _clear_entry_highlight, add="+")
     # --- Options ---
     options_frame = ttk.Frame(main_frame)
     options_frame.pack(fill="x", pady=5)
