@@ -1,5 +1,6 @@
 import math
 import tkinter as tk
+from tkinter import font as tkfont
 
 
 class VirtualGridView(tk.Canvas):
@@ -25,6 +26,9 @@ class VirtualGridView(tk.Canvas):
         self.image_cache = image_cache
         self.cell_width = cell_width
         self.cell_height = cell_height
+        self._title_font = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+        self._title_line_h = self._title_font.metrics("linespace")
+        self._title_wrap = self.cell_width - 20
 
         self.on_click_cb = on_click_cb
         self.on_double_click_cb = on_double_click_cb
@@ -51,6 +55,20 @@ class VirtualGridView(tk.Canvas):
         self.bind("<MouseWheel>", self._on_mousewheel_win)
         self.bind("<Button-4>", self._on_mousewheel_mac)
         self.bind("<Button-5>", self._on_mousewheel_mac)
+
+    def _title_line_count(self, text):
+        """How many lines `text` wraps to at the title width."""
+        if not text:
+            return 1
+        lines, cur = 1, ""
+        for word in text.split():
+            trial = word if not cur else f"{cur} {word}"
+            if self._title_font.measure(trial) <= self._title_wrap:
+                cur = trial
+            else:
+                lines += 1
+                cur = word
+        return lines
 
     def _init_pool(self, size):
         """Creates raw canvas vector shapes instead of expensive Tkinter frames."""
@@ -278,6 +296,7 @@ class VirtualGridView(tk.Canvas):
                 fingerprint = f"fallback_{idx}"
 
             # Inject new data only if recycled or swapped based on the fingerprint
+            content_changed = False
             read_state = item.get("read_state", "Unread")
             if (
                 is_new
@@ -285,7 +304,7 @@ class VirtualGridView(tk.Canvas):
                 or cell.get("current_read_state") != read_state
             ):
                 cover_path = item.get("cover_path")
-
+                content_changed = True
                 title = item.get("title", "Unknown")
                 display_title = title[:60] + "..." if len(title) > 60 else title
 
@@ -305,6 +324,7 @@ class VirtualGridView(tk.Canvas):
 
                 self.itemconfig(cell["cover_id"], image=photo)
                 self.itemconfig(cell["title_id"], text=display_title)
+                cell["title_lines"] = self._title_line_count(display_title)
                 self.itemconfig(cell["author_id"], text=display_author)
 
                 cell["photo_ref"] = photo
@@ -340,25 +360,23 @@ class VirtualGridView(tk.Canvas):
             y = row * self.cell_height
 
             # THE PERFORMANCE FIX: Diff Check vectors before commanding Tkinter
-            if cell["last_x"] != x or cell["last_y"] != y:
-                self.coords(
-                    cell["bg_id"],
-                    x + 2,
-                    y + 2,
-                    x + self.cell_width - 2,
-                    y + self.cell_height - 2,
-                )
+            if cell["last_x"] != x or cell["last_y"] != y or content_changed:
+                self.coords(cell["bg_id"], x + 2, y + 2, x + self.cell_width - 2, y + self.cell_height - 2)
                 self.coords(cell["cover_id"], x + (self.cell_width // 2), y + 10)
 
-                # Push the anchors up so wrapped text doesn't bleed out of the cell
                 self.coords(cell["title_id"], x + 10, y + self.cell_height - 75)
-                self.coords(cell["author_id"], x + 10, y + self.cell_height - 30)
+                # author hugs the title's real bottom instead of a fixed offset
+                title_top = y + self.cell_height - 75
+                self.coords(cell["title_id"], x + 10, title_top)
+                # bbox under-reports while hidden, so place by measured line count
+                author_y = title_top + cell.get("title_lines", 1) * self._title_line_h + 4
+                self.coords(cell["author_id"], x + 10, author_y)
+
                 r = 11
                 cx = x + self.cell_width - 25
                 cy = y + 25
                 self.coords(cell["badge_bg_id"], cx - r, cy - r, cx + r, cy + r)
                 self.coords(cell["badge_text_id"], cx, cy)
-
                 cell["last_x"] = x
                 cell["last_y"] = y
 
