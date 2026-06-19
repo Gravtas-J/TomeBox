@@ -1428,20 +1428,37 @@ def open_manual_metadata_window(app, filepath):
             update_preview(existing_cover)
 
     def pick_cover():
-        # Grab the directory of the audio file, fallback to None if it's missing
-        start_dir = (
-            os.path.dirname(filepath) if filepath and os.path.exists(filepath) else None
-        )
+        # Default to THIS book's folder, resolving playlists and missing files.
+        start_dir = None
+        if local_data.get("is_playlist"):
+            for ch in local_data.get("chapters", []):
+                cp = ch.get("file_path")
+                if cp and os.path.isfile(cp):
+                    start_dir = os.path.dirname(cp)
+                    break
+        if not start_dir and filepath:
+            book_dir = os.path.dirname(filepath)
+            if book_dir and os.path.isdir(book_dir):
+                start_dir = book_dir
+
+        # Never open a generic system dir — fall back to a known app location.
+        if not start_dir:
+            candidates = [getattr(app, "_last_cover_dir", None)]
+            if getattr(app, "settings", None):
+                candidates += app.settings.get("library_folders", [])
+            candidates.append(getattr(app, "covers_dir", None))
+            start_dir = next((c for c in candidates if c and os.path.isdir(c)), None)
 
         path = filedialog.askopenfilename(
             parent=win,
             title="Select Cover Art",
-            initialdir=start_dir,  # <-- NEW: Smart directory mapping
+            initialdir=start_dir,
             filetypes=[("Image Files", "*.jpg *.jpeg *.png *.webp")],
         )
         if path:
             selected_cover_path[0] = path
             update_preview(path)
+            app._last_cover_dir = os.path.dirname(path)
 
     ttk.Button(cover_frame, text="Change Cover...", command=pick_cover).pack()
 
