@@ -28,8 +28,14 @@ class EventBus:
         for handler in list(self._subscribers[topic]):
             try:
                 handler(**kwargs)
-            except Exception as e:
-                print(f"[EventBus] '{topic}' handler error: {e}")
+            except Exception:
+                import logging
+                logging.getLogger("TomeBox").error(
+                    "[EventBus] handler error on topic '%s' (handler=%s)",
+                    topic,
+                    getattr(handler, "__qualname__", repr(handler)),
+                    exc_info=True,
+                )
 
 
 # Global singleton instance for the application to share

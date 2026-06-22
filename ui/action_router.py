@@ -333,9 +333,18 @@ class ActionRouter:
             return
         def update():
             self.reset_ui_if_idle()
-            self.app.image_cache.clear()
+
+            local_data = self.app.library_manager.local_library.get(filepath, {})
+            raw_asin = local_data.get("asin", "")
+            fingerprint = raw_asin if raw_asin and raw_asin != "Unknown" else filepath
+            if hasattr(self.app, "image_cache"):
+                self.app.image_cache.invalidate(fingerprint)
+
             self.app.library_presenter.refresh_library_ui()
-            self.app.metadata_manager.fetch_display_metadata(filepath)
+
+            if getattr(self.app, "_selected_local_path", None) == filepath:
+                self.app.metadata_manager.fetch_display_metadata(filepath)
+
             if self.app.file_path == filepath:
                 self.app.playback_presenter.load_specific_file(filepath)
 

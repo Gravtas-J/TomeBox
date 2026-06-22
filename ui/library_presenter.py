@@ -233,8 +233,30 @@ class LibraryPresenter:
                 new_vals[6] = base
                 self.app.library_tree.item(iid, values=new_vals, tags=tag)
                 return
-            
+    
+
     def _do_refresh_library_ui(self):
+        import time
+        _t0 = time.perf_counter()
+        try:
+            self._do_refresh_library_ui_impl()
+        finally:
+            try:
+                _dt = (time.perf_counter() - _t0) * 1000.0
+                mode = getattr(self.app, "current_view_mode", "?")
+                n_rows = len(getattr(self, "current_filtered_data", []) or [])
+                n_lib = len(self.app.library_manager.local_library)
+                bus = self.app.metadata_manager.event_bus
+                ac = len(bus._subscribers.get("metadata.apply_complete", []))
+                er = len(bus._subscribers.get("metadata.error", []))
+                self.app.logger(
+                    f"[PERF] refresh mode={mode} rows={n_rows} lib={n_lib} "
+                    f"took {_dt:.0f}ms | subs(apply_complete)={ac} number of functions subscribed to the metadata.error topic on the event bus={er}"
+                )
+            except Exception:
+                pass
+
+    def _do_refresh_library_ui_impl(self):
         selected_asin = self._capture_selected_asin()  
 
         for row in self.app.library_tree.get_children():

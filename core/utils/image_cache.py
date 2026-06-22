@@ -77,6 +77,17 @@ class ImageCache:
 
         return photo
 
+
+    def invalidate(self, *ids):
+        """Drop cached thumbnails for specific id(s) only, instead of nuking everything.
+        Keys are f"{id}_{w}x{h}", so we match every size variant by prefix."""
+        for key_id in ids:
+            if not key_id:
+                continue
+            prefix = f"{key_id}_"
+            for key in [k for k in self.cache if k.startswith(prefix)]:
+                del self.cache[key]
+
     def _generate_dummy_card(self, title, author, size):
         """Generates a solid color card with text for missing covers."""
         # Create a dark gradient-like background

@@ -462,89 +462,27 @@ class MetadataManager:
                     self.library_manager.local_library
                 )
 
-                # 4. Embed into file using FFmpeg
-                # SAFEGUARD: Verify it's a file (not a folder playlist) and match the original extension
+                # 4. Embed tags straight into the file (no re-encode).
+                #    embed_tags_in_place uses mutagen for .m4b/.m4a/.mp4 and .mp3,
+                #    and falls back to an FFmpeg remux only for exotic containers.
+                #    It RAISES on failure, so an error propagates to the outer
+                #    `except` below (publishing metadata.error) and correctly
+                #    skips the apply_complete publish — single terminal event.
+                # SAFEGUARD: real file (not a folder playlist) + taggable container.
                 if os.path.isfile(filepath) and filepath.lower().endswith(
                     (".m4b", ".mp3", ".m4a")
                 ):
-                    ext = os.path.splitext(filepath)[1].lower()
-                    temp_out = filepath + f".tmp{ext}"
-
-                    cmd = ["ffmpeg", "-y", "-i", filepath]
-
-                    if fields_to_apply.get("cover", True) and os.path.exists(
+                    use_cover = fields_to_apply.get("cover", True) and os.path.exists(
                         cover_path
-                    ):
-                        cmd.extend(
-                            [
-                                "-i",
-                                cover_path,
-                                "-map",
-                                "0:a",
-                                "-map",
-                                "1:v",
-                                "-c",
-                                "copy",
-                                "-disposition:v",
-                                "attached_pic",
-                            ]
-                        )
-                    else:
-                        cmd.extend(["-map", "0:a", "-map", "0:v?", "-c", "copy"])
-
-                    cmd.extend(
-                        [
-                            "-map_chapters",
-                            "0",
-                            "-metadata",
-                            f"title={title}",
-                            "-metadata",
-                            f"artist={authors}",
-                        ]
                     )
-
-                    if series:
-                        cmd.extend(
-                            [
-                                "-metadata",
-                                f"show={series}",
-                                "-metadata",
-                                f"series={series}",
-                            ]
-                        )
-
-                    cmd.append(temp_out)
-
-                    try:
-                        res = ProcessRunner.run_blocking(cmd, capture_output=True)
-
-                        if res.returncode == 0 and os.path.exists(temp_out):
-                            try:
-                                os.replace(temp_out, filepath)
-                            except OSError as e:
-                                if hasattr(self, "logger"):
-                                    self.logger(
-                                        f"Apply Metadata OS Error (File locked?): {e}"
-                                    )
-                                raise Exception(
-                                    "Could not save file. Ensure it is not actively playing."
-                                )
-                        else:
-                            err_msg = (
-                                res.stderr
-                                if hasattr(res, "stderr") and res.stderr
-                                else "Unknown FFmpeg Error"
-                            )
-                            raise Exception(
-                                f"FFmpeg tagging failed with code {res.returncode}.\nDetails: {err_msg}"
-                            )
-
-                    finally:
-                        if os.path.exists(temp_out):
-                            try:
-                                os.remove(temp_out)
-                            except OSError:
-                                pass
+                    self.embed_tags_in_place(
+                        filepath,
+                        title=title,
+                        author=authors,
+                        narrator=local_data.get("narrator", ""),
+                        series=series or "",
+                        cover_path=cover_path if use_cover else None,
+                    )
 
                 # Outdented: Publish event even if FFmpeg is skipped (e.g. for folder playlists) so UI refreshes immediately
                 self.event_bus.publish(

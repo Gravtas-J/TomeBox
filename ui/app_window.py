@@ -5,6 +5,10 @@ import webbrowser
 import shutil
 from tkinter import filedialog, messagebox, ttk
 
+import faulthandler
+import time
+import logging
+
 from PIL import Image
 
 from core.utils.logger import setup_logger
@@ -78,6 +82,38 @@ if hasattr(sys, "_MEIPASS"):
 if os.path.exists(bundled_bin_dir):
     os.environ["PATH"] = f"{bundled_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
+import faulthandler, threading, time, os, logging
+
+class _FreezeWatchdog:
+    def __init__(self, root, log_dir, threshold=5.0):
+        self.root = root
+        self.dump_path = os.path.join(log_dir, "freeze_dump.txt")
+        self.threshold = threshold
+        self._last_beat = time.time()
+        self._dumped = False
+        self.root.after(1000, self._beat)                      # heartbeat on main thread
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _beat(self):
+        self._last_beat = time.time()
+        self._dumped = False
+        self.root.after(1000, self._beat)
+
+    def _watch(self):
+        while True:
+            time.sleep(1.0)
+            lag = time.time() - self._last_beat
+            if lag > self.threshold and not self._dumped:
+                self._dumped = True
+                logging.getLogger("TomeBox").error(
+                    "[WATCHDOG] main thread blocked %.1fs — dumping stacks to %s",
+                    lag, self.dump_path)
+                try:
+                    with open(self.dump_path, "a", encoding="utf-8") as fh:
+                        fh.write(f"\n=== main thread blocked {lag:.1f}s @ {time.ctime()} ===\n")
+                        faulthandler.dump_traceback(file=fh)   # ALL threads, even the wedged one
+                except Exception:
+                    pass
 
 class UiState:
     def __init__(self, settings):
@@ -172,6 +208,32 @@ class AAXManagerApp:
         self.logger = setup_logger(
             self.base_dir, debug_mode=self.settings.get("debug_mode", False)
         )
+        def _report_tk_exception(exc, val, tb):
+            import traceback
+            self.logger.error(
+                "[TK-EXC] Unhandled exception in Tk callback:\n"
+                + "".join(traceback.format_exception(exc, val, tb))
+            )
+        self.root.report_callback_exception = _report_tk_exception
+        
+
+        _tb_log = logging.getLogger("TomeBox")
+
+        def _log_uncaught(exc_type, exc_value, exc_tb):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_tb); return
+            _tb_log.error("UNCAUGHT (main)", exc_info=(exc_type, exc_value, exc_tb))
+        sys.excepthook = _log_uncaught
+
+        def _log_uncaught_thread(args):
+            if issubclass(args.exc_type, SystemExit):
+                return
+            _tb_log.error("UNCAUGHT (thread=%s)", getattr(args.thread, "name", "?"),
+                        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        threading.excepthook = _log_uncaught_thread
+
+        self._freeze_watchdog = _FreezeWatchdog(self.root, os.path.join(self.base_dir, "logs"))
+
         self.logger.info("=== TomeBox Application Started ===")
         self.covers_dir = os.path.join(self.base_dir, "covers")
         os.makedirs(self.covers_dir, exist_ok=True)
