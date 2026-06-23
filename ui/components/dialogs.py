@@ -1247,7 +1247,7 @@ def open_bulk_metadata_window(app, filepaths):
     options_frame = ttk.Frame(main_frame)
     options_frame.pack(fill="x", pady=5)
     
-    embed_var = tk.BooleanVar(value=False)
+    embed_var = tk.BooleanVar(value=True)
     ttk.Checkbutton(options_frame, text="Embed tags into audio files (FFmpeg)", variable=embed_var).pack(side=tk.LEFT)
 
     feedback_var = tk.StringVar(value="")
@@ -1270,7 +1270,12 @@ def open_bulk_metadata_window(app, filepaths):
         embed = embed_var.get()
 
         total_files = len(filepaths)
-        state = {"completed": 0, "errors": 0}
+        state = {"completed": 0, "errors": 0, "failed": []}
+
+        def on_err(error_msg=None, filepath=None, title=None, **kwargs):
+            state["errors"] += 1
+            state["failed"].append(title or (os.path.basename(filepath) if filepath else "Unknown book"))
+            app.root.after(0, check_finished)
 
         def update_feedback():
             feedback_var.set(f"Saving batch... ({state['completed'] + state['errors']} / {total_files} processed)")
@@ -1283,10 +1288,6 @@ def open_bulk_metadata_window(app, filepaths):
             if filepath in filepaths:
                 state["completed"] += 1
                 app.root.after(0, check_finished)
-
-        def on_err(error_msg=None, **kwargs):
-            state["errors"] += 1
-            app.root.after(0, check_finished)
 
         def check_finished():
             update_feedback()
@@ -1309,7 +1310,13 @@ def open_bulk_metadata_window(app, filepaths):
                     if state["errors"] == 0:
                         messagebox.showinfo("Success", f"Bulk metadata applied to {state['completed']} items.", parent=app.root)
                     else:
-                        messagebox.showwarning("Finished with Errors", f"Processed {total_files} items.\nSuccess: {state['completed']}\nErrors: {state['errors']}", parent=app.root)
+                        failed_list = "\n".join(f"  • {b}" for b in state["failed"])
+                        messagebox.showwarning(
+                            "Finished with Errors",
+                            f"Processed {total_files} items.\nSuccess: {state['completed']}\n"
+                            f"Errors: {state['errors']}\n\nFailed:\n{failed_list}",
+                            parent=app.root,
+                        )
 
                 # Small delay to let the user see the 100% completion state
                 app.root.after(250, safe_update)

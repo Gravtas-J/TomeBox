@@ -612,7 +612,12 @@ class MetadataManager:
                     is_manual=True,
                 )
             except Exception as e:
-                self.event_bus.publish("metadata.error", error_msg=str(e))
+                self.event_bus.publish(
+                    "metadata.error",
+                    error_msg=str(e),
+                    filepath=filepath,
+                    title=new_data.get("title", "") or os.path.basename(filepath),
+                )
             finally:
                 with self._apply_lock:
                     self._active_applies = max(0, self._active_applies - 1)
@@ -620,7 +625,7 @@ class MetadataManager:
         if self.start_workers:
             with self._apply_lock:
                 self._active_applies += 1
-            self.thread_pool.submit(worker, task_type="api")
+            self.thread_pool.submit(worker, task_type="standard")
 
     def fetch_from_google_books(self, title):
         """Fetches basic metadata and cover URL from Google Books API."""

@@ -66,13 +66,13 @@ class LibraryPresenter:
             selected = self.app.library_tree.selection()
             if selected:
                 vals = self.app.library_tree.item(selected[0], "values")
-                if len(vals) > 5:
-                    target_asin = vals[5]
+                if len(vals) > 7:
+                    target_asin = vals[7]
         else:
             if getattr(self.app, "_selected_grid_item", None):
                 vals = self.app._selected_grid_item.get("values", [])
-                if len(vals) > 5:
-                    target_asin = vals[5]
+                if len(vals) > 7:
+                    target_asin = vals[7]
 
         # 2. Swap the UI Components
         if self.app.current_view_mode == "list":
@@ -123,7 +123,7 @@ class LibraryPresenter:
 
         # 4. Snap the new view's focus to the memorized target
         if target_asin:
-            self._focus_asin(target_asin)
+            self._focus_path(target_asin)
         else:
             # Fallback: Jump to the very top if nothing was selected
             if self.app.current_view_mode == "list":
@@ -166,26 +166,55 @@ class LibraryPresenter:
                     self.app.on_item_select()
                     break
 
-    def _capture_selected_asin(self):
-        """ASIN of the currently selected book in the active view, or None."""
+    def _capture_selected_path(self):
+        """File path of the selected book, or None. Keyed on path, not ASIN,
+        because local books often have empty/duplicate ASINs."""
         try:
             if self.app.current_view_mode == "list":
                 sel = self.app.library_tree.selection()
                 if sel:
                     vals = self.app.library_tree.item(sel[0], "values")
-                    if len(vals) > 5:
-                        return vals[5]
+                    if len(vals) > 7:
+                        return vals[7]
             else:
                 item = getattr(self.app, "_selected_grid_item", None)
                 if item:
                     vals = item.get("values")
-                    if vals and len(vals) > 5:
-                        return vals[5]
-                    if item.get("asin"):
-                        return item.get("asin")
+                    if vals and len(vals) > 7:
+                        return vals[7]
+                    if item.get("path"):
+                        return item.get("path")
         except Exception:
             pass
         return None
+
+    def _focus_path(self, target_path):
+        """Scroll to and highlight a specific file path in the active view."""
+        if self.app.current_view_mode == "list":
+            for child in self.app.library_tree.get_children():
+                vals = self.app.library_tree.item(child, "values")
+                if len(vals) > 7 and vals[7] == target_path:
+                    self.app.library_tree.selection_set(child)
+                    self.app.library_tree.focus(child)
+                    self.app.library_tree.see(child)
+                    self.app.on_item_select()
+                    break
+        else:
+            for idx, item in enumerate(self.app.grid_canvas.data):
+                if item.get("path") == target_path:
+                    row = idx // self.app.grid_canvas.cols
+                    fraction = row / max(1, self.app.grid_canvas.rows)
+                    self.app.grid_canvas.yview_moveto(fraction)
+                    self.app._selected_grid_item = {
+                        "values": [
+                            item.get("title", ""), item.get("authors", ""),
+                            item.get("narrator", ""), item.get("series", ""),
+                            item.get("duration_str", ""), item.get("asin", ""),
+                            item.get("status", ""), item.get("path", ""),
+                        ]
+                    }
+                    self.app.on_item_select()
+                    break
     
     def refresh_library_ui(self, *args):
         """Debounces the refresh so bulk imports don't freeze the UI."""
@@ -257,7 +286,7 @@ class LibraryPresenter:
                 pass
 
     def _do_refresh_library_ui_impl(self):
-        selected_asin = self._capture_selected_asin()  
+        selected_path = self._capture_selected_path()  
 
         for row in self.app.library_tree.get_children():
             self.app.library_tree.delete(row)
@@ -438,8 +467,8 @@ class LibraryPresenter:
 
         if hasattr(self.app, "lib_count_tooltip"):
             self.app.lib_count_tooltip.text = tooltip_text
-        if selected_asin:                               
-            self._focus_asin(selected_asin)
+        if selected_path:
+            self._focus_path(selected_path)
 
     def sort_treeview(self, tree, col, descending):
         """Header click → set the shared sort and re-render both views from it."""
