@@ -20,7 +20,8 @@ class DatabaseManager:
         # Establish a single, persistent, thread-safe connection
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")  # Faster, safer concurrent writes
-
+        self.conn.execute("PRAGMA synchronous=FULL")
+        
         self._initialize_tables()
 
     def _initialize_tables(self):

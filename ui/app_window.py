@@ -1009,6 +1009,10 @@ class AAXManagerApp:
             # 1. Save our place in the audiobook and database
             self.playback_presenter.save_playback_state()
 
+            if getattr(self.library_manager, "_playback_dirty", False):
+                self.library_manager.db.save_local_db(self.library_manager.local_library)
+                self.library_manager._playback_dirty = False
+                
             # 2. Trigger the aggressive stop command on our playback controller
             if self.playback:
                 self.playback.stop()

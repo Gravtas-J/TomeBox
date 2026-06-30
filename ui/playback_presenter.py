@@ -353,13 +353,26 @@ class PlaybackPresenter:
             )
             return
 
-        is_playlist = False
+        # Resolve the book by its file path (values[7]) — the unique key — not by
+        # title string match, which breaks on renames, duplicate titles, status
+        # glyphs, or any drift between the displayed and stored title.
+        row_path = item["values"][7] if len(item["values"]) > 7 else None
         local_path = None
-        for path, data in self.app.library_manager.local_library.items():
-            if data.get("title") == title:
-                local_path = path
-                is_playlist = data.get("is_playlist", False)
-                break
+        is_playlist = False
+
+        if row_path and row_path in self.app.library_manager.local_library:
+            local_path = row_path
+            is_playlist = self.app.library_manager.local_library[row_path].get(
+                "is_playlist", False
+            )
+        else:
+            # Fallback: title match, tolerant of the status glyphs we prepend for display.
+            clean = title.lstrip("✔◐ ").strip()
+            for path, data in self.app.library_manager.local_library.items():
+                if data.get("title") == clean:
+                    local_path = path
+                    is_playlist = data.get("is_playlist", False)
+                    break
 
         if not local_path or (not is_playlist and not os.path.exists(local_path)):
             self.app.action_router.event_bus.publish(
@@ -390,15 +403,24 @@ class PlaybackPresenter:
         self.resume_playback()
 
     def resume_playback(self):
+        self.app.logger(
+            f"[PLAYLIST-RESOLVE] app.file_path={self.app.file_path!r} | "
+            f"in_library={self.app.file_path in self.app.library_manager.local_library} | "
+            f"chapters={len(self.app.playback.chapters or [])}"
+        )
         local_data = self.app.library_manager.local_library.get(self.app.file_path, {})
-        is_playlist = local_data.get("is_playlist", False)
+        local_data = self.app.library_manager.local_library.get(self.app.file_path, {})
+        # Trust the loaded chapter structure, not a re-lookup by file_path:
+        # a playlist is any entry whose chapters carry their own file_path.
+        chapters = self.app.playback.chapters or []
+        first = chapters[0] if chapters else {}
+        is_playlist = local_data.get("is_playlist", False) or bool(
+            first.get("file_path") or first.get("path")
+        )
 
-        if is_playlist and self.app.playback.chapters:
-            chapter = self.app.playback.chapters[self.app.playback.current_chapter_idx]
-            # Safely fall back to alternative keys if the dictionary structure varies
-            target_path = (
-                chapter.get("file_path") or chapter.get("path") or self.app.file_path
-            )
+        if is_playlist and chapters:
+            chapter = chapters[self.app.playback.current_chapter_idx]
+            target_path = chapter.get("file_path") or chapter.get("path") or self.app.file_path
             self.app.playback.file_path = target_path
             self.app.playback.is_playlist = True
         else:

@@ -44,15 +44,41 @@ class AudioPlayer:
             check_cmd.extend(drm_flags)
         check_cmd.append(filepath)
 
-        try:
-            res = ProcessRunner.run_blocking(check_cmd, capture_output=True, text=True)
-            if not res.stdout.strip():
-                self.logger("Playback aborted: No readable audio stream detected.")
-                if self.on_error:
-                    self.on_error("NO_AUDIO")
-                return False
-        except Exception as e:
-            self.logger(f"Stream verification warning: {e}")
+        def verify_async():
+            try:
+                # -v error suppresses the diagnostics we want; bump to warning and keep stderr.
+                diag_cmd = [c if c != "error" else "warning" for c in check_cmd]
+                res = ProcessRunner.run_blocking(diag_cmd, capture_output=True, text=True)
+
+                stdout = (res.stdout or "").strip()
+                stderr = (res.stderr or "").strip()
+                rc = res.returncode
+
+                # Log the full picture every time, so a tester's log shows exactly what ffprobe saw.
+                self.logger(
+                    f"[AUDIO-PROBE] rc={rc} | streams_found={stdout!r} | "
+                    f"ffprobe_stderr={stderr!r} | file={filepath}"
+                )
+
+                # Only treat it as NO_AUDIO if ffprobe ran cleanly AND genuinely found no audio stream.
+                if rc != 0:
+                    # Probe itself failed (bad path, codec issue, DRM). Don't block playback on a
+                    # probe failure — let ffplay try; it may succeed where the probe choked.
+                    self.logger(
+                        f"[AUDIO-PROBE] ffprobe exited nonzero (rc={rc}); "
+                        f"proceeding to playback anyway."
+                    )
+                elif "audio" not in stdout.lower():
+                    self.logger("Playback aborted: No readable audio stream detected.")
+                    if self.on_error:
+                        self.on_error("NO_AUDIO")
+            except FileNotFoundError:
+                self.logger("[AUDIO-PROBE] ffprobe not found on PATH — skipping check, trying playback.")
+            except Exception as e:
+                self.logger(f"[AUDIO-PROBE] verification error ({type(e).__name__}): {e} — trying playback.")
+        
+        # Fire-and-forget: verify in background, don't wait
+        threading.Thread(target=verify_async, daemon=True).start()
 
         cmd = [
             "ffplay",

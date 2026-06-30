@@ -50,6 +50,10 @@ class LibraryManager:
         self.is_rate_limited = False
         self.rate_limit_reset_time = 0.0
 
+        self._playback_dirty = False
+        if start_workers:
+            threading.Thread(target=self._periodic_playback_flush, daemon=True).start()
+
     def run_background_library_scan(
         self, converter, active_profile, logger, thread_pool, on_refresh_cb=None
     ):
@@ -904,6 +908,20 @@ class LibraryManager:
         with self.queue_lock:
             self.import_queue.append({"task_id": safe_task_id, "func": worker})
 
+    def _periodic_playback_flush(self):
+        """Every 10 seconds, if playback state changed, persist it to the DB.
+        Batching avoids holding db_lock on every tick (which froze the main thread)."""
+        import time
+        while True:
+            time.sleep(10.0)
+            if self._playback_dirty:
+                try:
+                    self.db.save_local_db(self.local_library)
+                    self._playback_dirty = False
+                except Exception as e:
+                    # Log but don't crash; the next flush will retry
+                    pass
+
     def save_playback_state(self, state_dict, active_profile):
         if not state_dict:
             return
@@ -931,7 +949,7 @@ class LibraryManager:
             ):
                 entry.pop("read_status", None)
 
-            self.db.save_local_db(self.local_library)
+            self._playback_dirty = True
 
             settings = self.db.load_settings()
             settings[f"last_played_{active_profile}"] = file_path
@@ -1604,8 +1622,8 @@ class LibraryManager:
                                 error_msg=f"Book processing failed: {e}",
                             )
                     finally:
-                        if book_success:
-                            self.db.save_local_db(self.local_library)
+                        # if book_success:
+                        #     self.db.save_local_db(self.local_library)
                         if on_book_complete_cb:
                             on_book_complete_cb(sub_task_id, book_success)
 
