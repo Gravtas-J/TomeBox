@@ -7,7 +7,9 @@ from tkinter import messagebox, ttk
 import qrcode
 import requests
 from PIL import Image, ImageTk
-
+import secrets
+import socket
+import time
 
 def open_error_log_window(app):
     """Opens the Error Log popup window."""
@@ -656,34 +658,21 @@ def show_achievement_toast(app, title, desc):
 
 
 def open_pairing_window(app):
+    import json
     import secrets
-    import socket
     import time
 
-    # Dynamically grab the host machine's local IP
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("10.255.255.255", 1))
-        local_ip = s.getsockname()[0]
-    except Exception:
-        local_ip = "127.0.0.1"
-    finally:
-        s.close()
+    from core import wireguard
 
-    # --- Generate 5-Minute OTP ---
-    if not hasattr(app, "_active_otps"):
-        app._active_otps = {}
-
-    # Clear expired OTPs
-    now = time.time()
-    app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
-
-    # Mint fresh OTP
-    otp = secrets.token_urlsafe(16)
-    app._active_otps[otp] = now + 300  # Expires in 300 seconds (5 mins)
-
-    # Use a mutable state dictionary so button callbacks always see the newest URL
-    current_state = {"url": f"http://{local_ip}:8000/auth?otp={otp}"}
+    app_payload, wg_conf, otp = wireguard.build_pairing_payload(app, port=8000)
+    payload = json.loads(app_payload)
+    print(f"[PAIR] app_payload={app_payload!r}")
+    # QR carries the JSON packet; the text box shows a human-usable URL.
+    current_state = {
+        "payload": payload,                                          # mutated on refresh
+        "qr_text": app_payload,                                      # what the QR encodes
+        "manual_url": f"{payload['lan']}/auth?otp={payload['otp']}", # what a human types
+    }
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
@@ -695,86 +684,123 @@ def open_pairing_window(app):
     main_frame.pack(fill="both", expand=True)
 
     tk.Label(
-        main_frame,
-        text="Scan to Connect",
-        font=("Arial", 16, "bold"),
-        bg="#2b2b2b",
-        fg="white",
+        main_frame, text="Scan to Connect", font=("Arial", 16, "bold"),
+        bg="#2b2b2b", fg="white",
     ).pack(pady=(0, 10))
 
     tk.Label(
         main_frame,
         text="Point your phone's camera at this code\nto securely load your library.",
-        bg="#2b2b2b",
-        fg="#cccccc",
-        wraplength=350,
-        justify="center",
+        bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center",
     ).pack(pady=(0, 15))
 
-    # Generate initial QR
-    qr = qrcode.QRCode(box_size=8, border=2)
-    qr.add_data(current_state["url"])
+# --- Side-by-side QR codes ---
+    qr_row = tk.Frame(main_frame, bg="#2b2b2b")
+    qr_row.pack(pady=(0, 15))
+
+    # LEFT: WireGuard tunnel config (only if remote access is configured)
+    if wg_conf:
+        wg_col = tk.Frame(qr_row, bg="#2b2b2b")
+        wg_col.pack(side=tk.LEFT, padx=10)
+
+        tk.Label(
+            wg_col,
+            text="1. Scan this with the WireGuard app (remote access)",
+            bg="#2b2b2b", fg="#cccccc", font=("Arial", 9, "bold"),
+        ).pack(pady=(10, 5))
+
+        wg_qr = qrcode.QRCode(box_size=6, border=2)
+        wg_qr.add_data(wg_conf)
+        wg_qr.make(fit=True)
+        wg_img = wg_qr.make_image(fill_color="black", back_color="white")
+        wg_tk_image = ImageTk.PhotoImage(wg_img)
+
+        wg_label = tk.Label(wg_col, image=wg_tk_image, bg="#2b2b2b")
+        wg_label.image = wg_tk_image   # prevent garbage collection
+        wg_label.pack(pady=(0, 15))
+
+    # RIGHT: TomeBox pairing payload
+    app_col = tk.Frame(qr_row, bg="#2b2b2b")
+    app_col.pack(side=tk.LEFT, padx=10)
+
+    tk.Label(
+        app_col,
+        text="2. TomeBox app\n(pair library)" if wg_conf else "Scan with the TomeBox app",
+        bg="#2b2b2b", fg="#cccccc",
+        font=("Arial", 9, "bold"), justify="center",
+    ).pack(pady=(0, 6))
+
+    qr = qrcode.QRCode(box_size=5, border=2)
+    qr.add_data(current_state["qr_text"])
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     tk_image = ImageTk.PhotoImage(img)
 
-    qr_label = tk.Label(main_frame, image=tk_image, bg="#2b2b2b")
+    qr_label = tk.Label(app_col, image=tk_image, bg="#2b2b2b")
     qr_label.image = tk_image
-    qr_label.pack(pady=(0, 15))
+    qr_label.pack()
+    # Second QR: the raw WireGuard config, imported by the WireGuard app.
+    # if wg_conf:
+    #     tk.Label(
+    #         main_frame,
+    #         text="1. Scan this with the WireGuard app (remote access)",
+    #         bg="#2b2b2b", fg="#cccccc", font=("Arial", 9, "bold"),
+    #     ).pack(pady=(10, 5))
 
+    #     wg_qr = qrcode.QRCode(box_size=6, border=2)
+    #     wg_qr.add_data(wg_conf)
+    #     wg_qr.make(fit=True)
+    #     wg_img = wg_qr.make_image(fill_color="black", back_color="white")
+    #     wg_tk_image = ImageTk.PhotoImage(wg_img)
+
+    #     wg_label = tk.Label(main_frame, image=wg_tk_image, bg="#2b2b2b")
+    #     wg_label.image = wg_tk_image   # prevent garbage collection
+    #     wg_label.pack(pady=(0, 15))
     tk.Label(
-        main_frame,
-        text="Or open this URL manually:",
-        bg="#2b2b2b",
-        fg="#cccccc",
-        font=("Arial", 9),
+        main_frame, text="Or open this URL manually:",
+        bg="#2b2b2b", fg="#cccccc", font=("Arial", 9),
     ).pack(pady=(0, 5))
 
     url_text = tk.Text(
-        main_frame,
-        height=2,
-        wrap="word",
-        bg="#1e1e1e",
-        fg="#bb86fc",
-        font=("Consolas", 9),
-        relief="flat",
-        padx=10,
-        pady=8,
+        main_frame, height=2, wrap="word", bg="#1e1e1e", fg="#bb86fc",
+        font=("Consolas", 9), relief="flat", padx=10, pady=8,
     )
-    url_text.insert("1.0", current_state["url"])
+    url_text.insert("1.0", current_state["manual_url"])
     url_text.config(state="disabled")
     url_text.pack(fill="x", pady=(0, 5))
 
-    # --- Button Callbacks ---
+    # --- Button Callbacks (NOTE: nested inside open_pairing_window) ---
     def copy_url():
         top.clipboard_clear()
-        top.clipboard_append(current_state["url"])
+        top.clipboard_append(current_state["manual_url"])
         copy_btn.config(text="Copied!")
         top.after(1500, lambda: copy_btn.config(text="Copy URL"))
 
     def refresh_qr_code():
-        # Mint a new 5-minute OTP
+        # Re-mint ONLY the OTP. Deliberately does NOT call build_pairing_payload
+        # again — that would provision a brand-new WireGuard peer on every click.
         now = time.time()
         app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
-        new_otp = secrets.token_urlsafe(16)
-        app._active_otps[new_otp] = now + 300
+        new_otp = secrets.token_hex(4)
+        app._active_otps[new_otp] = now + 600
 
-        current_state["url"] = f"http://{local_ip}:8000/auth?otp={new_otp}"
+        p = current_state["payload"]
+        p["otp"] = new_otp
+        current_state["qr_text"] = json.dumps(p)
+        current_state["manual_url"] = f"{p['lan']}/auth?otp={new_otp}"
 
-        # Visually refresh the QR Code
         new_qr = qrcode.QRCode(box_size=8, border=2)
-        new_qr.add_data(current_state["url"])
+        new_qr.add_data(current_state["qr_text"])
         new_qr.make(fit=True)
         new_img = new_qr.make_image(fill_color="black", back_color="white")
         new_tk_image = ImageTk.PhotoImage(new_img)
 
         qr_label.config(image=new_tk_image)
-        qr_label.image = new_tk_image  # Prevent garbage collection
+        qr_label.image = new_tk_image  # prevent garbage collection
 
-        # Visually refresh the Text Box
         url_text.config(state="normal")
         url_text.delete("1.0", tk.END)
-        url_text.insert("1.0", current_state["url"])
+        url_text.insert("1.0", current_state["manual_url"])
         url_text.config(state="disabled")
 
     # --- Action Buttons ---
