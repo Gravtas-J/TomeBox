@@ -25,3 +25,4 @@ tomebox_installer.iss
 filelist.txt
 *.old
 poison_pill.py
+wireguard\TomeBox.conf
