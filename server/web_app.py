@@ -99,83 +99,19 @@ def create_server_app(tomebox):
 
     @api.get("/api/pairing-info")
     def get_pairing_info(request: Request):
-        """Provision a device: OTP + LAN URL + (if available) a WireGuard peer."""
-        import json
-        import secrets
-        import socket
-        import time
-
         from core import wireguard
 
-        # --- LAN IP (unchanged) ---
-        local_ip = "127.0.0.1"
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            pass
-
-        otp = secrets.token_hex(4)
-        if not hasattr(tomebox, "_active_otps"):
-            tomebox._active_otps = {}
-        tomebox._active_otps[otp] = time.time() + 600
-
         port = request.url.port or 8000
-        lan_url = f"http://{local_ip}:{port}"
+        app_payload, wg_conf, otp = wireguard.build_pairing_payload(tomebox, port=port)
 
-        payload = {
-            "v": 1,
-            "otp": otp,
-            "lan": lan_url,
-        }
-        wg_conf_text = None
-
-        # --- WireGuard peer, only if the tunnel is up and an endpoint is set ---
-        endpoint = tomebox.settings.get("wg_endpoint", "203.12.0.79:51820")  # "1.2.3.4:51820"
-        server_pub = wireguard.get_server_public_key()
-
-        if endpoint and server_pub:
-            peers = tomebox.settings.get("wg_peers", [])
-            tunnel_ip = wireguard.allocate_tunnel_ip(peers)
-            priv, pub = wireguard.generate_keypair()
-
-            wireguard.add_peer(pub, tunnel_ip)
-
-            # Persist the PUBLIC key only. The private key dies with this response.
-            peers.append({
-                "device_name": f"device-{tunnel_ip}",
-                "public_key": pub,
-                "tunnel_ip": tunnel_ip,
-                "created": time.time(),
-            })
-            tomebox.settings["wg_peers"] = peers
-            tomebox.db.save_settings(tomebox.settings)
-
-            payload["vpn"] = f"http://{wireguard.SERVER_TUNNEL_IP}:{port}"
-            payload["wg"] = {
-                "private_key": priv,
-                "address": f"{tunnel_ip}/32",
-                "peer_public_key": server_pub,
-                "endpoint": endpoint,
-                "allowed_ips": f"{wireguard.SERVER_TUNNEL_IP}/32",
-                "keepalive": 25,
-            }
-
-            # QR 1: the raw .conf the WireGuard app scans.
-            wg_conf_text = wireguard.build_client_config(
-                private_key=priv,
-                tunnel_ip=tunnel_ip,
-                server_public_key=server_pub,
-                endpoint=endpoint,
-            )
+        import json
+        lan = json.loads(app_payload)["lan"]
 
         return {
-            "pairing_url": f"{lan_url}/auth?otp={otp}",   # legacy, for the web JS
-            "token": otp,                                  # legacy
-            "app_payload": json.dumps(payload),            # QR 2: TomeBox app
-            "wg_config": wg_conf_text,                     # QR 1: WireGuard app (or None)
+            "pairing_url": f"{lan}/auth?otp={otp}",   # legacy, for the old web JS
+            "token": otp,                              # legacy
+            "app_payload": app_payload,                # QR 2: TomeBox app
+            "wg_config": wg_conf,                      # QR 1: WireGuard app (or None)
         }
 
     @api.get("/api/profiles/active")

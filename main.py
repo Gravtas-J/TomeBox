@@ -269,4 +269,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Elevated child process (spawned by wireguard.launch_setup via UAC).
+    # Must be intercepted BEFORE parse_args(), which would reject the unknown flag.
+    # Does the WireGuard setup and exits — never touches Tk or the DB.
+    if "--wg-setup" in sys.argv:
+        from core import wireguard
+        idx = sys.argv.index("--wg-setup")
+        sys.exit(wireguard.setup_entrypoint(sys.argv[idx + 1:]))
+
     main()

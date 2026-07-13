@@ -718,7 +718,45 @@ def open_pairing_window(app):
         wg_label = tk.Label(wg_col, image=wg_tk_image, bg="#2b2b2b")
         wg_label.image = wg_tk_image   # prevent garbage collection
         wg_label.pack(pady=(0, 15))
+    else:
+        setup_col = tk.Frame(qr_row, bg="#2b2b2b")
+        setup_col.pack(side=tk.LEFT, padx=10)
 
+        status = wireguard.get_status(app)
+        if not status["wireguard_installed"]:
+            msg = "WireGuard isn't installed.\nGet it from wireguard.com/install"
+            btn_state = "disabled"
+        else:
+            msg = "Remote access isn't set up.\nOne-time admin permission needed."
+            btn_state = "normal"
+
+        tk.Label(
+            setup_col, text=msg, bg="#2b2b2b", fg="#cccccc",
+            font=("Arial", 9), justify="center", wraplength=200,
+        ).pack(pady=(0, 10))
+
+        def do_setup():
+            setup_btn.config(text="Setting up…", state="disabled")
+
+            def worker():
+                ok, message = wireguard.launch_setup(app, app_port=8000)
+
+                def done():
+                    messagebox.showinfo("Remote Access", message, parent=app.root)
+                    top.destroy()
+                    if ok:
+                        open_pairing_window(app)
+
+                app.root.after(0, done)
+
+            app.thread_pool.submit(worker, task_type="standard")
+
+        setup_btn = tk.Button(
+            setup_col, text="Set up remote access", command=do_setup,
+            state=btn_state, bg="#bb86fc", fg="#1e1e1e",
+            font=("Arial", 9, "bold"), relief="flat", padx=15, pady=5,
+        )
+        setup_btn.pack()
     # RIGHT: TomeBox pairing payload
     app_col = tk.Frame(qr_row, bg="#2b2b2b")
     app_col.pack(side=tk.LEFT, padx=10)
