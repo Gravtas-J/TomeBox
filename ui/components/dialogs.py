@@ -723,12 +723,12 @@ def open_pairing_window(app):
         setup_col.pack(side=tk.LEFT, padx=10)
 
         status = wireguard.get_status(app)
-        if not status["wireguard_installed"]:
-            msg = "WireGuard isn't installed.\nGet it from wireguard.com/install"
-            btn_state = "disabled"
-        else:
+        if status["wireguard_installed"]:
             msg = "Remote access isn't set up.\nOne-time admin permission needed."
-            btn_state = "normal"
+        else:
+            msg = ("Remote access isn't set up.\nWireGuard will be installed "
+                   "automatically.\nOne-time admin permission needed.")
+        btn_state = "normal"
 
         tk.Label(
             setup_col, text=msg, bg="#2b2b2b", fg="#cccccc",

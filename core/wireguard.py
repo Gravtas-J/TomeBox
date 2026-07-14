@@ -66,6 +66,7 @@ SERVER_TUNNEL_IP = f"{SUBNET_PREFIX}.1"
 LISTEN_PORT = 51820
 DEFAULT_POOL_SIZE = 16
 
+CREATE_NO_WINDOW = 0x08000000
 
 # ---------------------------------------------------------------- key generation
 
@@ -216,16 +217,98 @@ def _setup_paths(data_dir: str) -> tuple[str, str]:
         os.path.join(wg_dir, "setup_result.json"),
     )
 
+def _resource_path(*parts) -> str:
+    """Path to a bundled resource. PyInstaller unpacks to sys._MEIPASS at runtime."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base, *parts)
+
+
+def install_wireguard() -> tuple[bool, str]:
+    """Silently install the bundled WireGuard MSI. MUST already be elevated.
+
+    /qn = fully silent, no UI. The user sees nothing — this rides on the single UAC
+    prompt they already approved for the tunnel setup.
+    """
+    if is_wireguard_installed():
+        return True, "already installed"
+
+    msi = _find_wireguard_msi()
+    if not msi:
+        return False, (
+            f"No bundled WireGuard installer for this system ({_os_arch()}). "
+            "Install WireGuard manually from wireguard.com/install and try again."
+        )
+    if not os.path.exists(msi):
+        return False, f"Bundled WireGuard installer not found at {msi}"
+
+    try:
+        result = subprocess.run(
+            ["msiexec", "/i", msi, "/qn", "/norestart", "DO_NOT_LAUNCH=1"],
+            capture_output=True, text=True, timeout=300,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        # msiexec: 0 = ok, 3010 = ok but wants a reboot (fine, the driver loads anyway)
+        if result.returncode not in (0, 3010):
+            return False, f"WireGuard install failed (msiexec code {result.returncode})"
+    except Exception as e:
+        return False, f"WireGuard install failed: {e}"
+
+    # msiexec returns before the files are necessarily on disk. Wait for wg.exe.
+    for _ in range(30):
+        if is_wireguard_installed():
+            return True, "installed"
+        time.sleep(1)
+
+    return False, "WireGuard installed but its binaries weren't found — a reboot may be needed."
+
+
+def _os_arch() -> str:
+    """OS architecture, not process architecture.
+
+    PROCESSOR_ARCHITEW6432 is set when a 32-bit process runs on 64-bit Windows —
+    without checking it, a 32-bit build would think the machine is x86.
+    """
+    arch = (os.environ.get("PROCESSOR_ARCHITEW6432")
+            or os.environ.get("PROCESSOR_ARCHITECTURE", "")).upper()
+    return {"AMD64": "amd64", "ARM64": "arm64", "X86": "x86"}.get(arch, "amd64")
+
+
+def _find_wireguard_msi() -> Optional[str]:
+    """Locate the bundled MSI for this machine's architecture.
+
+    Globbed rather than hardcoded, so bumping the WireGuard version doesn't
+    require a code change.
+    """
+    import glob
+
+    arch = _os_arch()
+    pattern = _resource_path("resources", f"wireguard-{arch}-*.msi")
+    matches = sorted(glob.glob(pattern))
+    return matches[-1] if matches else None   # highest version if several
 
 def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
               pool_size: int = DEFAULT_POOL_SIZE) -> dict:
     """THE ELEVATED HALF — runs inside the admin child process.
 
-    Generates everything, installs the tunnel as an auto-start service, opens the
-    firewall, and writes a JSON handoff for the unprivileged parent to pick up.
+    Installs WireGuard if absent, generates everything, installs the tunnel as an
+    auto-start service, and opens the firewall. Writes a JSON handoff for the
+    unprivileged parent.
     """
     conf_path, result_path = _setup_paths(data_dir)
 
+    def fail(msg: str) -> dict:
+        result = {"ok": False, "error": msg}
+        with open(result_path, "w", encoding="utf-8") as fh:
+            json.dump(result, fh)
+        return result
+
+    # 0. WireGuard itself. We're already elevated, so this is free to the user —
+    #    no second UAC prompt, no separate install step, nothing to click.
+    ok, msg = install_wireguard()
+    if not ok:
+        return fail(msg)
+
+    # 1. Keys: the server, plus a pool of device slots.
     server_priv, server_pub = generate_keypair()
 
     pool = []
@@ -240,10 +323,12 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
             "claimed_at": None,
         })
 
+    # 2. The tunnel config, with every pool peer baked in. This is what lets pairing
+    #    run unprivileged later — no `wg set` is ever needed at runtime.
     with open(conf_path, "w", encoding="utf-8") as fh:
         fh.write(build_server_config(server_priv, pool))
 
-    # Idempotent: tear down any previous install first.
+    # 3. Idempotent: tear down any previous install first.
     if tunnel_service_exists():
         subprocess.run(
             [WIREGUARD_EXE, "/uninstalltunnelservice", TUNNEL_NAME],
@@ -251,32 +336,33 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
         )
         time.sleep(2)
 
-    # This is the step that needs admin — and the reason it only needs it ONCE:
-    # it registers an auto-start Windows service. Windows brings the tunnel up on
-    # every boot from here on, with no involvement from TomeBox.
+    # 4. Register the tunnel as an AUTO-START Windows service. This is the whole
+    #    reason elevation is only needed once: Windows brings the tunnel up on every
+    #    boot from here on, with no involvement from TomeBox.
     install = subprocess.run(
         [WIREGUARD_EXE, "/installtunnelservice", conf_path],
         capture_output=True, text=True, timeout=30,
     )
+    if install.returncode != 0:
+        return fail(f"Tunnel install failed: {install.stderr.strip() or 'unknown error'}")
 
-    # Windows classifies the new WireGuard adapter as a Public network and blocks
-    # inbound by default. This is the single most common reason a working tunnel
-    # still can't reach TomeBox — so open it here, while we already have admin.
+    # 5. Firewall. Windows classifies the new WireGuard adapter as a Public network
+    #    and blocks inbound by default — the single most common reason a working
+    #    tunnel still can't reach TomeBox. Open it while we still have admin.
     for proto, port, label in (
         ("TCP", app_port, "TomeBox (WireGuard)"),
         ("UDP", LISTEN_PORT, "WireGuard (TomeBox)"),
     ):
         subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             f"New-NetFirewallRule -DisplayName '{label}' -Direction Inbound "
-             f"-Action Allow -Protocol {proto} -LocalPort {port} -Profile Any "
-             f"-ErrorAction SilentlyContinue"],
-            capture_output=True, timeout=20,
+            ["netsh", "advfirewall", "firewall", "add", "rule",
+             f"name={label}", "dir=in", "action=allow",
+             f"protocol={proto}", f"localport={port}"],
+            capture_output=True, timeout=20, creationflags=CREATE_NO_WINDOW,
         )
 
     result = {
-        "ok": install.returncode == 0,
-        "error": install.stderr.strip() if install.returncode != 0 else None,
+        "ok": True,
+        "error": None,
         "wg_server_public": server_pub,
         "wg_endpoint": endpoint,
         "wg_pool": pool,
@@ -298,11 +384,11 @@ def launch_setup(tomebox, app_port: int = 8000,
     and merges the results into settings. After this succeeds, remote access is live
     permanently and no elevation is ever needed again.
     """
-    if not is_wireguard_installed():
-        return False, (
-            "WireGuard for Windows isn't installed. Install it from "
-            "wireguard.com/install, then try again."
-        )
+    # if not is_wireguard_installed():
+    #     return False, (
+    #         "WireGuard for Windows isn't installed. Install it from "
+    #         "wireguard.com/install, then try again."
+    #     )
 
     # Endpoint: use whatever the user configured, else auto-detect.
     configured = tomebox.settings.get("wg_endpoint", "")
@@ -329,13 +415,17 @@ def launch_setup(tomebox, app_port: int = 8000,
         exe = sys.executable
         params = f'--wg-setup "{data_dir}" "{endpoint}" {app_port} {pool_size}'
     else:
-        exe = sys.executable
+        exe = sys.executable.replace("python.exe", "pythonw.exe")
         script = os.path.abspath(sys.argv[0])
         params = f'"{script}" --wg-setup "{data_dir}" "{endpoint}" {app_port} {pool_size}'
+        work_dir = os.path.dirname(script)
 
     try:
         # The "runas" verb is what raises the UAC prompt.
-        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", exe, params, work_dir,
+            0,  
+        )
         if rc <= 32:
             return False, "Administrator permission was declined. Remote access not set up."
     except Exception as e:
