@@ -937,9 +937,13 @@ class LibraryManager:
             entry["last_time"] = state_dict["rel_time"]
             entry["last_position"] = state_dict["abs_time"]
 
+            import time
             if "progress" not in entry:
                 entry["progress"] = {}
+            if "progress_updated" not in entry:          # NEW
+                entry["progress_updated"] = {}           # NEW
             entry["progress"][active_profile] = state_dict["abs_time"]
+            entry["progress_updated"][active_profile] = time.time() 
 
             # Finished book whose playhead jumped back well before the end → being
             # re-listened, so drop the flag and let progress drive the status again.

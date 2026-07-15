@@ -723,7 +723,7 @@ def open_pairing_window(app):
         setup_col.pack(side=tk.LEFT, padx=10)
 
         status = wireguard.get_status(app)
-        if status["wireguard_installed"]:
+        if status["tools_available"]:
             msg = "Remote access isn't set up.\nOne-time admin permission needed."
         else:
             msg = ("Remote access isn't set up.\nWireGuard will be installed "
