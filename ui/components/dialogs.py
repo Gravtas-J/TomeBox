@@ -907,10 +907,24 @@ def open_remote_setup(app):
             w.destroy()
 
         if status == "cgnat":
-            status_lbl.config(text="Remote access isn't available on this connection.",
-                              fg="#ff6b6b")
+            status_lbl.config(
+                text="Your ISP uses CGNAT — normal remote access won't work.",
+                fg="#ff6b6b",
+            )
             tk.Label(body, text=diag["message"], bg="#2b2b2b", fg="#cccccc",
-                     wraplength=380, justify="left").pack(pady=(0, 12))
+                     wraplength=380, justify="left").pack(pady=(0, 10))
+
+            tk.Label(body,
+                     text="Advanced: if you have a forwarded port from a VPN "
+                          "(e.g. ProtonVPN Port Forwarding) or another relay, you "
+                          "can use it here.",
+                     bg="#2b2b2b", fg="#ffcc66", wraplength=380,
+                     justify="left").pack(pady=(4, 8))
+
+            tk.Button(body, text="I have a forwarded port →",
+                      command=lambda: _render_forwarded_form(),
+                      bg="#bb86fc", fg="#1e1e1e", relief="flat",
+                      font=("Arial", 9, "bold"), padx=15, pady=5).pack(pady=(0, 6))
             tk.Button(body, text="Close", command=win.destroy, bg="#555",
                       fg="white", relief="flat", padx=15, pady=5).pack()
             return
@@ -928,6 +942,65 @@ def open_remote_setup(app):
             fg="#8fd694",
         )
         _render_endpoint_form(diag, prefill=diag["public_ip"])
+        
+    def _render_forwarded_form():
+        for w in body.winfo_children():
+            w.destroy()
+        status_lbl.config(
+            text="Enter the forwarded connection details from your VPN or relay.",
+            fg="#cccccc",
+        )
+
+        tk.Label(body, text="Public address & port (what your VPN/relay exposes):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(4, 2))
+        ep = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                      font=("Consolas", 10), width=38)
+        ep.insert(0, "")
+        ep.pack(fill="x", pady=(0, 2))
+        tk.Label(body, text="e.g.  proton-server-ip:41234",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 10))
+
+        tk.Label(body,
+                 text="WireGuard will listen on the forwarded port so the two line "
+                      "up. Note: remote access only works while your VPN is "
+                      "connected on this computer.",
+                 bg="#2b2b2b", fg="#ffcc66", wraplength=380,
+                 justify="left").pack(anchor="w", pady=(0, 10))
+        def done(ok, msg):
+            messagebox.showinfo("Remote Access", msg, parent=app.root)
+            win.destroy()
+            if ok:
+                open_pairing_window(app)
+        def proceed():
+            raw = ep.get().strip()
+            if ":" not in raw:
+                messagebox.showwarning("Address needed",
+                                       "Enter the address and port as ip:port.",
+                                       parent=win)
+                return
+            host, _, port = raw.rpartition(":")
+            try:
+                port = int(port)
+            except ValueError:
+                messagebox.showwarning("Port", "Port must be a number.", parent=win)
+                return
+
+            app.settings["wg_endpoint"] = f"{host.strip()}:{port}"
+            app.settings["wg_listen_port"] = port   # NEW: match the forwarded port
+            app.db.save_settings(app.settings)
+
+            btn.config(text="Setting up…", state="disabled")
+            win.update_idletasks()
+
+            def worker():
+                ok, msg = wireguard.launch_setup(app, app_port=8000)
+                app.root.after(0, lambda: done(ok, msg))
+            app.thread_pool.submit(worker, task_type="standard")
+
+        btn = tk.Button(body, text="Set up with forwarded port", command=proceed,
+                        bg="#bb86fc", fg="#1e1e1e", font=("Arial", 10, "bold"),
+                        relief="flat", padx=15, pady=6)
+        btn.pack()
 
     def _render_endpoint_form(diag, prefill):
         tk.Label(body,

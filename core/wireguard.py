@@ -199,12 +199,12 @@ def get_status(tomebox) -> dict:
 
 # ------------------------------------------------------------- config building
 
-def build_server_config(server_private: str, pool: list[dict]) -> str:
+def build_server_config(server_private, pool, listen_port=LISTEN_PORT):
     lines = [
         "[Interface]",
         f"PrivateKey = {server_private}",
         f"Address = {SERVER_TUNNEL_IP}/24",
-        f"ListenPort = {LISTEN_PORT}",
+        f"ListenPort = {listen_port}",
         "",
     ]
     for slot in pool:
@@ -251,7 +251,7 @@ def _setup_paths(data_dir: str) -> tuple[str, str]:
 # ------------------------------------------------------------------ the setup
 
 def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
-              pool_size: int = DEFAULT_POOL_SIZE) -> dict:
+              pool_size: int = DEFAULT_POOL_SIZE, listen_port: int = LISTEN_PORT) -> dict:
     """THE ELEVATED HALF — runs in the privileged child process.
 
     Platform-agnostic orchestration; the backend does the OS-specific parts.
@@ -294,7 +294,7 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
     # 2. The tunnel config, with every pool peer baked in. THIS is what lets pairing
     #    run unprivileged later — no `wg set` is ever needed at runtime.
     with open(conf_path, "w", encoding="utf-8") as fh:
-        fh.write(build_server_config(server_priv, pool))
+        fh.write(build_server_config(server_priv, pool, listen_port))
     try:
         os.chmod(conf_path, 0o600)   # contains the server private key
     except Exception:
@@ -340,6 +340,7 @@ def launch_setup(tomebox, app_port: int = 8000,
     Blocks for up to ~5 minutes (installing WireGuard can be slow). Call from a
     worker thread, never from a UI callback.
     """
+    listen_port = tomebox.settings.get("wg_listen_port", LISTEN_PORT)
     try:
         be = _backend()
     except Exception as e:
@@ -382,7 +383,7 @@ def launch_setup(tomebox, app_port: int = 8000,
         argv = [sys.executable, script]
         work_dir = os.path.dirname(script)
 
-    argv += ["--wg-setup", data_dir, endpoint, str(app_port), str(pool_size)]
+    argv += ["--wg-setup", data_dir, endpoint, str(app_port), str(pool_size), str(listen_port)]
 
     ok, msg = be.elevate(argv, work_dir)
     if not ok:
@@ -427,11 +428,12 @@ def setup_entrypoint(argv: list[str]) -> int:
     try:
         data_dir, endpoint = argv[0], argv[1]
         app_port, pool_size = int(argv[2]), int(argv[3])
+        listen_port = int(argv[4]) if len(argv) > 4 else LISTEN_PORT
     except (IndexError, ValueError):
         return 1
 
     try:
-        result = run_setup(data_dir, endpoint, app_port, pool_size)
+        result = run_setup(data_dir, endpoint, app_port, pool_size, listen_port)
         return 0 if result.get("ok") else 1
     except Exception as e:
         # Always report SOMETHING, or the parent just times out blind.
