@@ -30,7 +30,12 @@ def _run(args, timeout=30):
 
 class Backend:
     name = "windows"
+    no_window_flag = CREATE_NO_WINDOW
 
+    def traceroute_cmd(self, host: str, max_hops: int) -> list:
+        # -d = don't resolve names (faster), -h = max hops, -w = per-hop timeout ms
+        return ["tracert", "-d", "-h", str(max_hops), "-w", "1500", host]
+    
     def tools_available(self) -> bool:
         return os.path.exists(WG_EXE) and os.path.exists(WIREGUARD_EXE)
 

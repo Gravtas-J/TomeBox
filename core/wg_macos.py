@@ -34,7 +34,11 @@ def _env():
 
 class Backend:
     name = "macos"
+    no_window_flag = 0
 
+    def traceroute_cmd(self, host: str, max_hops: int) -> list:
+        # -n = numeric, -m = max hops, -w = wait seconds, -q 1 = one probe per hop
+        return ["traceroute", "-n", "-m", str(max_hops), "-w", "2", "-q", "1", host]
     def tools_available(self) -> bool:
         # We ship our own binaries, so "available" means the bundle is present.
         return os.path.exists(WG_QUICK) and os.path.exists(WG)

@@ -736,20 +736,8 @@ def open_pairing_window(app):
         ).pack(pady=(0, 10))
 
         def do_setup():
-            setup_btn.config(text="Setting up…", state="disabled")
-
-            def worker():
-                ok, message = wireguard.launch_setup(app, app_port=8000)
-
-                def done():
-                    messagebox.showinfo("Remote Access", message, parent=app.root)
-                    top.destroy()
-                    if ok:
-                        open_pairing_window(app)
-
-                app.root.after(0, done)
-
-            app.thread_pool.submit(worker, task_type="standard")
+            top.destroy()               # close the pairing window
+            open_remote_setup(app)      # diagnose → prompt → setup
 
         setup_btn = tk.Button(
             setup_col, text="Set up remote access", command=do_setup,
@@ -885,6 +873,111 @@ def open_pairing_window(app):
     y = parent_y + (parent_h // 2) - (win_h // 2)
     top.geometry(f"+{x}+{y}")
 
+def open_remote_setup(app):
+    """Diagnose the connection, then either dead-end (CGNAT) or offer setup with an
+    optional DDNS hostname (the normal case)."""
+    from core import wireguard
+
+    win = tk.Toplevel(app.root)
+    win.title("Set Up Remote Access")
+    win.configure(bg="#2b2b2b")
+    win.transient(app.root)
+    win.resizable(False, False)
+
+    frame = tk.Frame(win, bg="#2b2b2b", padx=25, pady=20)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(frame, text="Set Up Remote Access", font=("Arial", 15, "bold"),
+             bg="#2b2b2b", fg="white").pack(pady=(0, 12))
+
+    status_lbl = tk.Label(frame, text="Checking your connection…", bg="#2b2b2b",
+                          fg="#cccccc", wraplength=380, justify="left")
+    status_lbl.pack(pady=(0, 12))
+
+    body = tk.Frame(frame, bg="#2b2b2b")
+    body.pack(fill="x")
+
+    def run_diagnosis():
+        diag = wireguard.diagnose_connectivity()
+        app.root.after(0, lambda: render(diag))
+
+    def render(diag):
+        status = diag["status"]
+        for w in body.winfo_children():
+            w.destroy()
+
+        if status == "cgnat":
+            status_lbl.config(text="Remote access isn't available on this connection.",
+                              fg="#ff6b6b")
+            tk.Label(body, text=diag["message"], bg="#2b2b2b", fg="#cccccc",
+                     wraplength=380, justify="left").pack(pady=(0, 12))
+            tk.Button(body, text="Close", command=win.destroy, bg="#555",
+                      fg="white", relief="flat", padx=15, pady=5).pack()
+            return
+
+        if status in ("private", "unknown"):
+            # Can't auto-detect, but a DDNS hostname might still work — let them try.
+            status_lbl.config(text=diag["message"], fg="#ffcc66")
+            _render_endpoint_form(diag, prefill="")
+            return
+
+        # status == "ok"
+        status_lbl.config(
+            text=f"Your connection supports remote access.\n"
+                 f"Detected public address: {diag['public_ip']}",
+            fg="#8fd694",
+        )
+        _render_endpoint_form(diag, prefill=diag["public_ip"])
+
+    def _render_endpoint_form(diag, prefill):
+        tk.Label(body,
+                 text="Remote address (leave as-is, or enter a dynamic DNS hostname\n"
+                      "if your home IP address changes):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(4, 4))
+
+        entry = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                         font=("Consolas", 10), width=38)
+        entry.insert(0, prefill)
+        entry.pack(fill="x", pady=(0, 4))
+
+        tk.Label(body,
+                 text="Examples:  203.0.113.45   or   myhome.duckdns.org",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 12))
+
+        def proceed():
+            host = entry.get().strip()
+            if not host:
+                messagebox.showwarning("Address needed",
+                                       "Enter a public IP or a dynamic DNS hostname.",
+                                       parent=win)
+                return
+            # Strip any :port the user typed; launch_setup appends the WG port.
+            host = host.split(":")[0]
+            app.settings["wg_endpoint"] = f"{host}:{wireguard.LISTEN_PORT}"
+            app.db.save_settings(app.settings)
+
+            btn.config(text="Setting up…", state="disabled")
+            win.update_idletasks()
+
+            def worker():
+                ok, msg = wireguard.launch_setup(app, app_port=8000)
+                app.root.after(0, lambda: done(ok, msg))
+
+            app.thread_pool.submit(worker, task_type="standard")
+
+        def done(ok, msg):
+            messagebox.showinfo("Remote Access", msg, parent=app.root)
+            win.destroy()
+            if ok:
+                open_pairing_window(app)   # reopen — both QRs will be there now
+
+        btn = tk.Button(body, text="Set up remote access", command=proceed,
+                        bg="#bb86fc", fg="#1e1e1e", font=("Arial", 10, "bold"),
+                        relief="flat", padx=15, pady=6)
+        btn.pack()
+
+    # Run the network probe off the UI thread — it does an HTTP call.
+    app.thread_pool.submit(run_diagnosis, task_type="standard")
 
 def open_match_to_audible_window(app, filepath):
     import os

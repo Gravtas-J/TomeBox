@@ -24,7 +24,11 @@ SYSTEMD_UNIT = f"wg-quick@{wg.TUNNEL_NAME}"
 
 class Backend:
     name = "linux"
+    no_window_flag = 0
 
+    def traceroute_cmd(self, host: str, max_hops: int) -> list:
+        # -n = numeric, -m = max hops, -w = wait seconds, -q 1 = one probe per hop
+        return ["traceroute", "-n", "-m", str(max_hops), "-w", "2", "-q", "1", host]
     def tools_available(self) -> bool:
         return shutil.which("wg") is not None and shutil.which("wg-quick") is not None
 
