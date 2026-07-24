@@ -1016,7 +1016,18 @@ def open_remote_setup(app):
         tk.Label(body,
                  text="Examples:  203.0.113.45   or   myhome.duckdns.org",
                  bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 12))
+        tk.Label(body, text="WireGuard port (change only if 51820 is already "
+                            "forwarded to another machine):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(8, 2))
 
+        port_entry = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                              font=("Consolas", 10), width=10)
+        port_entry.insert(0, str(app.settings.get("wg_listen_port",
+                                                  wireguard.LISTEN_PORT)))
+        port_entry.pack(anchor="w", pady=(0, 4))
+
+        tk.Label(body, text="Your router must forward this UDP port to this computer.",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 12))
         def proceed():
             host = entry.get().strip()
             if not host:
@@ -1024,9 +1035,18 @@ def open_remote_setup(app):
                                        "Enter a public IP or a dynamic DNS hostname.",
                                        parent=win)
                 return
-            # Strip any :port the user typed; launch_setup appends the WG port.
+            try:
+                port = int(port_entry.get().strip())
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning("Port", "Port must be a number between 1 and 65535.",
+                                       parent=win)
+                return
+
             host = host.split(":")[0]
-            app.settings["wg_endpoint"] = f"{host}:{wireguard.LISTEN_PORT}"
+            app.settings["wg_listen_port"] = port
+            app.settings["wg_endpoint"] = f"{host}:{port}"
             app.db.save_settings(app.settings)
 
             btn.config(text="Setting up…", state="disabled")

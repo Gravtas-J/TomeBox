@@ -312,7 +312,7 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
     # 5. Firewall. Best-effort: a failure is user-recoverable, and on some platforms
     #    there is nothing to do.
     try:
-        be.open_firewall(app_port)
+        be.open_firewall(app_port, listen_port)
     except Exception:
         pass
 
@@ -348,7 +348,7 @@ def launch_setup(tomebox, app_port: int = 8000,
 
     if not be.tools_available() and not be.can_auto_install():
         return False, be.install_hint()
-
+    
     # Endpoint: whatever the user configured, else auto-detect.
     configured = tomebox.settings.get("wg_endpoint", "")
     host = configured.split(":")[0] if configured else ""
@@ -364,7 +364,7 @@ def launch_setup(tomebox, app_port: int = 8000,
             )
         host = diag["public_ip"]                     # status == "ok"
 
-    endpoint = f"{host}:{LISTEN_PORT}"
+    endpoint = f"{host}:{listen_port}"
     data_dir = tomebox.base_dir
 
     # Create the directory UNPRIVILEGED, before elevating. On POSIX the elevated

@@ -79,7 +79,7 @@ class Backend:
         except Exception:
             return False
 
-    def open_firewall(self, app_port: int) -> None:
+    def open_firewall(self, app_port: int, wg_port: int = None) -> None:
         # Firewall situation is a zoo (ufw/firewalld/nftables/none). Try the common
         # front-ends if present; otherwise do nothing and let the user handle it.
         if shutil.which("ufw"):

@@ -174,7 +174,7 @@ class Backend:
         except Exception:
             return False
 
-    def open_firewall(self, app_port: int) -> None:
+    def open_firewall(self, app_port: int, wg_port: int = None) -> None:
         # macOS's application firewall is off by default and filters by app, not
         # port — so there is nothing to open. (This avoids the Windows trap where a
         # working tunnel still can't reach the app port.)

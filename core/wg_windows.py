@@ -86,12 +86,11 @@ class Backend:
         except Exception:
             return False
 
-    def open_firewall(self, app_port: int) -> None:
-        # netsh is a plain console app (no PowerShell window). Idempotent-ish:
-        # delete-then-add so repeated setups don't stack duplicate rules.
+    def open_firewall(self, app_port: int, wg_port: int = None) -> None:
+        wg_port = wg_port or wg.LISTEN_PORT
         for proto, port, label in (
             ("TCP", app_port, "TomeBox (WireGuard)"),
-            ("UDP", wg.LISTEN_PORT, "WireGuard (TomeBox)"),
+            ("UDP", wg_port, "WireGuard (TomeBox)"),   # was wg.LISTEN_PORT
         ):
             _run(["netsh", "advfirewall", "firewall", "delete", "rule",
                   f"name={label}"], timeout=20)
