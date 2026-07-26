@@ -873,6 +873,53 @@ def open_pairing_window(app):
     y = parent_y + (parent_h // 2) - (win_h // 2)
     top.geometry(f"+{x}+{y}")
 
+def reset_remote_access(app):
+    """Full teardown: clear settings, delete config, uninstall tunnel service.
+    The tunnel uninstall needs elevation, so we shell out elevated for that one step."""
+    from tkinter import messagebox
+    from core import wireguard
+
+    confirm = messagebox.askyesno(
+        "Remove Remote Access",
+        "This will:\n\n"
+        "• Remove the WireGuard tunnel from this computer\n"
+        "• Delete the tunnel configuration\n"
+        "• Clear all paired device slots\n\n"
+        "Paired phones will need to re-pair after you set up again.\n\n"
+        "Continue?",
+        parent=app.root,
+    )
+    if not confirm:
+        return
+
+    # 1. Uninstall the tunnel service (needs elevation).
+    try:
+        be = wireguard._backend()
+        be.uninstall_tunnel()
+    except Exception as e:
+        app.logger(f"Tunnel uninstall failed (may need admin): {e}")
+
+    # 2. Delete the config file.
+    conf_path = app.settings.get("wg_conf_path", "")
+    if conf_path:
+        import os, shutil
+        wg_dir = os.path.dirname(conf_path)
+        if os.path.isdir(wg_dir):
+            shutil.rmtree(wg_dir, ignore_errors=True)
+
+    # 3. Clear all WG keys from settings.
+    for key in ("wg_server_public", "wg_endpoint", "wg_pool",
+                "wg_conf_path", "wg_listen_port"):
+        app.settings.pop(key, None)
+    app.db.save_settings(app.settings)
+
+    messagebox.showinfo(
+        "Remote Access Removed",
+        "Remote access has been removed. You can set it up again from the "
+        "pairing window at any time.",
+        parent=app.root,
+    )
+
 def open_remote_setup(app):
     """Diagnose the connection, then either dead-end (CGNAT) or offer setup with an
     optional DDNS hostname (the normal case)."""
@@ -897,51 +944,69 @@ def open_remote_setup(app):
     body = tk.Frame(frame, bg="#2b2b2b")
     body.pack(fill="x")
 
-    def run_diagnosis():
-        diag = wireguard.diagnose_connectivity()
-        app.root.after(0, lambda: render(diag))
-
-    def render(diag):
-        status = diag["status"]
+    def ask_connection_type():
+        """Put the CGNAT question to the user directly. Auto-detection lied too
+        often (ISPs that don't lay out their networks conventionally), so the user
+        tells us what they have."""
         for w in body.winfo_children():
             w.destroy()
 
-        if status == "cgnat":
-            status_lbl.config(
-                text="Your ISP uses CGNAT — normal remote access won't work.",
-                fg="#ff6b6b",
-            )
-            tk.Label(body, text=diag["message"], bg="#2b2b2b", fg="#cccccc",
-                     wraplength=380, justify="left").pack(pady=(0, 10))
-
-            tk.Label(body,
-                     text="Advanced: if you have a forwarded port from a VPN "
-                          "(e.g. ProtonVPN Port Forwarding) or another relay, you "
-                          "can use it here.",
-                     bg="#2b2b2b", fg="#ffcc66", wraplength=380,
-                     justify="left").pack(pady=(4, 8))
-
-            tk.Button(body, text="I have a forwarded port →",
-                      command=lambda: _render_forwarded_form(),
-                      bg="#bb86fc", fg="#1e1e1e", relief="flat",
-                      font=("Arial", 9, "bold"), padx=15, pady=5).pack(pady=(0, 6))
-            tk.Button(body, text="Close", command=win.destroy, bg="#555",
-                      fg="white", relief="flat", padx=15, pady=5).pack()
-            return
-
-        if status in ("private", "unknown"):
-            # Can't auto-detect, but a DDNS hostname might still work — let them try.
-            status_lbl.config(text=diag["message"], fg="#ffcc66")
-            _render_endpoint_form(diag, prefill="")
-            return
-
-        # status == "ok"
         status_lbl.config(
-            text=f"Your connection supports remote access.\n"
-                 f"Detected public address: {diag['public_ip']}",
-            fg="#8fd694",
+            text="What kind of internet connection does this computer have?",
+            fg="#cccccc",
         )
-        _render_endpoint_form(diag, prefill=diag["public_ip"])
+
+        tk.Label(body,
+                 text="If you're not sure: most home connections have a public IP. "
+                      "If your ISP uses CGNAT (common on mobile broadband and some "
+                      "fibre plans), incoming connections can't reach you directly.",
+                 bg="#2b2b2b", fg="#888", wraplength=380, justify="left"
+                 ).pack(pady=(0, 14))
+
+        tk.Button(body, text="I have a public IP address",
+                  command=lambda: _render_endpoint_form(prefill_detected()),
+                  bg="#bb86fc", fg="#1e1e1e", relief="flat",
+                  font=("Arial", 10, "bold"), padx=15, pady=6).pack(fill="x", pady=(0, 6))
+
+        tk.Button(body, text="I'm behind CGNAT / not directly reachable",
+                  command=cgnat_path,
+                  bg="#555", fg="white", relief="flat",
+                  font=("Arial", 10), padx=15, pady=6).pack(fill="x", pady=(0, 6))
+
+        tk.Label(body,
+                 text="Not sure? Try “public IP” first — if remote access doesn't "
+                      "work afterwards, come back and choose CGNAT.",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8),
+                 wraplength=380, justify="left").pack(pady=(6, 0))
+
+    def prefill_detected() -> str:
+        """Best-effort IP to pre-fill — a convenience, NOT a gate. The user can
+        overwrite it with anything (a DDNS hostname, a corrected IP)."""
+        try:
+            ip = wireguard.detect_public_endpoint()
+            return ip or ""
+        except Exception:
+            return ""
+
+    def cgnat_path():
+        for w in body.winfo_children():
+            w.destroy()
+        status_lbl.config(text="Remote access needs a reachable address.", fg="#ffcc66")
+        tk.Label(body,
+                 text="Because your connection is behind CGNAT, TomeBox can't be "
+                      "reached directly from the internet. Your options:\n\n"
+                      "• Ask your ISP for a public IP (often free on request)\n"
+                      "• Use a forwarded port from a VPN or relay (advanced)\n\n"
+                      "A dynamic DNS hostname will NOT fix CGNAT.",
+                 bg="#2b2b2b", fg="#cccccc", wraplength=380, justify="left"
+                 ).pack(pady=(0, 12))
+
+        tk.Button(body, text="I have a forwarded port →",
+                  command=_render_forwarded_form,
+                  bg="#bb86fc", fg="#1e1e1e", relief="flat",
+                  font=("Arial", 9, "bold"), padx=15, pady=5).pack(pady=(0, 6))
+        tk.Button(body, text="Close", command=win.destroy,
+                  bg="#555", fg="white", relief="flat", padx=15, pady=5).pack()
         
     def _render_forwarded_form():
         for w in body.winfo_children():
@@ -1002,7 +1067,7 @@ def open_remote_setup(app):
                         relief="flat", padx=15, pady=6)
         btn.pack()
 
-    def _render_endpoint_form(diag, prefill):
+    def _render_endpoint_form(prefill=""):
         tk.Label(body,
                  text="Remote address (leave as-is, or enter a dynamic DNS hostname\n"
                       "if your home IP address changes):",
@@ -1070,7 +1135,8 @@ def open_remote_setup(app):
         btn.pack()
 
     # Run the network probe off the UI thread — it does an HTTP call.
-    app.thread_pool.submit(run_diagnosis, task_type="standard")
+    # app.thread_pool.submit(ask_connection_type(), task_type="standard")
+    ask_connection_type()
 
 def open_match_to_audible_window(app, filepath):
     import os

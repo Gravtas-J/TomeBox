@@ -51,7 +51,7 @@ SUBNET_PREFIX = "10.9.0"
 SERVER_TUNNEL_IP = f"{SUBNET_PREFIX}.1"
 LISTEN_PORT = 51820
 DEFAULT_POOL_SIZE = 16
-_CGNAT_RE = re.compile(r"\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b")
+# _CGNAT_RE = re.compile(r"\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b")
 
 # -------------------------------------------------------------------- backend
 
@@ -135,8 +135,46 @@ def tunnel_running() -> bool:
             s.close()
 
 
-def local_ip() -> str:
-    """This machine's LAN address."""
+def local_ip(override: str = "") -> str:
+    """This machine's LAN address.
+
+    NOT the route-to-8.8.8.8 trick — when TomeBox is inside a VPN's split-tunnel
+    include list, that route leaves via the VPN adapter and returns the tunnel's
+    internal address (10.2.0.2) rather than the LAN one.
+    """
+    if override:
+        return override.strip()
+
+    candidates: list[str] = []
+    try:
+        import psutil
+
+        for _name, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if a.family != socket.AF_INET:
+                    continue
+                ip = a.address
+                mask = a.netmask or ""
+                if ip.startswith("127."):
+                    continue
+                # /32 = point-to-point, i.e. a VPN adapter, not a LAN interface.
+                if mask == "255.255.255.255":
+                    continue
+                candidates.append(ip)
+    except Exception:
+        pass
+
+    # Prefer a conventional private LAN range.
+    for ip in candidates:
+        if ip.startswith("192.168.") or ip.startswith("10."):
+            return ip
+        parts = ip.split(".")
+        if len(parts) == 4 and parts[0] == "172" and 16 <= int(parts[1]) <= 31:
+            return ip
+    if candidates:
+        return candidates[0]
+
+    # Last resort: the old route trick.
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -354,15 +392,15 @@ def launch_setup(tomebox, app_port: int = 8000,
     host = configured.split(":")[0] if configured else ""
 
     if not host:
-        diag = diagnose_connectivity()
-        if diag["status"] == "cgnat":
-            return False, diag["message"]           # dead end — don't pretend DDNS helps
-        if diag["status"] in ("private", "unknown"):
-            return False, diag["message"] + (
-                "\n\nIf you have a dynamic DNS hostname, enter it in settings and "
-                "try again."
-            )
-        host = diag["public_ip"]                     # status == "ok"
+        # The setup dialog normally writes wg_endpoint before we get here. This is a
+        # fallback for a direct/scripted call — best-effort detection, and an honest
+        # error if we can't work it out.
+        host = detect_public_endpoint() or ""
+        if not host:
+            return False, (
+                "No remote address is configured. Open “Set up remote access” and "
+                "enter your public IP address or dynamic DNS hostname."
+            )                  # status == "ok"
 
     endpoint = f"{host}:{listen_port}"
     data_dir = tomebox.base_dir
@@ -501,7 +539,8 @@ def build_pairing_payload(tomebox, port: int = 8000) -> tuple[str, Optional[str]
     otp = secrets.token_hex(4)
     tomebox._active_otps[otp] = now + 600
 
-    payload = {"v": 1, "otp": otp, "lan": f"http://{local_ip()}:{port}"}
+    lan = local_ip(tomebox.settings.get("lan_address", ""))
+    payload = {"v": 1, "otp": otp, "lan": f"http://{lan}:{port}"}
     wg_conf = None
 
     server_pub = tomebox.settings.get("wg_server_public")
@@ -527,80 +566,3 @@ def build_pairing_payload(tomebox, port: int = 8000) -> tuple[str, Optional[str]
             )
 
     return json.dumps(payload), wg_conf, otp
-
-def _trace_shows_cgnat(max_hops: int = 4) -> Optional[bool]:
-    """Run a short traceroute and look for a CGNAT-range hop.
-
-    Returns True  if a 100.64/10 address appears in the first few hops (conclusive),
-            False if the trace ran cleanly and showed none (probably not CGNAT),
-            None  if the trace couldn't run / was inconclusive (ICMP filtered, etc).
-    """
-    try:
-        be = _backend()
-        cmd = be.traceroute_cmd("api.ipify.org", max_hops)   # backend supplies argv
-    except Exception:
-        return None
-
-    try:
-        # A capped hop count keeps this fast; overall timeout as a backstop.
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
-                                creationflags=getattr(be, "no_window_flag", 0))
-    except Exception:
-        return None
-
-    out = (result.stdout or "") + (result.stderr or "")
-    if not out.strip():
-        return None
-
-    if _CGNAT_RE.search(out):
-        return True
-
-    # Did we actually see any resolvable hops? If every line was "* * *", the trace
-    # told us nothing — don't report a confident "not CGNAT".
-    saw_a_real_hop = re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", out)
-    return False if saw_a_real_hop else None
-
-def diagnose_connectivity() -> dict:
-    try:
-        import httpx
-        ip = httpx.get("https://api.ipify.org", timeout=5).text.strip()
-    except Exception:
-        return {"status": "unknown", "public_ip": None,
-                "message": "Couldn't reach the internet to check your connection."}
-
-    parts = ip.split(".")
-    if len(parts) != 4 or not all(p.isdigit() for p in parts):
-        return {"status": "unknown", "public_ip": ip,
-                "message": f"Got an unexpected address ({ip})."}
-
-    # Traceroute is the real CGNAT test — ipify alone can't see it, because the IP it
-    # returns is the carrier's PUBLIC gateway, which looks perfectly normal.
-    trace = _trace_shows_cgnat()
-    if trace is True:
-        return {
-            "status": "cgnat", "public_ip": ip,
-            "message": (
-                "Your ISP uses carrier-grade NAT (CGNAT). Incoming connections can't "
-                "reach your computer, so remote access won't work on this connection. "
-                "A dynamic DNS hostname won't help — the address still points at your "
-                "ISP's shared gateway, not your machine.\n\n"
-                "Options: ask your ISP for a public IP (often free on request), or "
-                "run a small VPS relay."
-            ),
-        }
-
-    first, second = int(parts[0]), int(parts[1])
-    if first in (10, 127) or (first == 192 and second == 168) or \
-       (first == 172 and 16 <= second <= 31):
-        return {"status": "private", "public_ip": ip,
-                "message": f"Detected a private address ({ip}). You may be behind a "
-                           "VPN or proxy."}
-
-    # No CGNAT hop found. Honest wording: "looks OK", not "guaranteed".
-    caveat = "" if trace is False else (
-        "\n\n(Couldn't fully verify the network path — if remote access doesn't work, "
-        "your ISP may still use CGNAT.)"
-    )
-    return {"status": "ok", "public_ip": ip,
-            "message": f"Your connection looks ready for remote access.\n"
-                       f"Public address: {ip}{caveat}"}

@@ -6,6 +6,7 @@ from ui.components.dialogs import (
     open_auth_window,
     open_device_management_window,
     open_pairing_window,
+    reset_remote_access,
 )
 
 
@@ -130,6 +131,10 @@ def setup_menu_bar(app):
     app.file_menu.add_command(
         label="Add Firewall Rule",
         command=app.cloud_server_controller.add_firewall_rule_prompt,
+    )
+    app.file_menu.add_command(
+        label="Remove Remote Access",
+        command=lambda: reset_remote_access(app),
     )
     app.file_menu.add_separator()
     app.file_menu.add_command(label="Exit", command=app.on_closing)
