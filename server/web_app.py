@@ -19,11 +19,16 @@ def create_server_app(tomebox):
     api = FastAPI()
     static_dir = get_resource_path("server", "static")
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
+    tomebox.settings["library_version"] = tomebox.settings.get("library_version", 0) + 1
     if not hasattr(tomebox, "_web_task_state"):
         tomebox._web_task_state = {
             "downloads": {"active_asin": None, "progress": 0, "status": "Idle"},
             "conversions": {"active_path": None, "progress": 0, "status": "Idle"},
         }
+
+    @api.get("/api/library/version")
+    def get_library_version():
+            return {"version": tomebox.settings.get("library_version", 0)}
 
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
@@ -684,6 +689,29 @@ def create_server_app(tomebox):
     def ping():
         """Cheap reachability probe for the client's LAN-vs-VPN resolution."""
         return {"ok": True}
+
+    @api.get("/api/size")
+    def get_size(path: str):
+        """Total bytes for a book — one file, or the sum of a playlist's chapters."""
+        import os
+
+        entry = tomebox.library_manager.local_library.get(path)
+        if not entry:
+            return {"bytes": 0, "files": 0}
+
+        if entry.get("is_playlist"):
+            total, count = 0, 0
+            for ch in entry.get("chapters", []):
+                fp = ch.get("file_path")
+                if fp and os.path.exists(fp):
+                    total += os.path.getsize(fp)
+                    count += 1
+            return {"bytes": total, "files": count}
+
+        return {
+            "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+            "files": 1,
+        }
     
     @api.get("/api/stream")
     async def stream_audio(request: Request, path: str):
