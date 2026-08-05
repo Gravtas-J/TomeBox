@@ -1541,6 +1541,7 @@ class AAXManagerApp:
 
         # 3. Parse Series
         series_str = ""
+        series_seq = None 
         raw_series = cloud_data.get("series", [])
         if raw_series:
             series_parts = []
@@ -1550,6 +1551,11 @@ class AAXManagerApp:
                 if s_title:
                     if s_seq and s_seq != "None":
                         series_parts.append(f"{s_title}, Book {s_seq}")
+                        if series_seq is None:
+                            try:
+                                series_seq = float(s_seq)
+                            except ValueError:
+                                pass
                     else:
                         series_parts.append(s_title)
             if series_parts:
@@ -1562,6 +1568,9 @@ class AAXManagerApp:
         local_data["authors"] = authors_str
         if series_str:
             local_data["series"] = series_str
+            
+        if series_seq is not None and not local_data.get("series_sequence_user_set"):
+            local_data["series_sequence"] = series_seq
 
         local_data["format"] = os.path.splitext(filepath)[1].replace(".", "").upper()
         local_data["path"] = filepath

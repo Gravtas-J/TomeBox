@@ -10,6 +10,7 @@ from PIL import Image, ImageTk
 import secrets
 import socket
 import time
+from core.controllers.library_manager import bump_library_version
 
 def open_error_log_window(app):
     """Opens the Error Log popup window."""
@@ -415,6 +416,8 @@ def open_sleep_menu(app):
     app.sleep_menu_popup.bind("<FocusOut>", on_focus_out)
     app.sleep_menu_popup.focus_set()
 
+def _normalise_series(name):
+    return " ".join((name or "").split()).lower()
 
 def open_library_folders_window(app):
     """Opens a UI dialog to manage the background scanner's watched folders."""
@@ -1479,7 +1482,7 @@ def open_match_to_audible_window(app, filepath):
 
         app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
         app.metadata_manager.event_bus.subscribe("metadata.error", on_error)
-
+        
         fields = {
             "title": apply_title_var.get(),
             "author": apply_author_var.get(),
@@ -1506,7 +1509,7 @@ def open_bulk_metadata_window(app, filepaths):
 
     win = tk.Toplevel(app.root)
     win.title(f"Bulk Edit Metadata ({len(filepaths)} items)")
-    win.geometry("400x280")
+    win.geometry("440x600")
     win.transient(app.root)
     win.grab_set()
 
@@ -1558,7 +1561,65 @@ def open_bulk_metadata_window(app, filepaths):
     ttk.Label(form_frame, text="Read Status:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
     status_var = tk.StringVar(value="— Keep current —")
     ttk.Combobox(form_frame, textvariable=status_var, values=["— Keep current —", "Unread", "Finished"], state="readonly", width=35).grid(row=5, column=1, sticky="w", pady=5)
+    # --- Series ordering ---
+    order_frame = ttk.LabelFrame(main_frame, text="Series Order", padding=8)
+    order_frame.pack(fill="both", expand=True, pady=(8, 4))
 
+    ttk.Label(
+        order_frame,
+        text="Set the reading order for the selected books. Position 1 is first.",
+        font=("Arial", 8),
+    ).pack(anchor="w", pady=(0, 4))
+
+    order_list = tk.Listbox(
+        order_frame, height=8, bg="#1e1e1e", fg="#e0e0e0",
+        selectbackground="#bb86fc", activestyle="none",
+    )
+    order_list.pack(fill="both", expand=True)
+
+    lib = app.library_manager.local_library
+    # Existing sequence first, then unsequenced by title — so a partially ordered
+    # series opens in a sensible state rather than jumbled.
+    ordered = sorted(
+        filepaths,
+        key=lambda p: (
+            lib.get(p, {}).get("series_sequence") is None,
+            lib.get(p, {}).get("series_sequence") or 0,
+            lib.get(p, {}).get("title", "").lower(),
+        ),
+    )
+    state = {"paths": ordered}
+    order_state = {"paths": ordered}
+
+    def redraw(select=None):
+        order_list.delete(0, tk.END)
+        for i, p in enumerate(order_state["paths"], start=1):
+            order_list.insert(tk.END, f"{i:>3}.  {lib.get(p, {}).get('title', p)}")
+        if select is not None:
+            order_list.selection_set(select)
+
+    def move(delta):
+        sel = order_list.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        j = i + delta
+        if not (0 <= j < len(order_state["paths"])):
+            return
+        order_state["paths"][i], order_state["paths"][j] = order_state["paths"][j], order_state["paths"][i]
+        redraw(select=j)
+
+    redraw()
+
+    move_frame = ttk.Frame(order_frame)
+    move_frame.pack(fill="x", pady=(4, 0))
+    ttk.Button(move_frame, text="▲ Up", command=lambda: move(-1), width=8).pack(side=tk.LEFT)
+    ttk.Button(move_frame, text="▼ Down", command=lambda: move(1), width=8).pack(side=tk.LEFT, padx=4)
+
+    apply_order_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(
+        move_frame, text="Apply this order", variable=apply_order_var
+    ).pack(side=tk.RIGHT)
     # --- Options ---
     options_frame = ttk.Frame(main_frame)
     options_frame.pack(fill="x", pady=5)
@@ -1574,6 +1635,13 @@ def open_bulk_metadata_window(app, filepaths):
     btn_frame.pack(fill="x", side=tk.BOTTOM)
 
     def do_save():
+        if apply_order_var.get():
+            for i, p in enumerate(order_state["paths"], start=1):
+                entry = app.library_manager.local_library.setdefault(p, {})
+                entry["series_sequence"] = float(i)
+                entry["series_sequence_user_set"] = True
+            app.db.save_local_db(app.library_manager.local_library)
+            bump_library_version(app)
         # Lock the UI
         save_btn.config(state=tk.DISABLED)
         cancel_btn.config(state=tk.DISABLED)
@@ -1692,6 +1760,8 @@ def open_bulk_metadata_window(app, filepaths):
     
     save_btn = ttk.Button(btn_frame, text="Save Batch", command=do_save)
     save_btn.pack(side=tk.RIGHT, padx=5)
+
+
 def open_manual_metadata_window(app, filepath):
     import os
     from tkinter import filedialog
@@ -1819,13 +1889,20 @@ def open_manual_metadata_window(app, filepath):
     ttk.Entry(form_frame, textvariable=series_var, width=38).grid(
         row=3, column=1, sticky="w", pady=5
     )
+    ttk.Label(form_frame, text="Sequence:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=5
+        )
+    seq_var  = tk.StringVar(value=local_data.get("sequence", ""))
+    ttk.Entry(form_frame, textvariable=seq_var, width=38).grid(
+        row=4, column=1, sticky="w", pady=5
+    )
 
     ttk.Label(form_frame, text="ASIN:").grid(
-        row=4, column=0, sticky="e", padx=5, pady=5
+        row=5, column=0, sticky="e", padx=5, pady=5
     )
     asin_var = tk.StringVar(value=local_data.get("asin", ""))
     ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(
-        row=4, column=1, sticky="w", pady=5
+        row=5, column=1, sticky="w", pady=5
     )
     # --- STATUS DROPDOWN ---
     active_prof = getattr(app, "active_profile", "Main")
@@ -1880,10 +1957,26 @@ def open_manual_metadata_window(app, filepath):
     btn_frame = ttk.Frame(main_frame)
     btn_frame.pack(fill="x", side=tk.BOTTOM)
 
+    def _fmt_seq(v):
+        if v is None:
+            return ""
+        return str(int(v)) if float(v).is_integer() else str(v)
+
+
+    def _parse_seq(s):
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
     def do_save():
         feedback_var.set("Saving...")
         save_btn.config(state=tk.DISABLED)
         win.update_idletasks()
+
 
         # status_var.get() is now safely reading from the combobox
         new_data = {
@@ -1891,6 +1984,8 @@ def open_manual_metadata_window(app, filepath):
             "authors": author_var.get().strip(),
             "narrator": narrator_var.get().strip(),
             "series": series_var.get().strip(),
+            "series_sequence": _parse_seq(seq_var.get()),
+            "series_sequence_user_set": bool(seq_var.get().strip()),
             "asin": asin_var.get().strip(),
             "status_override": status_var.get(), 
             "duration_sec": dur_sec,
@@ -1946,6 +2041,111 @@ def open_manual_metadata_window(app, filepath):
 
     win.focus_set()
 
+def open_series_ordering_window(app):
+    """Order every book in a series at once — far less tedious than editing each."""
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+
+    lib = app.library_manager.local_library
+
+    # Group by the series STRING as stored. Imperfect if the user has typos, but
+    # that's a library-hygiene problem they can see and fix here.
+    groups = {}
+    for path, data in lib.items():
+        raw = (data.get("series") or "").strip()
+        if not raw:
+            continue
+        key = _normalise_series(raw)
+        g = groups.setdefault(key, {"paths": [], "names": {}})
+        g["paths"].append(path)
+        g["names"][raw] = g["names"].get(raw, 0) + 1
+
+    if not groups:
+        messagebox.showinfo("Series Ordering", "No books have a series set.",
+                            parent=app.root)
+        return
+
+    for g in groups.values():
+        g["display"] = max(g["names"].items(), key=lambda kv: kv[1])[0]
+
+    # display name -> normalised key, for the picker
+    display_to_key = {g["display"]: k for k, g in groups.items()}
+
+    top = tk.Toplevel(app.root)
+    top.title("Series Ordering")
+    top.configure(bg="#2b2b2b")
+    top.transient(app.root)
+
+    frame = tk.Frame(top, bg="#2b2b2b", padx=20, pady=15)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(frame, text="Series:", bg="#2b2b2b", fg="white").pack(anchor="w")
+    series_names = sorted(display_to_key.keys())
+    picker = ttk.Combobox(frame, values=series_names, state="readonly", width=50)
+    picker.current(0)
+    picker.pack(fill="x", pady=(0, 10))
+
+    tk.Label(
+        frame,
+        text="Drag to reorder, or select and use the buttons. Position 1 is first.",
+        bg="#2b2b2b", fg="#aaaaaa", font=("Arial", 8),
+    ).pack(anchor="w")
+
+    listbox = tk.Listbox(frame, height=14, width=70, bg="#1e1e1e", fg="#e0e0e0",
+                         selectbackground="#bb86fc", activestyle="none")
+    listbox.pack(fill="both", expand=True, pady=(4, 8))
+
+    state = {"paths": []}
+
+    def load_series(*_):
+        key = display_to_key.get(picker.get())
+        paths = list(groups[key]["paths"])
+        paths.sort(key=lambda p: (
+            lib[p].get("series_sequence") is None,
+            lib[p].get("series_sequence") or 0,
+            lib[p].get("title", "").lower(),
+        ))
+        state["paths"] = paths
+        redraw()
+
+    def move(delta):
+        sel = listbox.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        j = i + delta
+        if not (0 <= j < len(state["paths"])):
+            return
+        state["paths"][i], state["paths"][j] = state["paths"][j], state["paths"][i]
+        redraw()
+        listbox.selection_set(j)
+
+    def redraw():
+        listbox.delete(0, tk.END)
+        for i, p in enumerate(state["paths"], start=1):
+            listbox.insert(tk.END, f"{i:>3}.  {lib[p].get('title', p)}")
+
+    def save():
+        key = display_to_key.get(picker.get())
+        canonical = groups[key]["display"]
+        for i, p in enumerate(state["paths"], start=1):
+            lib[p]["series_sequence"] = float(i)
+            lib[p]["series_sequence_user_set"] = True
+            lib[p]["series"] = canonical      # tidy up whitespace/case variants
+        app.db.save_local_db(lib)
+
+    picker.bind("<<ComboboxSelected>>", load_series)
+
+    btns = tk.Frame(frame, bg="#2b2b2b")
+    btns.pack(fill="x")
+    for label, cmd in (("▲ Up", lambda: move(-1)), ("▼ Down", lambda: move(1))):
+        tk.Button(btns, text=label, command=cmd, bg="#555", fg="white",
+                  relief="flat", padx=12, pady=4).pack(side=tk.LEFT, padx=4)
+    tk.Button(btns, text="Save Order", command=save, bg="#bb86fc", fg="#1e1e1e",
+              font=("Arial", 9, "bold"), relief="flat", padx=15, pady=4
+              ).pack(side=tk.RIGHT)
+
+    load_series()
 
 def open_cover_modal(app, asin, title, explicit_path=None):
     """Opens a standardized, high-resolution, clickable cover art modal."""
