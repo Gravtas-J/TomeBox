@@ -105,9 +105,9 @@ def create_server_app(tomebox):
     @api.get("/api/pairing-info")
     def get_pairing_info(request: Request):
         from core import wireguard
-
-        port = request.url.port or 8000
-        app_payload, wg_conf, otp = wireguard.build_pairing_payload(tomebox, port=port)
+        from core.utils.net import resolve_server_port
+        port = request.url.port or resolve_server_port(tomebox)
+        app_payload, otp = wireguard.build_pairing_payload(tomebox, port=port)
 
         import json
         lan = json.loads(app_payload)["lan"]
@@ -115,8 +115,7 @@ def create_server_app(tomebox):
         return {
             "pairing_url": f"{lan}/auth?otp={otp}",   # legacy, for the old web JS
             "token": otp,                              # legacy
-            "app_payload": app_payload,                # QR 2: TomeBox app
-            "wg_config": wg_conf,                      # QR 1: WireGuard app (or None)
+            "app_payload": app_payload,                # QR: TomeBox app
         }
 
     @api.get("/api/profiles/active")
@@ -171,6 +170,11 @@ def create_server_app(tomebox):
         if otp and otp in active_otps and active_otps[otp] > now:
             del active_otps[otp]  # Burn the OTP instantly
 
+            # The device is really pairing — make its tunnel slot permanent.
+            from core import wireguard
+            wireguard.confirm_peer(
+                tomebox, otp, device_name=request.headers.get("user-agent", "")[:60]
+            )
             # Mint and secure new device token
             new_token = secrets.token_urlsafe(32)
             hashed_token = tomebox.db.hash_device_token(new_token)
@@ -226,6 +230,9 @@ def create_server_app(tomebox):
 
         if otp and otp in active_otps and active_otps[otp] > now:
             del active_otps[otp]
+
+            from core import wireguard
+            wireguard.confirm_peer(tomebox, otp, device_name="API Client")
 
             new_token = secrets.token_urlsafe(32)
             hashed_token = tomebox.db.hash_device_token(new_token)
@@ -585,9 +592,9 @@ def create_server_app(tomebox):
         import io
 
         import qrcode
-
+        from core.utils.net import resolve_server_port
         # Determine which IP the request came in on so we generate a usable QR
-        host = request.headers.get("host", "localhost:8000")
+        host = request.headers.get("host", f"localhost:{resolve_server_port(tomebox)}")
         pairing_url = f"http://{host}/auth?token={server_token}"
 
         qr = qrcode.QRCode(box_size=10, border=2)

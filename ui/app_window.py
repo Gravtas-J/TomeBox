@@ -41,6 +41,8 @@ from core.database import DatabaseManager
 from core.exporter import LibraryExporter
 from core.utils.image_cache import ImageCache
 from core.utils.paths import get_resource_path
+from core.utils.net import resolve_server_port
+
 from ui.action_router import ActionRouter
 from ui.auth_controller import AuthController
 from ui.bookmarks_presenter import BookmarksPresenter
@@ -1462,8 +1464,14 @@ class AAXManagerApp:
         if not getattr(self, "server_running", False):
             self.cloud_server_controller.toggle_web_server()
 
-        self.root.after(500, lambda: webbrowser.open("http://127.0.0.1:8000/desktop"))
-
+        # toggle_web_server assigns self.server_port synchronously before the
+        # uvicorn thread starts, so it's populated by the time this fires.
+        self.root.after(
+            500,
+            lambda: webbrowser.open(
+                f"http://127.0.0.1:{resolve_server_port(self)}/desktop"
+            ),
+        )
     def export_csv_worker(self):
         output_file = filedialog.asksaveasfilename(
             defaultextension=".csv",

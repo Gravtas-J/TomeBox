@@ -46,6 +46,8 @@ import subprocess
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from core.utils.net import DEFAULT_SERVER_PORT, resolve_server_port
+
 TUNNEL_NAME = "tomebox"
 SUBNET_PREFIX = "10.9.0"
 SERVER_TUNNEL_IP = f"{SUBNET_PREFIX}.1"
@@ -231,7 +233,7 @@ def get_status(tomebox) -> dict:
         "configured": bool(tomebox.settings.get("wg_server_public")),
         "endpoint": tomebox.settings.get("wg_endpoint", ""),
         "slots_total": len(pool),
-        "slots_free": sum(1 for s in pool if not s.get("claimed")),
+        "slots_free": sum(1 for s in pool if _slot_available(s, time.time())),
     }
 
 
@@ -256,25 +258,25 @@ def build_server_config(server_private, pool, listen_port=LISTEN_PORT):
     return "\n".join(lines)
 
 
-def build_client_config(private_key: str, tunnel_ip: str,
-                        server_public: str, endpoint: str) -> str:
-    """The .conf a client imports.
+# def build_client_config(private_key: str, tunnel_ip: str,
+#                         server_public: str, endpoint: str) -> str:
+#     """The .conf a client imports.
 
-    AllowedIPs is scoped to the server alone — a split tunnel, so the client's other
-    traffic doesn't route through the user's house.
-    """
-    return "\n".join([
-        "[Interface]",
-        f"PrivateKey = {private_key}",
-        f"Address = {tunnel_ip}/32",
-        "",
-        "[Peer]",
-        f"PublicKey = {server_public}",
-        f"Endpoint = {endpoint}",
-        f"AllowedIPs = {SERVER_TUNNEL_IP}/32",
-        "PersistentKeepalive = 25",
-        "",
-    ])
+#     AllowedIPs is scoped to the server alone — a split tunnel, so the client's other
+#     traffic doesn't route through the user's house.
+#     """
+#     return "\n".join([
+#         "[Interface]",
+#         f"PrivateKey = {private_key}",
+#         f"Address = {tunnel_ip}/32",
+#         "",
+#         "[Peer]",
+#         f"PublicKey = {server_public}",
+#         f"Endpoint = {endpoint}",
+#         f"AllowedIPs = {SERVER_TUNNEL_IP}/32",
+#         "PersistentKeepalive = 25",
+#         "",
+#     ])
 
 
 def _setup_paths(data_dir: str) -> tuple[str, str]:
@@ -288,7 +290,7 @@ def _setup_paths(data_dir: str) -> tuple[str, str]:
 
 # ------------------------------------------------------------------ the setup
 
-def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
+def run_setup(data_dir: str, endpoint: str, app_port: int = DEFAULT_SERVER_PORT,
               pool_size: int = DEFAULT_POOL_SIZE, listen_port: int = LISTEN_PORT) -> dict:
     """THE ELEVATED HALF — runs in the privileged child process.
 
@@ -327,6 +329,9 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
             "claimed": False,
             "device_name": None,
             "claimed_at": None,
+            "confirmed_at": None,
+            "reserved_otp": None,
+            "reserved_until": None,
         })
 
     # 2. The tunnel config, with every pool peer baked in. THIS is what lets pairing
@@ -371,13 +376,21 @@ def run_setup(data_dir: str, endpoint: str, app_port: int = 8000,
     return result
 
 
-def launch_setup(tomebox, app_port: int = 8000,
+def launch_setup(tomebox, app_port: Optional[int] = None,
                  pool_size: int = DEFAULT_POOL_SIZE) -> tuple[bool, str]:
     """THE UNPRIVILEGED HALF — raises the platform's privilege prompt exactly once.
 
     Blocks for up to ~5 minutes (installing WireGuard can be slow). Call from a
     worker thread, never from a UI callback.
+
+    app_port defaults to whatever port the companion server is on (or will bind
+    next start). Passing it explicitly is only for tests — the firewall rules and
+    tunnel config written here are port-specific, so a wrong value fails silently
+    at connect time, long after setup reports success.
     """
+    if app_port is None:
+        app_port = resolve_server_port(tomebox)
+
     listen_port = tomebox.settings.get("wg_listen_port", LISTEN_PORT)
     try:
         be = _backend()
@@ -491,14 +504,88 @@ def setup_entrypoint(argv: list[str]) -> int:
 # --------------------------------------------------------------------- pairing
 # Unprivileged everywhere. No wg calls — every peer already exists in the config.
 
-def claim_peer(tomebox, device_name: str = "device") -> Optional[dict]:
-    """Hand out the next unclaimed pool slot. None if the pool is exhausted."""
+RESERVATION_TTL = 600   # matches the OTP lifetime minted in build_pairing_payload
+
+
+def _reservation_active(slot: dict, now: float) -> bool:
+    return bool(slot.get("reserved_otp")) and slot.get("reserved_until", 0) > now
+
+
+def _slot_available(slot: dict, now: float) -> bool:
+    """Free = not claimed by a paired device, and no live reservation on it."""
+    return not slot.get("claimed") and not _reservation_active(slot, now)
+
+
+def reserve_peer(tomebox, otp: str, device_name: str = "device",
+                 ttl: int = RESERVATION_TTL) -> Optional[dict]:
+    """Tentatively hold a pool slot against an OTP. None if the pool is exhausted.
+
+    Reservations lapse with the OTP, so opening the pairing window and never
+    scanning it costs nothing — the slot frees itself. Call confirm_peer() when
+    the OTP is redeemed to make the hold permanent.
+    """
+    now = time.time()
+    pool = tomebox.settings.get("wg_pool", [])
+
+    # The same OTP asking twice (a redraw, a duplicate request) reuses its hold
+    # rather than consuming a second slot.
+    for slot in pool:
+        if slot.get("reserved_otp") == otp and not slot.get("claimed"):
+            slot["reserved_until"] = now + ttl
+            tomebox.settings["wg_pool"] = pool
+            tomebox.db.save_settings(tomebox.settings)
+            return slot
+
+    for slot in pool:
+        if _slot_available(slot, now):
+            slot["reserved_otp"] = otp
+            slot["reserved_until"] = now + ttl
+            slot["device_name"] = device_name
+            tomebox.settings["wg_pool"] = pool
+            tomebox.db.save_settings(tomebox.settings)
+            return slot
+
+    return None
+
+
+def rekey_reservation(tomebox, old_otp: str, new_otp: str,
+                      ttl: int = RESERVATION_TTL) -> bool:
+    """Move a live reservation onto a re-minted OTP.
+
+    The pairing dialog's Refresh button mints a new OTP without rebuilding the
+    payload, so the slot's hold has to follow it or confirm_peer finds nothing.
+    """
+    now = time.time()
     pool = tomebox.settings.get("wg_pool", [])
     for slot in pool:
-        if not slot.get("claimed"):
+        if slot.get("reserved_otp") == old_otp and not slot.get("claimed"):
+            slot["reserved_otp"] = new_otp
+            slot["reserved_until"] = now + ttl
+            tomebox.settings["wg_pool"] = pool
+            tomebox.db.save_settings(tomebox.settings)
+            return True
+    return False
+
+
+def confirm_peer(tomebox, otp: str,
+                 device_name: Optional[str] = None) -> Optional[dict]:
+    """Promote an OTP's reservation to a permanent claim. Call on redemption.
+
+    Returns None when the OTP had no reservation — the normal LAN-only case, not
+    an error. Expiry is deliberately not rechecked here: the caller has already
+    validated the OTP against _active_otps, and the two share a lifetime.
+    """
+    now = time.time()
+    pool = tomebox.settings.get("wg_pool", [])
+    for slot in pool:
+        if slot.get("reserved_otp") == otp:
             slot["claimed"] = True
-            slot["device_name"] = device_name
-            slot["claimed_at"] = time.time()
+            slot["claimed_at"] = now
+            slot["confirmed_at"] = now
+            if device_name:
+                slot["device_name"] = device_name
+            slot["reserved_otp"] = None
+            slot["reserved_until"] = None
             tomebox.settings["wg_pool"] = pool
             tomebox.db.save_settings(tomebox.settings)
             return slot
@@ -515,22 +602,39 @@ def release_peer(tomebox, tunnel_ip: str) -> bool:
     pool = tomebox.settings.get("wg_pool", [])
     for slot in pool:
         if slot.get("tunnel_ip") == tunnel_ip:
-            slot.update({"claimed": False, "device_name": None, "claimed_at": None})
+            slot.update({
+                "claimed": False,
+                "device_name": None,
+                "claimed_at": None,
+                "confirmed_at": None,
+                "reserved_otp": None,
+                "reserved_until": None,
+            })
             tomebox.settings["wg_pool"] = pool
             tomebox.db.save_settings(tomebox.settings)
             return True
     return False
 
 
-def build_pairing_payload(tomebox, port: int = 8000) -> tuple[str, Optional[str], str]:
+def build_pairing_payload(tomebox, port: Optional[int] = None) -> tuple[str, str]:
     """Single source of truth for pairing — used by BOTH the desktop dialog and the
     web endpoint, so the two can never drift apart.
 
-    Returns (app_payload_json, wg_client_config_or_None, otp).
+    Returns (app_payload_json, otp).
+
+    The tunnel is delivered inside the payload's "wg" block, which the mobile app
+    builds its own interface from. The old standalone WireGuard .conf QR is gone.
 
     Degrades gracefully: with no remote access configured, the payload is LAN-only
     and everything works exactly as it did before WireGuard existed.
+
+    port defaults to the live/persisted server port. The web endpoint passes the
+    request's own port explicitly, which is more accurate still — it reflects the
+    port the client actually reached us on.
     """
+    if port is None:
+        port = resolve_server_port(tomebox)
+
     now = time.time()
     if not hasattr(tomebox, "_active_otps"):
         tomebox._active_otps = {}
@@ -541,13 +645,11 @@ def build_pairing_payload(tomebox, port: int = 8000) -> tuple[str, Optional[str]
 
     lan = local_ip(tomebox.settings.get("lan_address", ""))
     payload = {"v": 1, "otp": otp, "lan": f"http://{lan}:{port}"}
-    wg_conf = None
-
     server_pub = tomebox.settings.get("wg_server_public")
     endpoint = tomebox.settings.get("wg_endpoint")
 
     if server_pub and endpoint and tunnel_running():
-        slot = claim_peer(tomebox, device_name=f"device-{int(now)}")
+        slot = reserve_peer(tomebox, otp, device_name=f"device-{int(now)}")
         if slot:
             payload["vpn"] = f"http://{SERVER_TUNNEL_IP}:{port}"
             payload["wg"] = {
@@ -558,11 +660,5 @@ def build_pairing_payload(tomebox, port: int = 8000) -> tuple[str, Optional[str]
                 "allowed_ips": f"{SERVER_TUNNEL_IP}/32",
                 "keepalive": 25,
             }
-            wg_conf = build_client_config(
-                private_key=slot["private_key"],
-                tunnel_ip=slot["tunnel_ip"],
-                server_public=server_pub,
-                endpoint=endpoint,
-            )
 
-    return json.dumps(payload), wg_conf, otp
+    return json.dumps(payload), otp

@@ -666,10 +666,13 @@ def open_pairing_window(app):
     import time
 
     from core import wireguard
-
-    app_payload, wg_conf, otp = wireguard.build_pairing_payload(app, port=8000)
+    from core.utils.net import resolve_server_port
+    # Both the initial render and refresh_qr_code must use this. They diverged
+    # (5 vs 8) and the window resized itself on the first refresh.
+    APP_QR_BOX_SIZE = 5
+    app_payload, otp = wireguard.build_pairing_payload(app)
     payload = json.loads(app_payload)
-    print(f"[PAIR] app_payload={app_payload!r}")
+    # print(f"[PAIR] app_payload={app_payload!r}")
     # QR carries the JSON packet; the text box shows a human-usable URL.
     current_state = {
         "payload": payload,                                          # mutated on refresh
@@ -697,30 +700,22 @@ def open_pairing_window(app):
         bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center",
     ).pack(pady=(0, 15))
 
-# --- Side-by-side QR codes ---
+    # --- QR column ---
     qr_row = tk.Frame(main_frame, bg="#2b2b2b")
     qr_row.pack(pady=(0, 15))
 
-    # LEFT: WireGuard tunnel config (only if remote access is configured)
-    if wg_conf:
-        wg_col = tk.Frame(qr_row, bg="#2b2b2b")
-        wg_col.pack(side=tk.LEFT, padx=10)
+    # The tunnel now ships inside the app payload, so there's no second QR.
+    # This column is just remote-access status: active, or an offer to set it up.
+    if payload.get("wg"):
+        status_col = tk.Frame(qr_row, bg="#2b2b2b")
+        status_col.pack(side=tk.LEFT, padx=10)
 
-        tk.Label(
-            wg_col,
-            text="1. Scan this with the WireGuard app (remote access)",
-            bg="#2b2b2b", fg="#cccccc", font=("Arial", 9, "bold"),
-        ).pack(pady=(10, 5))
-
-        wg_qr = qrcode.QRCode(box_size=6, border=2)
-        wg_qr.add_data(wg_conf)
-        wg_qr.make(fit=True)
-        wg_img = wg_qr.make_image(fill_color="black", back_color="white")
-        wg_tk_image = ImageTk.PhotoImage(wg_img)
-
-        wg_label = tk.Label(wg_col, image=wg_tk_image, bg="#2b2b2b")
-        wg_label.image = wg_tk_image   # prevent garbage collection
-        wg_label.pack(pady=(0, 15))
+        # tk.Label(
+        #     status_col,
+        #     text="Remote access active.\nThe tunnel is included in this code.",
+        #     bg="#2b2b2b", fg="#81c784",
+        #     font=("Arial", 9), justify="center", wraplength=200,
+        # ).pack(pady=(0, 10))
     else:
         setup_col = tk.Frame(qr_row, bg="#2b2b2b")
         setup_col.pack(side=tk.LEFT, padx=10)
@@ -731,7 +726,6 @@ def open_pairing_window(app):
         else:
             msg = ("Remote access isn't set up.\nWireGuard will be installed "
                    "automatically.\nOne-time admin permission needed.")
-        btn_state = "normal"
 
         tk.Label(
             setup_col, text=msg, bg="#2b2b2b", fg="#cccccc",
@@ -742,24 +736,23 @@ def open_pairing_window(app):
             top.destroy()               # close the pairing window
             open_remote_setup(app)      # diagnose → prompt → setup
 
-        setup_btn = tk.Button(
+        tk.Button(
             setup_col, text="Set up remote access", command=do_setup,
-            state=btn_state, bg="#bb86fc", fg="#1e1e1e",
+            bg="#bb86fc", fg="#1e1e1e",
             font=("Arial", 9, "bold"), relief="flat", padx=15, pady=5,
-        )
-        setup_btn.pack()
+        ).pack()
     # RIGHT: TomeBox pairing payload
     app_col = tk.Frame(qr_row, bg="#2b2b2b")
     app_col.pack(side=tk.LEFT, padx=10)
 
     tk.Label(
         app_col,
-        text="2. TomeBox app\n(pair library)" if wg_conf else "Scan with the TomeBox app",
+        text="Scan with the TomeBox app",
         bg="#2b2b2b", fg="#cccccc",
         font=("Arial", 9, "bold"), justify="center",
     ).pack(pady=(0, 6))
 
-    qr = qrcode.QRCode(box_size=5, border=2)
+    qr = qrcode.QRCode(box_size=APP_QR_BOX_SIZE, border=2)
     qr.add_data(current_state["qr_text"])
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
@@ -768,23 +761,7 @@ def open_pairing_window(app):
     qr_label = tk.Label(app_col, image=tk_image, bg="#2b2b2b")
     qr_label.image = tk_image
     qr_label.pack()
-    # Second QR: the raw WireGuard config, imported by the WireGuard app.
-    # if wg_conf:
-    #     tk.Label(
-    #         main_frame,
-    #         text="1. Scan this with the WireGuard app (remote access)",
-    #         bg="#2b2b2b", fg="#cccccc", font=("Arial", 9, "bold"),
-    #     ).pack(pady=(10, 5))
 
-    #     wg_qr = qrcode.QRCode(box_size=6, border=2)
-    #     wg_qr.add_data(wg_conf)
-    #     wg_qr.make(fit=True)
-    #     wg_img = wg_qr.make_image(fill_color="black", back_color="white")
-    #     wg_tk_image = ImageTk.PhotoImage(wg_img)
-
-    #     wg_label = tk.Label(main_frame, image=wg_tk_image, bg="#2b2b2b")
-    #     wg_label.image = wg_tk_image   # prevent garbage collection
-    #     wg_label.pack(pady=(0, 15))
     tk.Label(
         main_frame, text="Or open this URL manually:",
         bg="#2b2b2b", fg="#cccccc", font=("Arial", 9),
@@ -814,11 +791,15 @@ def open_pairing_window(app):
         app._active_otps[new_otp] = now + 600
 
         p = current_state["payload"]
+        old_otp = p["otp"]
         p["otp"] = new_otp
+        # The slot is held against the OTP, so the hold has to follow it.
+        wireguard.rekey_reservation(app, old_otp, new_otp)
+
         current_state["qr_text"] = json.dumps(p)
         current_state["manual_url"] = f"{p['lan']}/auth?otp={new_otp}"
 
-        new_qr = qrcode.QRCode(box_size=8, border=2)
+        new_qr = qrcode.QRCode(box_size=APP_QR_BOX_SIZE, border=2)
         new_qr.add_data(current_state["qr_text"])
         new_qr.make(fit=True)
         new_img = new_qr.make_image(fill_color="black", back_color="white")
@@ -1061,7 +1042,7 @@ def open_remote_setup(app):
             win.update_idletasks()
 
             def worker():
-                ok, msg = wireguard.launch_setup(app, app_port=8000)
+                ok, msg = wireguard.launch_setup(app)
                 app.root.after(0, lambda: done(ok, msg))
             app.thread_pool.submit(worker, task_type="standard")
 
@@ -1121,7 +1102,7 @@ def open_remote_setup(app):
             win.update_idletasks()
 
             def worker():
-                ok, msg = wireguard.launch_setup(app, app_port=8000)
+                ok, msg = wireguard.launch_setup(app)
                 app.root.after(0, lambda: done(ok, msg))
 
             app.thread_pool.submit(worker, task_type="standard")

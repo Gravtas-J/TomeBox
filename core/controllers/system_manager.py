@@ -5,13 +5,15 @@ import threading
 import uvicorn
 
 from core.events import default_bus
-
+from core.utils.net import DEFAULT_SERVER_PORT, find_free_port
 
 class SystemManager:
     def __init__(self, logger, event_bus=None):
         self.logger = logger
         self.event_bus = event_bus or default_bus
         self.web_server = None
+        self.preferred_port = 8000
+        self.server_port = None
         self.lock_socket = None
         self.lock_port = 43128
         self.import_lock = threading.Lock()
@@ -232,7 +234,7 @@ class SystemManager:
             return "127.0.0.1"
 
     def _is_firewall_rule_installed(self, port=8000):
-        """Checks if the TomeBox firewall rule already exists."""
+        """Checks if a TomeBox firewall rule exists that actually covers this port."""
         import subprocess
 
         try:
@@ -248,7 +250,26 @@ class SystemManager:
             if hasattr(subprocess, "CREATE_NO_WINDOW"):
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             result = subprocess.run(cmd, **kwargs)
-            return "No rules match" not in result.stdout
+            stdout = result.stdout or ""
+
+            if "No rules match" in stdout:
+                return False
+
+            # A rule exists, but it may have been created for a different port —
+            # we fall back off 8000 when it's occupied. netsh permits duplicate
+            # rule names, so check whether any of them covers the port we want.
+            port_lines = [ln for ln in stdout.splitlines() if "LocalPort" in ln]
+            if not port_lines:
+                # Localised Windows or unexpected output. Keep the old
+                # name-only behaviour rather than nagging with a UAC prompt.
+                return True
+
+            for line in port_lines:
+                values = line.split(":", 1)[-1]
+                tokens = [v.strip() for v in values.split(",")]
+                if "Any" in tokens or str(port) in tokens:
+                    return True
+            return False
         except Exception:
             return False
 
@@ -322,37 +343,54 @@ class SystemManager:
             self.logger("Stopping companion server...")
             self.web_server.should_exit = True
             self.web_server = None
+            self.server_port = None
             if on_stopped_cb:
                 on_stopped_cb()
         else:
             import sys
 
-            if sys.platform == "win32":
-                if not self._is_firewall_rule_installed(port=8000):
-                    self._add_firewall_rule(port=8000)
             try:
+                # Prefer whatever we bound last time, so pairing URLs and
+                # WireGuard configs written between sessions stay correct.
+                preferred = (
+                    app_instance.settings.get("server_port")
+                    or self.preferred_port
+                    or DEFAULT_SERVER_PORT
+                )
+                port = find_free_port(preferred, host="0.0.0.0", logger=self.logger)
+                self.server_port = port
+                app_instance.server_port = port
+
+                if app_instance.settings.get("server_port") != port:
+                    app_instance.settings["server_port"] = port
+                    app_instance.db.save_settings(app_instance.settings)
+
                 from server.web_app import create_server_app
 
                 # Pass the TomeBox app instance to the server so it can read library/settings
                 api = create_server_app(app_instance)
-                config = uvicorn.Config(api, host="0.0.0.0", port=8000, log_config=None)
+                config = uvicorn.Config(
+                    api, host="0.0.0.0", port=port, log_config=None
+                )
                 self.web_server = uvicorn.Server(config)
 
                 threading.Thread(target=self.web_server.run, daemon=True).start()
 
                 local_ip = self.get_local_ip()
-                self.logger(f"Server started on http://{local_ip}:8000")
+                self.logger(f"Server started on http://{local_ip}:{port}")
 
                 if on_started_cb:
                     on_started_cb()
 
             except ImportError:
+                self.server_port = None
                 if on_error_cb:
                     on_error_cb(
                         "Missing Libraries",
                         "Please install the required server packages first:\n\npip install fastapi uvicorn",
                     )
             except Exception as e:
+                self.server_port = None
                 self.logger(f"Failed to start server: {e}")
                 if on_error_cb:
                     on_error_cb("Server Error", f"Could not start the server.\n\n{e}")
