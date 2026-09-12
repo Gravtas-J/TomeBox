@@ -118,7 +118,8 @@ Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
 *Appreciative Nods*
 ![Tomebox Android Player](assets/Android_Player.png)
 *Niiiiceee!*
-![Tomebox Android Chapters](assets/Android_Chapters.png.png)
+
+![Tomebox Android Chapters](assets/Android_Chapters.png)
 *Eeeeeee!*
 ![Tomebox Android Chatacters](assets/Android_Characters.png)
 *Hmmmmmm!*
