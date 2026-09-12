@@ -22,11 +22,9 @@ TomeBox offers two installation paths depending on your needs.
 
 The fastest way to get started — no Python, no terminals, no setup.
 
-1. **Download** the latest `TomeBox-Windows.zip` from the [Releases page](https://github.com/Gravtas-J/tomebox/releases).
-2. **Extract** the entire folder anywhere you like (Documents, Desktop, Program Files — your choice).
-3. **Run** `TomeBox.exe` to launch the application.
-4. *(Optional)* Run `create_shortcut.bat` to add a desktop shortcut for quick access.
-5. **Login:** Click `File → Authentication & Profiles`, choose your region, and follow the prompts to link your Audible account.
+1. **Download** the latest `TomeBox-Windows-Installer.exe` from the [Releases page](https://github.com/Gravtas-J/tomebox/releases).
+2. **Run** `TomeBox-Windows-Installer.exe` to launch the installer.
+
 
 > **Windows SmartScreen Notice:** The first time you run TomeBox, Windows may flag it as "unrecognised". This is normal for indie software without a paid code-signing certificate. Click **More info → Run anyway** to proceed. The application is open source — you can verify the code yourself in this repository.
 
