@@ -22,3 +22,4 @@ sounddevice==0.5.5
 mutagen==1.47.0
 cryptography
 httpx
+psutil
