@@ -7,7 +7,10 @@ from tkinter import messagebox, ttk
 import qrcode
 import requests
 from PIL import Image, ImageTk
-
+import secrets
+import socket
+import time
+from core.controllers.library_manager import bump_library_version
 
 def open_error_log_window(app):
     """Opens the Error Log popup window."""
@@ -413,6 +416,8 @@ def open_sleep_menu(app):
     app.sleep_menu_popup.bind("<FocusOut>", on_focus_out)
     app.sleep_menu_popup.focus_set()
 
+def _normalise_series(name):
+    return " ".join((name or "").split()).lower()
 
 def open_library_folders_window(app):
     """Opens a UI dialog to manage the background scanner's watched folders."""
@@ -656,34 +661,24 @@ def show_achievement_toast(app, title, desc):
 
 
 def open_pairing_window(app):
+    import json
     import secrets
-    import socket
     import time
 
-    # Dynamically grab the host machine's local IP
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("10.255.255.255", 1))
-        local_ip = s.getsockname()[0]
-    except Exception:
-        local_ip = "127.0.0.1"
-    finally:
-        s.close()
-
-    # --- Generate 5-Minute OTP ---
-    if not hasattr(app, "_active_otps"):
-        app._active_otps = {}
-
-    # Clear expired OTPs
-    now = time.time()
-    app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
-
-    # Mint fresh OTP
-    otp = secrets.token_urlsafe(16)
-    app._active_otps[otp] = now + 300  # Expires in 300 seconds (5 mins)
-
-    # Use a mutable state dictionary so button callbacks always see the newest URL
-    current_state = {"url": f"http://{local_ip}:8000/auth?otp={otp}"}
+    from core import wireguard
+    from core.utils.net import resolve_server_port
+    # Both the initial render and refresh_qr_code must use this. They diverged
+    # (5 vs 8) and the window resized itself on the first refresh.
+    APP_QR_BOX_SIZE = 5
+    app_payload, otp = wireguard.build_pairing_payload(app)
+    payload = json.loads(app_payload)
+    # print(f"[PAIR] app_payload={app_payload!r}")
+    # QR carries the JSON packet; the text box shows a human-usable URL.
+    current_state = {
+        "payload": payload,                                          # mutated on refresh
+        "qr_text": app_payload,                                      # what the QR encodes
+        "manual_url": f"{payload['lan']}/auth?otp={payload['otp']}", # what a human types
+    }
 
     top = tk.Toplevel(app.root)
     top.title("Pair Mobile Device")
@@ -695,86 +690,127 @@ def open_pairing_window(app):
     main_frame.pack(fill="both", expand=True)
 
     tk.Label(
-        main_frame,
-        text="Scan to Connect",
-        font=("Arial", 16, "bold"),
-        bg="#2b2b2b",
-        fg="white",
+        main_frame, text="Scan to Connect", font=("Arial", 16, "bold"),
+        bg="#2b2b2b", fg="white",
     ).pack(pady=(0, 10))
 
     tk.Label(
         main_frame,
         text="Point your phone's camera at this code\nto securely load your library.",
-        bg="#2b2b2b",
-        fg="#cccccc",
-        wraplength=350,
-        justify="center",
+        bg="#2b2b2b", fg="#cccccc", wraplength=350, justify="center",
     ).pack(pady=(0, 15))
 
-    # Generate initial QR
-    qr = qrcode.QRCode(box_size=8, border=2)
-    qr.add_data(current_state["url"])
+    # --- QR column ---
+    qr_row = tk.Frame(main_frame, bg="#2b2b2b")
+    qr_row.pack(pady=(0, 15))
+
+    # The tunnel now ships inside the app payload, so there's no second QR.
+    # This column is just remote-access status: active, or an offer to set it up.
+    if payload.get("wg"):
+        status_col = tk.Frame(qr_row, bg="#2b2b2b")
+        status_col.pack(side=tk.LEFT, padx=10)
+
+        # tk.Label(
+        #     status_col,
+        #     text="Remote access active.\nThe tunnel is included in this code.",
+        #     bg="#2b2b2b", fg="#81c784",
+        #     font=("Arial", 9), justify="center", wraplength=200,
+        # ).pack(pady=(0, 10))
+    else:
+        setup_col = tk.Frame(qr_row, bg="#2b2b2b")
+        setup_col.pack(side=tk.LEFT, padx=10)
+
+        status = wireguard.get_status(app)
+        if status["tools_available"]:
+            msg = "Remote access isn't set up.\nOne-time admin permission needed."
+        else:
+            msg = ("Remote access isn't set up.\nWireGuard will be installed "
+                   "automatically.\nOne-time admin permission needed.")
+
+        tk.Label(
+            setup_col, text=msg, bg="#2b2b2b", fg="#cccccc",
+            font=("Arial", 9), justify="center", wraplength=200,
+        ).pack(pady=(0, 10))
+
+        def do_setup():
+            top.destroy()               # close the pairing window
+            open_remote_setup(app)      # diagnose → prompt → setup
+
+        tk.Button(
+            setup_col, text="Set up remote access", command=do_setup,
+            bg="#bb86fc", fg="#1e1e1e",
+            font=("Arial", 9, "bold"), relief="flat", padx=15, pady=5,
+        ).pack()
+    # RIGHT: TomeBox pairing payload
+    app_col = tk.Frame(qr_row, bg="#2b2b2b")
+    app_col.pack(side=tk.LEFT, padx=10)
+
+    tk.Label(
+        app_col,
+        text="Scan with the TomeBox app",
+        bg="#2b2b2b", fg="#cccccc",
+        font=("Arial", 9, "bold"), justify="center",
+    ).pack(pady=(0, 6))
+
+    qr = qrcode.QRCode(box_size=APP_QR_BOX_SIZE, border=2)
+    qr.add_data(current_state["qr_text"])
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     tk_image = ImageTk.PhotoImage(img)
 
-    qr_label = tk.Label(main_frame, image=tk_image, bg="#2b2b2b")
+    qr_label = tk.Label(app_col, image=tk_image, bg="#2b2b2b")
     qr_label.image = tk_image
-    qr_label.pack(pady=(0, 15))
+    qr_label.pack()
 
     tk.Label(
-        main_frame,
-        text="Or open this URL manually:",
-        bg="#2b2b2b",
-        fg="#cccccc",
-        font=("Arial", 9),
+        main_frame, text="Or open this URL manually:",
+        bg="#2b2b2b", fg="#cccccc", font=("Arial", 9),
     ).pack(pady=(0, 5))
 
     url_text = tk.Text(
-        main_frame,
-        height=2,
-        wrap="word",
-        bg="#1e1e1e",
-        fg="#bb86fc",
-        font=("Consolas", 9),
-        relief="flat",
-        padx=10,
-        pady=8,
+        main_frame, height=2, wrap="word", bg="#1e1e1e", fg="#bb86fc",
+        font=("Consolas", 9), relief="flat", padx=10, pady=8,
     )
-    url_text.insert("1.0", current_state["url"])
+    url_text.insert("1.0", current_state["manual_url"])
     url_text.config(state="disabled")
     url_text.pack(fill="x", pady=(0, 5))
 
-    # --- Button Callbacks ---
+    # --- Button Callbacks (NOTE: nested inside open_pairing_window) ---
     def copy_url():
         top.clipboard_clear()
-        top.clipboard_append(current_state["url"])
+        top.clipboard_append(current_state["manual_url"])
         copy_btn.config(text="Copied!")
         top.after(1500, lambda: copy_btn.config(text="Copy URL"))
 
     def refresh_qr_code():
-        # Mint a new 5-minute OTP
+        # Re-mint ONLY the OTP. Deliberately does NOT call build_pairing_payload
+        # again — that would provision a brand-new WireGuard peer on every click.
         now = time.time()
         app._active_otps = {k: v for k, v in app._active_otps.items() if v > now}
-        new_otp = secrets.token_urlsafe(16)
-        app._active_otps[new_otp] = now + 300
+        new_otp = secrets.token_hex(4)
+        app._active_otps[new_otp] = now + 600
 
-        current_state["url"] = f"http://{local_ip}:8000/auth?otp={new_otp}"
+        p = current_state["payload"]
+        old_otp = p["otp"]
+        p["otp"] = new_otp
+        # The slot is held against the OTP, so the hold has to follow it.
+        wireguard.rekey_reservation(app, old_otp, new_otp)
 
-        # Visually refresh the QR Code
-        new_qr = qrcode.QRCode(box_size=8, border=2)
-        new_qr.add_data(current_state["url"])
+        current_state["qr_text"] = json.dumps(p)
+        current_state["manual_url"] = f"{p['lan']}/auth?otp={new_otp}"
+
+        new_qr = qrcode.QRCode(box_size=APP_QR_BOX_SIZE, border=2)
+        new_qr.add_data(current_state["qr_text"])
         new_qr.make(fit=True)
         new_img = new_qr.make_image(fill_color="black", back_color="white")
         new_tk_image = ImageTk.PhotoImage(new_img)
 
         qr_label.config(image=new_tk_image)
-        qr_label.image = new_tk_image  # Prevent garbage collection
+        qr_label.image = new_tk_image  # prevent garbage collection
 
-        # Visually refresh the Text Box
         url_text.config(state="normal")
         url_text.delete("1.0", tk.END)
-        url_text.insert("1.0", current_state["url"])
+        url_text.insert("1.0", current_state["manual_url"])
         url_text.config(state="disabled")
 
     # --- Action Buttons ---
@@ -821,6 +857,270 @@ def open_pairing_window(app):
     y = parent_y + (parent_h // 2) - (win_h // 2)
     top.geometry(f"+{x}+{y}")
 
+def reset_remote_access(app):
+    """Full teardown: clear settings, delete config, uninstall tunnel service.
+    The tunnel uninstall needs elevation, so we shell out elevated for that one step."""
+    from tkinter import messagebox
+    from core import wireguard
+
+    confirm = messagebox.askyesno(
+        "Remove Remote Access",
+        "This will:\n\n"
+        "• Remove the WireGuard tunnel from this computer\n"
+        "• Delete the tunnel configuration\n"
+        "• Clear all paired device slots\n\n"
+        "Paired phones will need to re-pair after you set up again.\n\n"
+        "Continue?",
+        parent=app.root,
+    )
+    if not confirm:
+        return
+
+    # 1. Uninstall the tunnel service (needs elevation).
+    try:
+        be = wireguard._backend()
+        be.uninstall_tunnel()
+    except Exception as e:
+        app.logger(f"Tunnel uninstall failed (may need admin): {e}")
+
+    # 2. Delete the config file.
+    conf_path = app.settings.get("wg_conf_path", "")
+    if conf_path:
+        import os, shutil
+        wg_dir = os.path.dirname(conf_path)
+        if os.path.isdir(wg_dir):
+            shutil.rmtree(wg_dir, ignore_errors=True)
+
+    # 3. Clear all WG keys from settings.
+    for key in ("wg_server_public", "wg_endpoint", "wg_pool",
+                "wg_conf_path", "wg_listen_port"):
+        app.settings.pop(key, None)
+    app.db.save_settings(app.settings)
+
+    messagebox.showinfo(
+        "Remote Access Removed",
+        "Remote access has been removed. You can set it up again from the "
+        "pairing window at any time.",
+        parent=app.root,
+    )
+
+def open_remote_setup(app):
+    """Diagnose the connection, then either dead-end (CGNAT) or offer setup with an
+    optional DDNS hostname (the normal case)."""
+    from core import wireguard
+
+    win = tk.Toplevel(app.root)
+    win.title("Set Up Remote Access")
+    win.configure(bg="#2b2b2b")
+    win.transient(app.root)
+    win.resizable(False, False)
+
+    frame = tk.Frame(win, bg="#2b2b2b", padx=25, pady=20)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(frame, text="Set Up Remote Access", font=("Arial", 15, "bold"),
+             bg="#2b2b2b", fg="white").pack(pady=(0, 12))
+
+    status_lbl = tk.Label(frame, text="Checking your connection…", bg="#2b2b2b",
+                          fg="#cccccc", wraplength=380, justify="left")
+    status_lbl.pack(pady=(0, 12))
+
+    body = tk.Frame(frame, bg="#2b2b2b")
+    body.pack(fill="x")
+
+    def ask_connection_type():
+        """Put the CGNAT question to the user directly. Auto-detection lied too
+        often (ISPs that don't lay out their networks conventionally), so the user
+        tells us what they have."""
+        for w in body.winfo_children():
+            w.destroy()
+
+        status_lbl.config(
+            text="What kind of internet connection does this computer have?",
+            fg="#cccccc",
+        )
+
+        tk.Label(body,
+                 text="If you're not sure: most home connections have a public IP. "
+                      "If your ISP uses CGNAT (common on mobile broadband and some "
+                      "fibre plans), incoming connections can't reach you directly.",
+                 bg="#2b2b2b", fg="#888", wraplength=380, justify="left"
+                 ).pack(pady=(0, 14))
+
+        tk.Button(body, text="I have a public IP address",
+                  command=lambda: _render_endpoint_form(prefill_detected()),
+                  bg="#bb86fc", fg="#1e1e1e", relief="flat",
+                  font=("Arial", 10, "bold"), padx=15, pady=6).pack(fill="x", pady=(0, 6))
+
+        tk.Button(body, text="I'm behind CGNAT / not directly reachable",
+                  command=cgnat_path,
+                  bg="#555", fg="white", relief="flat",
+                  font=("Arial", 10), padx=15, pady=6).pack(fill="x", pady=(0, 6))
+
+        tk.Label(body,
+                 text="Not sure? Try “public IP” first — if remote access doesn't "
+                      "work afterwards, come back and choose CGNAT.",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8),
+                 wraplength=380, justify="left").pack(pady=(6, 0))
+
+    def prefill_detected() -> str:
+        """Best-effort IP to pre-fill — a convenience, NOT a gate. The user can
+        overwrite it with anything (a DDNS hostname, a corrected IP)."""
+        try:
+            ip = wireguard.detect_public_endpoint()
+            return ip or ""
+        except Exception:
+            return ""
+
+    def cgnat_path():
+        for w in body.winfo_children():
+            w.destroy()
+        status_lbl.config(text="Remote access needs a reachable address.", fg="#ffcc66")
+        tk.Label(body,
+                 text="Because your connection is behind CGNAT, TomeBox can't be "
+                      "reached directly from the internet. Your options:\n\n"
+                      "• Ask your ISP for a public IP (often free on request)\n"
+                      "• Use a forwarded port from a VPN or relay (advanced)\n\n"
+                      "A dynamic DNS hostname will NOT fix CGNAT.",
+                 bg="#2b2b2b", fg="#cccccc", wraplength=380, justify="left"
+                 ).pack(pady=(0, 12))
+
+        tk.Button(body, text="I have a forwarded port →",
+                  command=_render_forwarded_form,
+                  bg="#bb86fc", fg="#1e1e1e", relief="flat",
+                  font=("Arial", 9, "bold"), padx=15, pady=5).pack(pady=(0, 6))
+        tk.Button(body, text="Close", command=win.destroy,
+                  bg="#555", fg="white", relief="flat", padx=15, pady=5).pack()
+        
+    def _render_forwarded_form():
+        for w in body.winfo_children():
+            w.destroy()
+        status_lbl.config(
+            text="Enter the forwarded connection details from your VPN or relay.",
+            fg="#cccccc",
+        )
+
+        tk.Label(body, text="Public address & port (what your VPN/relay exposes):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(4, 2))
+        ep = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                      font=("Consolas", 10), width=38)
+        ep.insert(0, "")
+        ep.pack(fill="x", pady=(0, 2))
+        tk.Label(body, text="e.g.  proton-server-ip:41234",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 10))
+
+        tk.Label(body,
+                 text="WireGuard will listen on the forwarded port so the two line "
+                      "up. Note: remote access only works while your VPN is "
+                      "connected on this computer.",
+                 bg="#2b2b2b", fg="#ffcc66", wraplength=380,
+                 justify="left").pack(anchor="w", pady=(0, 10))
+        def done(ok, msg):
+            messagebox.showinfo("Remote Access", msg, parent=app.root)
+            win.destroy()
+            if ok:
+                open_pairing_window(app)
+        def proceed():
+            raw = ep.get().strip()
+            if ":" not in raw:
+                messagebox.showwarning("Address needed",
+                                       "Enter the address and port as ip:port.",
+                                       parent=win)
+                return
+            host, _, port = raw.rpartition(":")
+            try:
+                port = int(port)
+            except ValueError:
+                messagebox.showwarning("Port", "Port must be a number.", parent=win)
+                return
+
+            app.settings["wg_endpoint"] = f"{host.strip()}:{port}"
+            app.settings["wg_listen_port"] = port   # NEW: match the forwarded port
+            app.db.save_settings(app.settings)
+
+            btn.config(text="Setting up…", state="disabled")
+            win.update_idletasks()
+
+            def worker():
+                ok, msg = wireguard.launch_setup(app)
+                app.root.after(0, lambda: done(ok, msg))
+            app.thread_pool.submit(worker, task_type="standard")
+
+        btn = tk.Button(body, text="Set up with forwarded port", command=proceed,
+                        bg="#bb86fc", fg="#1e1e1e", font=("Arial", 10, "bold"),
+                        relief="flat", padx=15, pady=6)
+        btn.pack()
+
+    def _render_endpoint_form(prefill=""):
+        tk.Label(body,
+                 text="Remote address (leave as-is, or enter a dynamic DNS hostname\n"
+                      "if your home IP address changes):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(4, 4))
+
+        entry = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                         font=("Consolas", 10), width=38)
+        entry.insert(0, prefill)
+        entry.pack(fill="x", pady=(0, 4))
+
+        tk.Label(body,
+                 text="Examples:  203.0.113.45   or   myhome.duckdns.org",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 12))
+        tk.Label(body, text="WireGuard port (change only if 51820 is already "
+                            "forwarded to another machine):",
+                 bg="#2b2b2b", fg="#cccccc", justify="left").pack(anchor="w", pady=(8, 2))
+
+        port_entry = tk.Entry(body, bg="#1e1e1e", fg="#bb86fc", relief="flat",
+                              font=("Consolas", 10), width=10)
+        port_entry.insert(0, str(app.settings.get("wg_listen_port",
+                                                  wireguard.LISTEN_PORT)))
+        port_entry.pack(anchor="w", pady=(0, 4))
+
+        tk.Label(body, text="Your router must forward this UDP port to this computer.",
+                 bg="#2b2b2b", fg="#888", font=("Arial", 8)).pack(anchor="w", pady=(0, 12))
+        def proceed():
+            host = entry.get().strip()
+            if not host:
+                messagebox.showwarning("Address needed",
+                                       "Enter a public IP or a dynamic DNS hostname.",
+                                       parent=win)
+                return
+            try:
+                port = int(port_entry.get().strip())
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning("Port", "Port must be a number between 1 and 65535.",
+                                       parent=win)
+                return
+
+            host = host.split(":")[0]
+            app.settings["wg_listen_port"] = port
+            app.settings["wg_endpoint"] = f"{host}:{port}"
+            app.db.save_settings(app.settings)
+
+            btn.config(text="Setting up…", state="disabled")
+            win.update_idletasks()
+
+            def worker():
+                ok, msg = wireguard.launch_setup(app)
+                app.root.after(0, lambda: done(ok, msg))
+
+            app.thread_pool.submit(worker, task_type="standard")
+
+        def done(ok, msg):
+            messagebox.showinfo("Remote Access", msg, parent=app.root)
+            win.destroy()
+            if ok:
+                open_pairing_window(app)   # reopen — both QRs will be there now
+
+        btn = tk.Button(body, text="Set up remote access", command=proceed,
+                        bg="#bb86fc", fg="#1e1e1e", font=("Arial", 10, "bold"),
+                        relief="flat", padx=15, pady=6)
+        btn.pack()
+
+    # Run the network probe off the UI thread — it does an HTTP call.
+    # app.thread_pool.submit(ask_connection_type(), task_type="standard")
+    ask_connection_type()
 
 def open_match_to_audible_window(app, filepath):
     import os
@@ -1163,7 +1463,7 @@ def open_match_to_audible_window(app, filepath):
 
         app.metadata_manager.event_bus.subscribe("metadata.apply_complete", on_done)
         app.metadata_manager.event_bus.subscribe("metadata.error", on_error)
-
+        
         fields = {
             "title": apply_title_var.get(),
             "author": apply_author_var.get(),
@@ -1190,7 +1490,7 @@ def open_bulk_metadata_window(app, filepaths):
 
     win = tk.Toplevel(app.root)
     win.title(f"Bulk Edit Metadata ({len(filepaths)} items)")
-    win.geometry("400x280")
+    win.geometry("440x600")
     win.transient(app.root)
     win.grab_set()
 
@@ -1242,7 +1542,65 @@ def open_bulk_metadata_window(app, filepaths):
     ttk.Label(form_frame, text="Read Status:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
     status_var = tk.StringVar(value="— Keep current —")
     ttk.Combobox(form_frame, textvariable=status_var, values=["— Keep current —", "Unread", "Finished"], state="readonly", width=35).grid(row=5, column=1, sticky="w", pady=5)
+    # --- Series ordering ---
+    order_frame = ttk.LabelFrame(main_frame, text="Series Order", padding=8)
+    order_frame.pack(fill="both", expand=True, pady=(8, 4))
 
+    ttk.Label(
+        order_frame,
+        text="Set the reading order for the selected books. Position 1 is first.",
+        font=("Arial", 8),
+    ).pack(anchor="w", pady=(0, 4))
+
+    order_list = tk.Listbox(
+        order_frame, height=8, bg="#1e1e1e", fg="#e0e0e0",
+        selectbackground="#bb86fc", activestyle="none",
+    )
+    order_list.pack(fill="both", expand=True)
+
+    lib = app.library_manager.local_library
+    # Existing sequence first, then unsequenced by title — so a partially ordered
+    # series opens in a sensible state rather than jumbled.
+    ordered = sorted(
+        filepaths,
+        key=lambda p: (
+            lib.get(p, {}).get("series_sequence") is None,
+            lib.get(p, {}).get("series_sequence") or 0,
+            lib.get(p, {}).get("title", "").lower(),
+        ),
+    )
+    state = {"paths": ordered}
+    order_state = {"paths": ordered}
+
+    def redraw(select=None):
+        order_list.delete(0, tk.END)
+        for i, p in enumerate(order_state["paths"], start=1):
+            order_list.insert(tk.END, f"{i:>3}.  {lib.get(p, {}).get('title', p)}")
+        if select is not None:
+            order_list.selection_set(select)
+
+    def move(delta):
+        sel = order_list.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        j = i + delta
+        if not (0 <= j < len(order_state["paths"])):
+            return
+        order_state["paths"][i], order_state["paths"][j] = order_state["paths"][j], order_state["paths"][i]
+        redraw(select=j)
+
+    redraw()
+
+    move_frame = ttk.Frame(order_frame)
+    move_frame.pack(fill="x", pady=(4, 0))
+    ttk.Button(move_frame, text="▲ Up", command=lambda: move(-1), width=8).pack(side=tk.LEFT)
+    ttk.Button(move_frame, text="▼ Down", command=lambda: move(1), width=8).pack(side=tk.LEFT, padx=4)
+
+    apply_order_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(
+        move_frame, text="Apply this order", variable=apply_order_var
+    ).pack(side=tk.RIGHT)
     # --- Options ---
     options_frame = ttk.Frame(main_frame)
     options_frame.pack(fill="x", pady=5)
@@ -1258,6 +1616,13 @@ def open_bulk_metadata_window(app, filepaths):
     btn_frame.pack(fill="x", side=tk.BOTTOM)
 
     def do_save():
+        if apply_order_var.get():
+            for i, p in enumerate(order_state["paths"], start=1):
+                entry = app.library_manager.local_library.setdefault(p, {})
+                entry["series_sequence"] = float(i)
+                entry["series_sequence_user_set"] = True
+            app.db.save_local_db(app.library_manager.local_library)
+            bump_library_version(app)
         # Lock the UI
         save_btn.config(state=tk.DISABLED)
         cancel_btn.config(state=tk.DISABLED)
@@ -1376,6 +1741,8 @@ def open_bulk_metadata_window(app, filepaths):
     
     save_btn = ttk.Button(btn_frame, text="Save Batch", command=do_save)
     save_btn.pack(side=tk.RIGHT, padx=5)
+
+
 def open_manual_metadata_window(app, filepath):
     import os
     from tkinter import filedialog
@@ -1503,13 +1870,20 @@ def open_manual_metadata_window(app, filepath):
     ttk.Entry(form_frame, textvariable=series_var, width=38).grid(
         row=3, column=1, sticky="w", pady=5
     )
+    ttk.Label(form_frame, text="Sequence:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=5
+        )
+    seq_var  = tk.StringVar(value=local_data.get("sequence", ""))
+    ttk.Entry(form_frame, textvariable=seq_var, width=38).grid(
+        row=4, column=1, sticky="w", pady=5
+    )
 
     ttk.Label(form_frame, text="ASIN:").grid(
-        row=4, column=0, sticky="e", padx=5, pady=5
+        row=5, column=0, sticky="e", padx=5, pady=5
     )
     asin_var = tk.StringVar(value=local_data.get("asin", ""))
     ttk.Entry(form_frame, textvariable=asin_var, width=38).grid(
-        row=4, column=1, sticky="w", pady=5
+        row=5, column=1, sticky="w", pady=5
     )
     # --- STATUS DROPDOWN ---
     active_prof = getattr(app, "active_profile", "Main")
@@ -1564,10 +1938,26 @@ def open_manual_metadata_window(app, filepath):
     btn_frame = ttk.Frame(main_frame)
     btn_frame.pack(fill="x", side=tk.BOTTOM)
 
+    def _fmt_seq(v):
+        if v is None:
+            return ""
+        return str(int(v)) if float(v).is_integer() else str(v)
+
+
+    def _parse_seq(s):
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
     def do_save():
         feedback_var.set("Saving...")
         save_btn.config(state=tk.DISABLED)
         win.update_idletasks()
+
 
         # status_var.get() is now safely reading from the combobox
         new_data = {
@@ -1575,6 +1965,8 @@ def open_manual_metadata_window(app, filepath):
             "authors": author_var.get().strip(),
             "narrator": narrator_var.get().strip(),
             "series": series_var.get().strip(),
+            "series_sequence": _parse_seq(seq_var.get()),
+            "series_sequence_user_set": bool(seq_var.get().strip()),
             "asin": asin_var.get().strip(),
             "status_override": status_var.get(), 
             "duration_sec": dur_sec,
@@ -1629,7 +2021,6 @@ def open_manual_metadata_window(app, filepath):
     save_btn.pack(side=tk.RIGHT)
 
     win.focus_set()
-
 
 def open_cover_modal(app, asin, title, explicit_path=None):
     """Opens a standardized, high-resolution, clickable cover art modal."""

@@ -803,25 +803,49 @@ class TomeBoxClient {
         if (!qrContainer || !urlElement) return;
 
         try {
-            const res = await fetch('/api/pairing-info'); 
-            if (!res.ok) throw new Error(`Server returned ${res.status}`);
-            
+            const res = await fetch('/api/pairing-info');
             const data = await res.json();
-            const pairingUrl = data.pairing_url;
-            
-            urlElement.textContent = pairingUrl;
-            
-            await new Promise((resolve, reject) => {
+
+            // NEW: the app payload carries both network paths (lan + vpn) + the OTP.
+            // Fall back to the legacy URL if the server is an older build.
+            const appPayload = data.app_payload || data.pairing_url;
+
+            await new Promise((resolve) => {
                 if (window.QRCode) { resolve(); return; }
                 const script = document.createElement('script');
                 script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
                 script.onload = resolve;
-                script.onerror = reject;
                 document.head.appendChild(script);
             });
-            
+
             qrContainer.innerHTML = '';
-            new QRCode(qrContainer, { text: pairingUrl, width: 200, height: 200, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
+            new QRCode(qrContainer, {
+                text: appPayload,
+                width: 220,
+                height: 220,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M,   // was H — see note below
+            });
+
+            // Second QR: the raw WireGuard config, scanned by the WireGuard app.
+            const wgContainer = document.getElementById('wg-qr');   // add this div to the HTML
+            if (wgContainer) {
+                wgContainer.innerHTML = '';
+                if (data.wg_config) {
+                    new QRCode(wgContainer, {
+                        text: data.wg_config,
+                        width: 220,
+                        height: 220,
+                        colorDark: '#000000',
+                        colorLight: '#ffffff',
+                        correctLevel: QRCode.CorrectLevel.M,
+                    });
+                } else {
+                    wgContainer.textContent =
+                        'Remote access not configured (WireGuard tunnel not running).';
+                }
+            }
             
             urlElement.addEventListener('click', () => {
                 navigator.clipboard.writeText(pairingUrl).then(() => {

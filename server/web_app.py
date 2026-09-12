@@ -19,11 +19,16 @@ def create_server_app(tomebox):
     api = FastAPI()
     static_dir = get_resource_path("server", "static")
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
+    tomebox.settings["library_version"] = tomebox.settings.get("library_version", 0) + 1
     if not hasattr(tomebox, "_web_task_state"):
         tomebox._web_task_state = {
             "downloads": {"active_asin": None, "progress": 0, "status": "Idle"},
             "conversions": {"active_path": None, "progress": 0, "status": "Idle"},
         }
+
+    @api.get("/api/library/version")
+    def get_library_version():
+            return {"version": tomebox.settings.get("library_version", 0)}
 
     @api.middleware("http")
     async def token_auth_middleware(request: Request, call_next):
@@ -99,38 +104,18 @@ def create_server_app(tomebox):
 
     @api.get("/api/pairing-info")
     def get_pairing_info(request: Request):
-        """Generates a secure, one-time pairing OTP for new devices."""
-        import secrets
-        import socket
-        import time
+        from core import wireguard
+        from core.utils.net import resolve_server_port
+        port = request.url.port or resolve_server_port(tomebox)
+        app_payload, otp = wireguard.build_pairing_payload(tomebox, port=port)
 
-        # Find the host machine's primary LAN IP
-        local_ip = "127.0.0.1"
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            pass
-
-        # --- NEW OTP GENERATION ---
-        # Generate a secure 8-character OTP
-        otp = secrets.token_hex(4)
-
-        # Create the dictionary if it doesn't exist yet
-        if not hasattr(tomebox, "_active_otps"):
-            tomebox._active_otps = {}
-
-        # Store OTP with a 10-minute expiration (600 seconds)
-        tomebox._active_otps[otp] = time.time() + 600
-
-        port = request.url.port or 8000
-        pairing_url = f"http://{local_ip}:{port}/auth?otp={otp}"
+        import json
+        lan = json.loads(app_payload)["lan"]
 
         return {
-            "pairing_url": pairing_url,
-            "token": otp,  # The JS still looks for 'token' or 'pairing_url'
+            "pairing_url": f"{lan}/auth?otp={otp}",   # legacy, for the old web JS
+            "token": otp,                              # legacy
+            "app_payload": app_payload,                # QR: TomeBox app
         }
 
     @api.get("/api/profiles/active")
@@ -185,6 +170,11 @@ def create_server_app(tomebox):
         if otp and otp in active_otps and active_otps[otp] > now:
             del active_otps[otp]  # Burn the OTP instantly
 
+            # The device is really pairing — make its tunnel slot permanent.
+            from core import wireguard
+            wireguard.confirm_peer(
+                tomebox, otp, device_name=request.headers.get("user-agent", "")[:60]
+            )
             # Mint and secure new device token
             new_token = secrets.token_urlsafe(32)
             hashed_token = tomebox.db.hash_device_token(new_token)
@@ -241,6 +231,9 @@ def create_server_app(tomebox):
         if otp and otp in active_otps and active_otps[otp] > now:
             del active_otps[otp]
 
+            from core import wireguard
+            wireguard.confirm_peer(tomebox, otp, device_name="API Client")
+
             new_token = secrets.token_urlsafe(32)
             hashed_token = tomebox.db.hash_device_token(new_token)
 
@@ -278,9 +271,15 @@ def create_server_app(tomebox):
     @api.get("/api/last_played/{profile}")
     def get_last_played(profile: str):
         path = tomebox.settings.get(f"last_played_{profile}")
-        if path and path in tomebox.library_manager.local_library:
-            return {"path": path}
-        return {"path": None}
+        if not path or path not in tomebox.library_manager.local_library:
+            return {"path": None}
+
+        book = tomebox.library_manager.local_library[path]
+        return {
+            "path": path,
+            "position": book.get("progress", {}).get(profile, 0.0),
+            "updated_at": tomebox.settings.get(f"last_played_at_{profile}", 0.0),
+        }
 
     @api.get("/desktop", response_class=HTMLResponse)
     def desktop_landing(request: Request):
@@ -494,9 +493,21 @@ def create_server_app(tomebox):
             return FileResponse(resolved)
 
         raise HTTPException(status_code=404, detail="Cover not found")
-
+    
+    @api.get("/api/progress")
+    def get_progress(path: str, profile: str = "Main"):
+        entry = tomebox.library_manager.local_library.get(path)
+        if not entry:
+            return {"position": 0.0, "updated_at": 0.0}
+        return {
+            "position": entry.get("progress", {}).get(profile, 0.0),
+            "updated_at": entry.get("progress_updated", {}).get(profile, 0.0),
+        }
+    
     @api.post("/api/progress")
     async def update_progress(request: Request):
+        import time
+        now = time.time()
         try:
             data = await request.json()
             path = data.get("path")
@@ -509,17 +520,19 @@ def create_server_app(tomebox):
                 return {"status": "error", "detail": "Invalid position data"}
 
             if path and path in tomebox.library_manager.local_library:
-                if "progress" not in tomebox.library_manager.local_library[path]:
-                    tomebox.library_manager.local_library[path]["progress"] = {}
+                entry = tomebox.library_manager.local_library[path]
 
-                # Always update the active memory immediately
-                tomebox.library_manager.local_library[path]["progress"][profile] = (
-                    position
-                )
-                tomebox.library_manager.local_library[path]["last_position"] = position
+                if "progress" not in entry:
+                    entry["progress"] = {}
+                if "progress_updated" not in entry:          # NEW
+                    entry["progress_updated"] = {}           # NEW
+
+                entry["progress"][profile] = position
+                entry["progress_updated"][profile] = now     # NEW
+                entry["last_position"] = position
+
                 tomebox.settings[f"last_played_{profile}"] = path
-
-                import time
+                tomebox.settings[f"last_played_at_{profile}"] = now
 
                 current_time = time.time()
                 if current_time - getattr(tomebox, "_last_progress_save", 0) > 10:
@@ -579,9 +592,9 @@ def create_server_app(tomebox):
         import io
 
         import qrcode
-
+        from core.utils.net import resolve_server_port
         # Determine which IP the request came in on so we generate a usable QR
-        host = request.headers.get("host", "localhost:8000")
+        host = request.headers.get("host", f"localhost:{resolve_server_port(tomebox)}")
         pairing_url = f"http://{host}/auth?token={server_token}"
 
         qr = qrcode.QRCode(box_size=10, border=2)
@@ -678,7 +691,35 @@ def create_server_app(tomebox):
             )
 
         return chapters
+    
+    @api.get("/api/ping")
+    def ping():
+        """Cheap reachability probe for the client's LAN-vs-VPN resolution."""
+        return {"ok": True}
 
+    @api.get("/api/size")
+    def get_size(path: str):
+        """Total bytes for a book — one file, or the sum of a playlist's chapters."""
+        import os
+
+        entry = tomebox.library_manager.local_library.get(path)
+        if not entry:
+            return {"bytes": 0, "files": 0}
+
+        if entry.get("is_playlist"):
+            total, count = 0, 0
+            for ch in entry.get("chapters", []):
+                fp = ch.get("file_path")
+                if fp and os.path.exists(fp):
+                    total += os.path.getsize(fp)
+                    count += 1
+            return {"bytes": total, "files": count}
+
+        return {
+            "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+            "files": 1,
+        }
+    
     @api.get("/api/stream")
     async def stream_audio(request: Request, path: str):
         if not path:

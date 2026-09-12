@@ -41,6 +41,8 @@ from core.database import DatabaseManager
 from core.exporter import LibraryExporter
 from core.utils.image_cache import ImageCache
 from core.utils.paths import get_resource_path
+from core.utils.net import resolve_server_port
+
 from ui.action_router import ActionRouter
 from ui.auth_controller import AuthController
 from ui.bookmarks_presenter import BookmarksPresenter
@@ -1462,8 +1464,14 @@ class AAXManagerApp:
         if not getattr(self, "server_running", False):
             self.cloud_server_controller.toggle_web_server()
 
-        self.root.after(500, lambda: webbrowser.open("http://127.0.0.1:8000/desktop"))
-
+        # toggle_web_server assigns self.server_port synchronously before the
+        # uvicorn thread starts, so it's populated by the time this fires.
+        self.root.after(
+            500,
+            lambda: webbrowser.open(
+                f"http://127.0.0.1:{resolve_server_port(self)}/desktop"
+            ),
+        )
     def export_csv_worker(self):
         output_file = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -1541,6 +1549,7 @@ class AAXManagerApp:
 
         # 3. Parse Series
         series_str = ""
+        series_seq = None 
         raw_series = cloud_data.get("series", [])
         if raw_series:
             series_parts = []
@@ -1550,6 +1559,11 @@ class AAXManagerApp:
                 if s_title:
                     if s_seq and s_seq != "None":
                         series_parts.append(f"{s_title}, Book {s_seq}")
+                        if series_seq is None:
+                            try:
+                                series_seq = float(s_seq)
+                            except ValueError:
+                                pass
                     else:
                         series_parts.append(s_title)
             if series_parts:
@@ -1562,6 +1576,9 @@ class AAXManagerApp:
         local_data["authors"] = authors_str
         if series_str:
             local_data["series"] = series_str
+            
+        if series_seq is not None and not local_data.get("series_sequence_user_set"):
+            local_data["series_sequence"] = series_seq
 
         local_data["format"] = os.path.splitext(filepath)[1].replace(".", "").upper()
         local_data["path"] = filepath

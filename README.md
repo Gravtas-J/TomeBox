@@ -1,6 +1,14 @@
 # TomeBox 
 
-**TomeBox** is a local-first audiobook manager and self-hosted media server. It combines a powerful desktop application for downloading, converting, and playing your Audible library with a built-in companion web app for streaming to your mobile devices. Featuring on-the-fly DRM decryption, multi-user cross-device progress syncing, and native lock-screen controls, TomeBox gives you complete ownership of your audiobooks without relying on cloud subscriptions.
+**TomeBox** is a local-first audiobook manager and self-hosted media server. A desktop application organises, transcodes, and plays your library; a native Android client and a built-in web player stream it to your devices — on your home network, or anywhere else through a WireGuard tunnel the app raises on demand. Multi-profile progress syncing, chapter-aware playback across single-file and multi-part books, offline downloads, and native lock-screen controls, with no cloud subscription and no third-party service in the path.
+
+## Why it's built the way it is
+
+* **Seamless network failover.** Playback continues uninterrupted when you walk out the front door. A custom ExoPlayer `DataSource` swaps between LAN and tunnel addresses beneath the player, so the switch happens inside the existing buffer — no error, no rebuffer, no audible gap.
+* **Tunnel on demand, not always-on.** LAN is probed first, every time. The tunnel only comes up when you're genuinely away, and drops itself when you're home or idle — no VPN slot held, no battery cost, no fighting your other VPNs.
+* **One chapter implementation, four surfaces.** Chapter navigation is remapped once at the player layer, so the in-app controls, the notification, Bluetooth and the home screen widget all inherit it — including multi-part books where chapters are separate files.
+* **Offline-first by construction.** The library, cover art, chapter maps and playback positions are all on disk. The phone is authoritative for anything it recorded; the server fills in what it hasn't seen.
+* **Runs headless.** systemd unit, Windows service, or a single `--headless` flag. Pair a new device by scanning a QR code printed to the terminal.
 
 ## Community
 
@@ -82,12 +90,12 @@ Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
 
 ### Unified List View
 ![TomeBox List View](assets/list_view.png)
-![TomeBox List View](assets/list_view_context.png)
+![TomeBox List View Context](assets/list_view_context.png)
 *Managing cloud and local files in the classic list view. Now with Context Menus!*
 
 ### Dynamic Grid View
 ![TomeBox Grid View](assets/grid_view.png)
-![TomeBox Grid View](assets/grid_view_context.png)
+![TomeBox Grid View Context](assets/grid_view_context.png)
 *Browsing the library with fetched high-res cover art.*
 
 ### Colour Palettes
@@ -101,8 +109,22 @@ Override with `--host 127.0.0.1 --port 9000` for local-only or custom ports.
 ### Web Player
 ![TomeBox Web-player](assets/web-player.png)
 ![TomeBox Mobile-player](assets/mobile-player.png)
-
 *Daaaaaammmmnnn*
+
+## Andoid Application
+![Tomebox Android Library](assets/Android_Library.png)
+*Shocked Noises*
+![Tomebox Android Settings](assets/Android_Settings.png)
+*Appreciative Nods*
+![Tomebox Android Player](assets/Android_Player.png)
+*Niiiiceee!*
+
+![Tomebox Android Chapters](assets/Android_Chapters.png)
+*Eeeeeee!*
+![Tomebox Android Chatacters](assets/Android_Characters.png)
+*Hmmmmmm!*
+![TomeBox Android Widget](assets/Android_Widget.png)
+*Wooooooaaaahhhhh*
 
 ## Features
 
@@ -132,13 +154,13 @@ TomeBox can import audiobooks you've already downloaded or liberated:
 
 When importing, TomeBox automatically matches your files against your Audible cloud library by title to avoid duplicates. If a book isn't matched (e.g. it's no longer in your Audible library, or has a significantly different filename), it'll appear as a local-only entry. You can manually link it to a cloud item using **Scrape Metadata**.
 
-### Multi-User Authentication & Decryption
-* **Dynamic Key Swapping:** Share a single library with multiple profiles. If User B plays a legacy `.aax` file downloaded by User A, TomeBox automatically loads User A's decryption bytes in the background.
-* **Native DRM Handling:** Automatically requests the `Adrm` content license via the API to extract offline AAXC encryption keys (`audible_key` and `audible_iv`).
+### Multi-User Authentication & Library Sharing
+* **Cross-Profile Playback:** Share a single library across multiple profiles. If User B plays a file originally imported by User A, TomeBox resolves the right credentials automatically in the background.
+* **Automatic Format Handling:** Retrieves the content license for files you own and prepares them for local playback, so imports work without manual configuration.
 * **Multi-Region Support:** Built-in locale switching (US, UK, AU, CA, DE, FR, JP) for accurate catalog querying.
 
 ### Downloading & Conversion
-* **Piped Conversion:** Bypasses temporary file creation by piping decrypted streams directly into standard `.m4b` container formats.
+* **Piped Conversion:** Bypasses temporary file creation by piping converted streams directly into standard `.m4b` container formats.
 * **Chapter Extraction:** Parses metadata to allow splitting a single audiobook into multiple, sequentially numbered files based on chapter timestamps.
 * **Throttled UI Streaming:** Downloads utilize 32KB chunk streams with throttled UI progress updates, preventing interface lockups on gigabit connections.
 * **Batch Conversion:** A dedicated process that scans the local library for encrypted files and sequentially converts them into standard m4b format in a background thread.
@@ -199,17 +221,73 @@ TomeBox respects your system and does not bury files in hidden AppData folders. 
 
 **Found a bug?** Please report it on [GitHub Issues](https://github.com/Gravtas-J/tomebox/issues) or in [r/TomeBox](https://www.reddit.com/r/TomeBox/).
 
+
+## Android Client
+
+A native Kotlin app that pairs with your TomeBox server and streams your library — at home over the LAN, or anywhere else through a WireGuard tunnel it brings up on its own.
+
+### Pairing
+
+1. On the desktop, enable the companion server: `File → Enable Web Server`
+2. Open the Android app and scan the QR code.
+3. Follow the `Set up remote access` prompts if you want WAN capabilities.
+
+That's it. The QR carries the LAN address, a one-time code, and — if remote access is configured — the tunnel credentials. The app exchanges the one-time code for a durable token, so nothing reusable is left sitting in a scanned image.
+
+To pair a second device without going back to the desktop, `File → Show Pairing Info` or visit `<your-ip>:8000/pair` from a device that's already paired.
+
+### Playback
+
+* **Chapter navigation everywhere.** Previous and next mean *chapter*, not track — in the app, in the notification, on Bluetooth controls, and on a headset. Works identically whether the book is a single M4B with embedded chapters or a folder of per-chapter files played as one continuous timeline.
+* **Variable speed** from 0.5x to 3.0x, with finer steps below 1.0 where small changes matter more.
+* **Sleep timer** by minutes, or set it to stop at the end of the current chapter.
+* **Bookmarks and character notes.** Timestamped bookmarks with notes; character notes scoped to a series, tagged with the book you wrote them in so later volumes don't spoil earlier ones.
+* **Autoplay the series.** Finish a book and the next one starts, if you want it to.
+
+### Offline
+
+* **Download for offline listening** from the library, the mini player, or the full player.
+* Downloads run in a foreground worker, so they survive backgrounding and process death, and resume from where they stopped rather than restarting a 400MB transfer.
+* Chapter maps and cover art are cached alongside the audio — a downloaded book behaves identically with no server in sight.
+
+### Home screen widget
+
+Cover art fills the widget with a frosted panel behind the controls. Play/pause, chapter skip, and ±15s / ±1m seeking, plus whole-book progress and time remaining. It reads from disk rather than from the running app, so it keeps showing the right thing after Android has reaped the process.
+
+### Remote access
+
+The app probes your LAN first, every time. If it answers, you're home and no tunnel is raised. If it doesn't, the WireGuard tunnel comes up, playback continues, and the tunnel drops again when you're back on the home network or after a period of inactivity.
+
+This ordering is deliberate: many consumer routers won't hairpin traffic sent to your own public IP from inside the network, so at home the direct route is both faster and more reliable.
+
+Mid-playback network changes are handled beneath the player — the address swaps inside the existing buffer, so walking out of wifi range doesn't produce an error or an playback gap.
+
+### Profiles
+
+Multiple listeners share one library with independent progress and resume points. Switch profiles from the app's settings; profiles can also be created from the phone. The library itself stays shared — only progress is namespaced.
+
+### Diagnostics
+
+The app keeps a rolling on-device log, exportable as a full log or errors-only, so a bug report doesn't require a computer and a USB cable.
+
+### Installation
+
+Currently distributed via the release page, with running updates distributed to testers directly via the [Discord](https://discord.gg/UPtFFZN5W). Play Store availability is pending.
+
+### Requirements
+
+* Android 8.0 (API 26) or later
+* A running TomeBox server on your network
+* Remote access additionally requires the one-time WireGuard setup on the desktop (prompted when you first enable the web server), which needs administrator permission once
+
 ## Roadmap
 
 ### Phase 1: UI Modernisation
 * **Web-Based UI:** Replace the Tkinter desktop interface with a unified web frontend, accessible both natively (via embedded webview) and through any browser.
 
 ### Phase 2: Ecosystem Expansion
-* **Multi-Provider Support:** Abstract the Audible-specific logic to support DRM-free providers like Libro.fm, Downpour, Soundbooth Theater, and others.
+* **Multi-Provider Support:** Abstract the Audible-specific logic to support DRM-free providers like Libro.fm and Downpour.
 * **Unified Library:** One interface for every audiobook you own, regardless of where you bought it.
-
-### Phase 3: Worldwide Access
-* **Embedded VPN:** Native Kotlin mobile app with built-in WireGuard tunnel via Headscale, enabling secure remote access to your library from anywhere in the world without router configuration or third-party services.
 
 ## Acknowledgments
 

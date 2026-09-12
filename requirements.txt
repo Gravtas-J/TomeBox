@@ -20,3 +20,6 @@ qrcode==8.2
 rapidfuzz==3.14.3
 sounddevice==0.5.5 
 mutagen==1.47.0
+cryptography
+httpx
+psutil

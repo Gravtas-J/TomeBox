@@ -41,6 +41,7 @@ def run_headless(base_dir, host, port):
     from core.controllers.library_manager import LibraryManager
     from core.database import DatabaseManager
     from core.utils.logger import setup_logger
+    from core.utils.net import find_free_port
     from server.web_app import create_server_app
 
     if sys.platform == "win32":
@@ -51,7 +52,8 @@ def run_headless(base_dir, host, port):
     logger("TomeBox Headless Server starting...")
     logger(f"Base directory: {base_dir}")
     logger("=" * 60)
-
+    # If the requested port is taken, walk up until we find one that's free.
+    port = find_free_port(port, host=host, logger=logger)
     # Build a minimal app instance with just the components the web server needs
     class HeadlessApp:
         pass
@@ -69,6 +71,7 @@ def run_headless(base_dir, host, port):
     # The web server expects these attributes — stub the GUI-only ones
     app.root = None
     app.file_path = None
+    app.server_port = port
     app.sync_playhead_from_remote = lambda position: None
 
     # Print pairing info to console
@@ -269,4 +272,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Elevated child process (spawned by wireguard.launch_setup via UAC).
+    # Must be intercepted BEFORE parse_args(), which would reject the unknown flag.
+    # Does the WireGuard setup and exits — never touches Tk or the DB.
+    if "--wg-setup" in sys.argv:
+        from core import wireguard
+        idx = sys.argv.index("--wg-setup")
+        sys.exit(wireguard.setup_entrypoint(sys.argv[idx + 1:]))
+
     main()

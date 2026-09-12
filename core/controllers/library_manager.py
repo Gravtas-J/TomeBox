@@ -11,7 +11,11 @@ from core.utils.fs import safe_unlink
 from core.utils.process_runner import ProcessRunner
 from core.utils.text import find_matching_cloud_item, format_series_list
 
-
+def bump_library_version(app):
+        """Signal that the library changed, so clients re-sync on their next poll.
+        Call after ANY mutation of local_library that clients should see."""
+        app.settings["library_version"] = app.settings.get("library_version", 0) + 1
+        app.db.save_settings(app.settings)
 class LibraryManager:
     def __init__(
         self, db_manager, api_client, base_dir, start_workers=True, event_bus=None
@@ -53,7 +57,8 @@ class LibraryManager:
         self._playback_dirty = False
         if start_workers:
             threading.Thread(target=self._periodic_playback_flush, daemon=True).start()
-
+    
+    
     def run_background_library_scan(
         self, converter, active_profile, logger, thread_pool, on_refresh_cb=None
     ):
@@ -937,9 +942,13 @@ class LibraryManager:
             entry["last_time"] = state_dict["rel_time"]
             entry["last_position"] = state_dict["abs_time"]
 
+            import time
             if "progress" not in entry:
                 entry["progress"] = {}
+            if "progress_updated" not in entry:          # NEW
+                entry["progress_updated"] = {}           # NEW
             entry["progress"][active_profile] = state_dict["abs_time"]
+            entry["progress_updated"][active_profile] = time.time() 
 
             # Finished book whose playhead jumped back well before the end → being
             # re-listened, so drop the flag and let progress drive the status again.

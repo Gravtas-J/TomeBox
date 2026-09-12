@@ -18,6 +18,17 @@ class AppThreadPool:
 
     def submit(self, fn, *args, task_type="standard", **kwargs):
         """Submits a task. Use task_type='api' to enforce rate limit delays."""
+        if not callable(fn):
+            # Fail at SUBMIT time, on the calling thread, so the traceback shows
+            # the actual culprit. Otherwise it surfaces later on a worker thread
+            # with no useful frames.
+            import traceback
+            caller = "".join(traceback.format_stack()[-3:-1])
+            msg = f"thread_pool.submit() got a non-callable: {fn!r}\nSubmitted from:\n{caller}"
+            if self.logger:
+                self.logger(msg)
+            raise TypeError(msg)
+
         if task_type == "api":
             future = self.executor.submit(self._throttled_wrapper, fn, *args, **kwargs)
         else:
