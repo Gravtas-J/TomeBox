@@ -810,7 +810,7 @@ class LibraryManager:
                     test_path = os.path.join(directory, c)
                     if os.path.exists(test_path):
                         try:
-                            from PIL import Image
+                            from PIL import Image # type: ignore
 
                             img = Image.open(test_path).convert("RGB")
                             img.save(cover_output, "JPEG")
@@ -1121,7 +1121,7 @@ class LibraryManager:
                     test_path = os.path.join(directory, c)
                     if os.path.exists(test_path):
                         try:
-                            from PIL import Image
+                            from PIL import Image # type: ignore
 
                             img = Image.open(test_path).convert("RGB")
                             img.save(cover_output, "JPEG")
