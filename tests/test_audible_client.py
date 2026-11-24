@@ -309,3 +309,72 @@ def test_handle_api_error_strings(client):
 
     with pytest.raises(Exception, match="Random"):
         client._handle_api_error(Exception("Random error"))
+
+
+
+
+# --- License denials: throttling and redaction ---
+
+THROTTLED_RESPONSE = {
+    "content_license": {
+        "status_code": "Denied",
+        "license_denial_reasons": [
+            {
+                "rejectionReason": "RequesterEligibility",
+                "validationType": "Membership",
+                "message": "Customer is not part of any plans",
+            },
+            {
+                "rejectionReason": "CustomerThrottled",
+                "validationType": "Ownership",
+                "message": "Customer id [A1B2C3D4E5F6G7] being throttled",
+            },
+        ],
+    },
+    "response_groups": [],
+}
+
+
+def test_get_download_license_throttled_raises_rate_limit(client, monkeypatch):
+    from api.audible_client import RateLimitError
+
+    client.auth = True
+    mock_client = MagicMock()
+    mock_client.return_value.post.return_value = THROTTLED_RESPONSE
+    monkeypatch.setattr("api.audible_client.audible.Client", mock_client)
+
+    with pytest.raises(RateLimitError, match="throttling") as exc:
+        client.get_download_license("B00S8QGHJ6")
+
+    assert "A1B2C3D4E5F6G7" not in str(exc.value)
+    assert "Customer id [redacted]" in str(exc.value)
+
+
+def test_get_download_license_other_denial_is_not_rate_limit(client, monkeypatch):
+    from api.audible_client import RateLimitError
+
+    client.auth = True
+    mock_client = MagicMock()
+    mock_client.return_value.post.return_value = {
+        "content_license": {
+            "status_code": "Denied",
+            "license_denial_reasons": [
+                {"rejectionReason": "ContentEligibility", "validationType": "AYCL"}
+            ],
+        }
+    }
+    monkeypatch.setattr("api.audible_client.audible.Client", mock_client)
+
+    with pytest.raises(Exception, match="ContentEligibility") as exc:
+        client.get_download_license("B00S8QGHJ6")
+    assert not isinstance(exc.value, RateLimitError)
+
+
+def test_redact_customer_ids():
+    from api.audible_client import redact_customer_ids
+
+    assert (
+        redact_customer_ids("Customer id [A9P49JUVPEWEY] being throttled")
+        == "Customer id [redacted] being throttled"
+    )
+    assert redact_customer_ids("no ids here") == "no ids here"

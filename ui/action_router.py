@@ -35,7 +35,8 @@ class ActionRouter:
             ),
         )
         self.event_bus.subscribe(
-            "download.batch_finish", lambda **kw: self.on_dl_batch_finish()
+            "download.batch_finish",
+            lambda **kw: self.on_dl_batch_finish(kw.get("stopped_reason")),
         )
         self.event_bus.subscribe(
             "playback.book_replayed",
@@ -234,12 +235,18 @@ class ActionRouter:
 
         self.app.root.after(0, update)
 
-    def on_dl_batch_finish(self):
+    def on_dl_batch_finish(self, stopped_reason=None):
+        """stopped_reason: why the batch ended early (e.g. Audible throttling), or None."""
+
         def update():
-            self.update_global_status("All downloads completed.")
             if hasattr(self.app, "dl_all_btn"):
                 self.app.dl_all_btn.config(state=tk.NORMAL)
-            self.app.root.after(3000, self.reset_ui_if_idle)
+            if stopped_reason:
+                # Leave the reason on screen; no auto-reset to idle.
+                self.update_global_status(stopped_reason)
+            else:
+                self.update_global_status("All downloads completed.")
+                self.app.root.after(3000, self.reset_ui_if_idle)
 
             for task_id in list(self.app.queue_ui_elements.keys()):
                 if not str(task_id).startswith("import_"):

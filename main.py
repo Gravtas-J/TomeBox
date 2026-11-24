@@ -39,6 +39,7 @@ def run_headless(base_dir, host, port):
 
     from api.audible_client import AudibleClient
     from core.controllers.library_manager import LibraryManager
+    from core.controllers.stats_manager import StatsManager
     from core.database import DatabaseManager
     from core.utils.logger import setup_logger
     from core.utils.net import find_free_port
@@ -67,6 +68,7 @@ def run_headless(base_dir, host, port):
     app.library_manager = LibraryManager(
         db_manager=app.db, api_client=app.api, base_dir=base_dir
     )
+    app.stats_manager = StatsManager(app.db)
 
     # The web server expects these attributes — stub the GUI-only ones
     app.root = None

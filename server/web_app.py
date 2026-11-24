@@ -10,9 +10,23 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from core.controllers.library_manager import bump_library_version
+from core.formats import NOT_PLAYABLE_NOT_DOWNLOADED, is_drm_path, local_playability
+from core.playback_report import MAX_LISTENED_SECONDS_PER_UPDATE, apply_playback_report
 from core.utils.paths import get_resource_path
 from core.utils.process_runner import ProcessRunner
+
+
+class ProgressUpdate(BaseModel):
+    path: str = Field(min_length=1)
+    position: float = Field(ge=0, allow_inf_nan=False)
+    profile: str = "Main"
+    listened_seconds: float = Field(
+        default=0.0, ge=0, le=MAX_LISTENED_SECONDS_PER_UPDATE, allow_inf_nan=False
+    )
+    finished: bool = False
 
 
 def create_server_app(tomebox):
@@ -391,6 +405,7 @@ def create_server_app(tomebox):
             asin = item_copy.get("asin")
             item_copy["shelves"] = shelves_db.get(asin, [])
             item_copy["download_status"] = "downloaded"
+            item_copy["playable"], item_copy["playable_reason"] = local_playability(data)
 
             if "progress" not in item_copy:
                 item_copy["progress"] = {}
@@ -464,6 +479,8 @@ def create_server_app(tomebox):
                 "format": "",
                 "shelves": shelves_db.get(asin, []),
                 "download_status": "cloud_only",
+                "playable": False,
+                "playable_reason": NOT_PLAYABLE_NOT_DOWNLOADED,
                 "duration_min": cloud_item.get("runtime_length_min", 0),
             }
 
@@ -505,57 +522,89 @@ def create_server_app(tomebox):
         }
     
     @api.post("/api/progress")
-    async def update_progress(request: Request):
+    def update_progress(update: ProgressUpdate):
+        """Records a client's playback position, listening time and completion.
+
+        Body (see ProgressUpdate):
+          path              library path of the book being played
+          position          absolute seconds into the book (playlists: across all files)
+          profile           profile the progress belongs to
+          listened_seconds  wall-clock seconds actually played since this client's
+                            last *successful* update; added to the seconds_listened stat
+          finished          true once playback reaches the end of the book; marks it
+                            Finished and counts books_finished once (repeats are ignored)
+
+        Responses:
+          200 {"status": "success", "achievements_unlocked": [{"id","title","desc"}, ...]}
+          404 path is not in the library
+          422 body failed validation (e.g. negative position, listened_seconds
+              above MAX_LISTENED_SECONDS_PER_UPDATE)
+        """
         import time
+
         now = time.time()
-        try:
-            data = await request.json()
-            path = data.get("path")
-            position = data.get("position")
-            profile = data.get("profile", "Main")
+        entry = tomebox.library_manager.local_library.get(update.path)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Book not found in library")
 
-            try:
-                position = float(position)
-            except (ValueError, TypeError):
-                return {"status": "error", "detail": "Invalid position data"}
+        entry.setdefault("progress", {})[update.profile] = update.position
+        entry.setdefault("progress_updated", {})[update.profile] = now
+        entry["last_position"] = update.position
 
-            if path and path in tomebox.library_manager.local_library:
-                entry = tomebox.library_manager.local_library[path]
+        # Listening time + completion: same rule as the Tk player (core/playback_report.py).
+        newly_finished, unlocked = apply_playback_report(
+            tomebox.stats_manager,
+            entry,
+            listened_seconds=update.listened_seconds,
+            finished=update.finished,
+        )
 
-                if "progress" not in entry:
-                    entry["progress"] = {}
-                if "progress_updated" not in entry:          # NEW
-                    entry["progress_updated"] = {}           # NEW
+        # local_library is written to disk by LibraryManager's periodic flush
+        # thread (every 10s, and on shutdown) whenever this flag is set.
+        tomebox.library_manager._playback_dirty = True
 
-                entry["progress"][profile] = position
-                entry["progress_updated"][profile] = now     # NEW
-                entry["last_position"] = position
+        # Single-key writes: never rewrite unrelated settings from this handler.
+        for key, value in (
+            (f"last_played_{update.profile}", update.path),
+            (f"last_played_at_{update.profile}", now),
+        ):
+            tomebox.settings[key] = value
+            tomebox.db.save_setting(key, value)
 
-                tomebox.settings[f"last_played_{profile}"] = path
-                tomebox.settings[f"last_played_at_{profile}"] = now
+        if newly_finished:
+            bump_library_version(tomebox)
 
-                current_time = time.time()
-                if current_time - getattr(tomebox, "_last_progress_save", 0) > 10:
-                    tomebox.db.save_settings(tomebox.settings)
-                    tomebox.db.save_local_db(tomebox.library_manager.local_library)
-                    tomebox._last_progress_save = current_time
+        # Sync the playhead to the desktop UI if the book is actively open there
+        if getattr(tomebox, "file_path", None) == update.path and getattr(
+            tomebox, "root", None
+        ):
+            position = update.position
+            tomebox.root.after(
+                0,
+                lambda: tomebox.playback_presenter.sync_playhead_from_remote(position),
+            )
 
-                # Sync the playhead to the desktop UI if the book is actively open there
-                if getattr(tomebox, "file_path", None) == path:
-                    if getattr(tomebox, "root", None):
-                        tomebox.root.after(
-                            0,
-                            lambda: (
-                                tomebox.playback_presenter.sync_playhead_from_remote(
-                                    position
-                                )
-                            ),
-                        )
+        return {"status": "success", "achievements_unlocked": unlocked}
 
-        except Exception as e:
-            print(f"Web Server Sync Error: {e}")
-
-        return {"status": "success"}
+    @api.get("/api/stats")
+    def get_stats():
+        """Listening stats plus every achievement with its unlocked state."""
+        snapshot = tomebox.stats_manager.get_snapshot()
+        unlocked = set(snapshot["unlocked_achievements"])
+        return {
+            "stats": snapshot["stats"],
+            "achievements": [
+                {
+                    "id": ach_id,
+                    "title": data["title"],
+                    "desc": data["desc"],
+                    "type": data["type"],
+                    "threshold": data["threshold"],
+                    "unlocked": ach_id in unlocked,
+                }
+                for ach_id, data in tomebox.stats_manager.achievements.items()
+            ],
+        }
 
     @api.get("/pairing", response_class=HTMLResponse)
     def show_pairing_page(request: Request):
@@ -756,6 +805,13 @@ def create_server_app(tomebox):
         if not is_authorized or not os.path.exists(safe_path):
             raise HTTPException(
                 status_code=404, detail="File not found or unauthorized"
+            )
+
+        # 4. DRM containers are never streamed (no on-the-fly decryption).
+        if is_drm_path(safe_path):
+            raise HTTPException(
+                status_code=409,
+                detail="This book is DRM-protected (AAX/AAXC). Convert it to play.",
             )
         file_size = os.path.getsize(safe_path)
         range_header = request.headers.get("Range")
@@ -1083,6 +1139,8 @@ def create_server_app(tomebox):
 
         return {
             "is_processing": tomebox.download_manager.is_processing,
+            # Why the last batch stopped early (e.g. Audible throttling), else None.
+            "stopped_reason": getattr(tomebox.download_manager, "last_stop_reason", None),
             "active": getattr(
                 tomebox.download_manager,
                 "web_state",

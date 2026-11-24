@@ -545,8 +545,9 @@ def open_achievements_window(app):
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
-    stats = app.settings.get("stats", {})
-    unlocked = stats.get("unlocked_achievements", [])
+    snapshot = app.stats_manager.get_snapshot()
+    stats = snapshot["stats"]
+    unlocked = snapshot["unlocked_achievements"]
 
     for ach_id, data in getattr(app, "achievements", {}).items():
         is_unlocked = ach_id in unlocked

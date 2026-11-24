@@ -283,7 +283,11 @@ def test_tick_loop(controller, monkeypatch):
 
     # Assert the event bus broadcasted the tick
     controller.event_bus.publish.assert_called_once_with(
-        "playback.tick", current_time=2.0, total_time=100.0, duration=2.0
+        "playback.tick",
+        current_time=2.0,
+        total_time=100.0,
+        duration=2.0,  # book seconds advanced (1s of wall time at 2x)
+        wall_duration=1.0,  # real seconds spent playing
     )
 
 

@@ -1,12 +1,12 @@
 # --- Core UI & Graphics ---
-Pillow~=12.2.0   
+Pillow~=12.3.0
 tkinterdnd2==0.4.3
 pystray==0.19.5
 
 # --- Audible API & Decryption ---
-audible==0.10.0
+audible==0.13.1
 requests==2.34.2
-rsa==4.9
+rsa==4.9.1
 
 # --- Companion Web Server ---
 fastapi==0.136.1

@@ -2,11 +2,15 @@ import os
 import threading
 import time
 
+from api.audible_client import RateLimitError
 from core.downloader import AudiobookDownloader, DownloadCanceledError
 from core.events import default_bus
 from core.utils.fs import safe_unlink
 from core.utils.process_runner import ProcessRunner
 from core.utils.wake import keep
+
+# Shown per book and as the batch result when Audible throttles the account.
+THROTTLED_STATUS = "Stopped: Audible is throttling this account. Try again later."
 
 
 class DownloadManager:
@@ -28,7 +32,10 @@ class DownloadManager:
         self.event_bus = event_bus or default_bus
 
         self.queue = []
-        self.active_flags = {}  # Tracks {asin: cancel_boolean}
+        self.active_flags = {}  # Tracks {asin: cancel_boolean} for queued/active books only
+        # Why the last batch stopped early (None if it ran to the end). Sent with
+        # download.batch_finish and returned by GET /api/downloads/queue.
+        self.last_stop_reason = None
 
         # --- NEW: Pause State Tracking ---
         self.is_paused = False
@@ -175,8 +182,38 @@ class DownloadManager:
             self.queue.clear()
             self.paused_items.clear()
 
+    def _release_task(self, asin):
+        """Forgets a finished book (any outcome) so it can be queued again later.
+        queue_download/queue_batch skip ASINs that still have an active flag."""
+        with self.queue_lock:
+            self.active_flags.pop(asin, None)
+            self.paused_items.discard(asin)
+
+    def _stop_queue_for_throttle(self, task, error):
+        """Audible is throttling the account: every further license request would
+        fail (and may extend the throttle), so drop the rest of the queue."""
+        self.logger(f"Download stopped for {task['title']}: {error}")
+        with self.queue_lock:
+            remaining = list(self.queue)
+            self.queue.clear()
+            for t in remaining:
+                self.active_flags.pop(t["asin"], None)
+                self.paused_items.discard(t["asin"])
+
+        if remaining:
+            self.logger(
+                f"{len(remaining)} queued download(s) were not attempted because "
+                "Audible is throttling this account. Queue them again later."
+            )
+        for t in [task] + remaining:
+            self.event_bus.publish(
+                "download.status", asin=t["asin"], status=THROTTLED_STATUS, is_global=False
+            )
+        self.last_stop_reason = THROTTLED_STATUS
+
     def _process_queue_worker(self):
         """The main background loop that processes downloads one by one."""
+        self.last_stop_reason = None
         try:
             with keep.running():
                 while True:
@@ -224,6 +261,7 @@ class DownloadManager:
                             status="Canceled",
                             is_global=False,
                         )
+                        self._release_task(asin)
                         continue
 
                     self.web_state["active_asin"] = asin
@@ -256,6 +294,8 @@ class DownloadManager:
                             is_global=False,
                         )
                         self.logger(f"Download for {asin} gracefully canceled.")
+                    except RateLimitError as e:
+                        self._stop_queue_for_throttle(task, e)
                     except Exception as e:
                         self.logger(f"Download failed for {title}: {e}")
                         self.event_bus.publish(
@@ -264,10 +304,14 @@ class DownloadManager:
                             status="Failed",
                             is_global=False,
                         )
+                    finally:
+                        self._release_task(asin)
         finally:
             self.is_processing = False
             self.web_state = {"active_asin": None, "progress": 0, "status": "Idle"}
-            self.event_bus.publish("download.batch_finish")
+            self.event_bus.publish(
+                "download.batch_finish", stopped_reason=self.last_stop_reason
+            )
 
     def _execute_download(self, asin, title, save_dir, post_action):
         def progress_cb(percent_float):

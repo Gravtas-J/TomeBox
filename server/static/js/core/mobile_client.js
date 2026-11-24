@@ -2,6 +2,13 @@
 // TOMEBOX CORE CLIENT
 // ==========================================
 
+// Must match MAX_LISTENED_SECONDS_PER_UPDATE in core/playback_report.py.
+const MAX_LISTENED_SECONDS_PER_UPDATE = 3600;
+
+// Voice boost uses the same compressor settings as the Tk player's ffplay filter
+// (acompressor=threshold=-15dB:ratio=3:makeup=5dB, ffmpeg's default 20ms attack / 250ms release).
+const VOICE_BOOST = { thresholdDb: -15, ratio: 3, makeupDb: 5, attackSec: 0.02, releaseSec: 0.25 };
+
 class TomeBoxClient {
     constructor() {
         this.state = {
@@ -17,8 +24,14 @@ class TomeBoxClient {
             sleep: { mode: null, timeout: null, targetTime: null },
             pairingViewLoaded: false,
             isPlaylist: false,
-            globalDuration: 0
+            globalDuration: 0,
+            // Wall-clock listening time not yet reported to /api/progress.
+            // segmentStart is a performance.now() timestamp while audio is actually playing.
+            listen: { segmentStart: null, unsentSeconds: 0 },
+            voiceBoost: this.loadPref('voiceBoost', false),
+            outputDeviceId: this.loadPref('outputDeviceId', '')
         };
+        this.audioGraph = null;  // Web Audio graph, created only when voice boost is first used
 
         this.dom = {
             audio: document.getElementById('audio-player') || document.getElementById('main-audio'),
@@ -32,7 +45,10 @@ class TomeBoxClient {
             profSelect: document.getElementById('profile-selector'),
             searchBox: document.getElementById('search-box'),
             shelfFilter: document.getElementById('shelf-filter'),
-            sortFilter: document.getElementById('sort-filter')
+            sortFilter: document.getElementById('sort-filter'),
+            voiceBoostBtn: document.getElementById('btn-voice-boost'),
+            outputSelect: document.getElementById('output-device-select'),
+            outputAllowBtn: document.getElementById('btn-output-allow')
         };
 
         this.init();
@@ -43,6 +59,8 @@ class TomeBoxClient {
         this.bindEvents();
         this.bindAudioEvents();
         this.handleRouting();
+        this.renderVoiceBoostButton();
+        await this.initOutputDevices();
 
         await this.loadProfiles();
         await this.loadLibrary();
@@ -72,6 +90,9 @@ class TomeBoxClient {
         bindClick('btn-search-toggle', this.toggleSearch);
         bindClick('btn-play-pause', this.togglePlay);
         bindClick('btn-speed', this.changeSpeed);
+        bindClick('btn-voice-boost', this.toggleVoiceBoost);
+        bindClick('btn-output-allow', this.requestOutputDeviceNames);
+        if (this.dom.outputSelect) this.dom.outputSelect.addEventListener('change', () => this.changeOutputDevice());
         bindClick('btn-sleep', this.openSleepMenu);
         bindClick('btn-chapters', this.openChapterMenu);
         bindClick('btn-bookmarks', this.openBookmarksModal);
@@ -192,7 +213,11 @@ class TomeBoxClient {
                 ? `<img src="/api/cover/${encodeURIComponent(asin)}" class="cover-image" onerror="this.outerHTML='<div class=\\'cover-placeholder\\'>📖</div>'"/>`
                 : `<div class="cover-placeholder">📖</div>`;
 
-            const badge = isCloudOnly ? '<div class="status-badge cloud-only">Cloud</div>' : '<div class="status-badge downloaded">Downloaded</div>';
+            // playable/playable_reason come from the server (core/formats.py); DRM books can't be streamed.
+            const needsConversion = !isCloudOnly && data.playable === false && data.playable_reason === 'drm';
+            let badge = '<div class="status-badge downloaded">Downloaded</div>';
+            if (isCloudOnly) badge = '<div class="status-badge cloud-only">Cloud</div>';
+            else if (needsConversion) badge = '<div class="status-badge needs-convert">Needs conversion</div>';
             const card = document.createElement('div');
             card.className = 'book-card';
             
@@ -215,8 +240,18 @@ class TomeBoxClient {
                 btn.addEventListener('click', (e) => { e.stopPropagation(); if(window.queueSingleDownload) window.queueSingleDownload(asin); });
                 card.querySelector('.card-actions').appendChild(btn);
                 card.addEventListener('click', () => { if (window.queueSingleDownload) window.queueSingleDownload(asin); });
+            } else if (needsConversion) {
+                const btn = document.createElement('button');
+                btn.className = "action-btn-primary btn-small";
+                btn.innerText = "🔄 Convert to play";
+                btn.addEventListener('click', (e) => { e.stopPropagation(); this.queueConversion(path, titleStr); });
+                card.querySelector('.card-actions').appendChild(btn);
+                card.addEventListener('click', () => this.queueConversion(path, titleStr));
             } else {
-                card.addEventListener('click', () => this.startPlayback(path, titleStr, authorStr, resumePos, safeAsin));
+                card.addEventListener('click', () => {
+                    this.prepareAudioGraph();  // inside a user gesture, so the AudioContext can start
+                    this.startPlayback(path, titleStr, authorStr, resumePos, safeAsin);
+                });
             }
             if (document.body.classList.contains('desktop') && window.DesktopApp) {
                 window.DesktopApp.attachContextMenu(card, data);
@@ -270,10 +305,15 @@ class TomeBoxClient {
     }
 
     async startPlayback(filePath, title, author, fallbackPosition, asin) {
+        const bookData = this.state.rawLibraryData[filePath] || {};
+        if (bookData.playable === false) {
+            if (bookData.playable_reason === 'drm') this.queueConversion(filePath, title);
+            return;
+        }
+
         this.saveProgressToServer(); 
         
         // --- NEW: Global Playlist Evaluation ---
-        const bookData = this.state.rawLibraryData[filePath] || {};
         this.state.isPlaylist = bookData.is_playlist === true;
         this.state.globalDuration = (bookData.duration_min || 0) * 60;
         
@@ -293,7 +333,7 @@ class TomeBoxClient {
             this.state.currentChapters = await res.json();
         } catch(e) { this.state.currentChapters = []; }
         
-        this.dom.audio.playbackRate = this.state.speeds[this.state.speedIndex];
+        this.applyPlaybackRate();
         
         // --- NEW: Route via Global Seek ---
         this.seekToGlobalTime(latestPos, true);
@@ -382,7 +422,7 @@ class TomeBoxClient {
         try {
             const res = await fetch(`/api/last_played/${this.state.currentProfile}`);
             const data = await res.json();
-            if (data.path && this.state.rawLibraryData[data.path]) {
+            if (data.path && this.state.rawLibraryData[data.path]?.playable !== false) {
                 const book = this.state.rawLibraryData[data.path];
                 let resumePos = book.progress?.[this.state.currentProfile] || book.last_position || 0;
                 await this.startPlayback(data.path, book.title, book.authors, resumePos, book.asin);
@@ -393,7 +433,12 @@ class TomeBoxClient {
     }
 
     bindAudioEvents() {
-        this.dom.audio.addEventListener('timeupdate', () => this.handleTimeUpdate());
+        // Listening-time segments. Registered before the 'pause' save below so the
+        // segment is closed before the progress update reads it.
+        this.dom.audio.addEventListener('playing', () => this.startListenSegment());
+        ['pause', 'waiting', 'ended', 'emptied', 'error'].forEach(ev =>
+            this.dom.audio.addEventListener(ev, () => this.endListenSegment()));
+        this.dom.audio.addEventListener('play', () => this.resumeAudioGraph());
         
         // --- NEW: Gapless Playlist Advancing ---
         this.dom.audio.addEventListener('ended', () => { 
@@ -401,6 +446,8 @@ class TomeBoxClient {
                 const nextCh = this.state.currentChapters[this.state.activeChapterIndex + 1];
                 this.seekToGlobalTime(nextCh.start, true);
             } else {
+                // Last file of the book finished playing.
+                this.saveProgressToServer({ finished: true });
                 this.dom.playBtn.innerText = '▶'; 
                 if (this.dom.progressFill) this.dom.progressFill.style.width = '0%'; 
             }
@@ -471,7 +518,7 @@ class TomeBoxClient {
 
     backgroundSync() { if (!this.dom.audio.paused && this.state.currentPath) this.saveProgressToServer(); }
 
-    saveProgressToServer() {
+    saveProgressToServer({ finished = false } = {}) {
         if (this.state.currentPath && this.dom.audio.currentTime > 0) {
             let globalTime = this.dom.audio.currentTime;
             if (this.state.isPlaylist && this.state.currentChapters.length > 0) {
@@ -482,14 +529,286 @@ class TomeBoxClient {
                 if (!this.state.rawLibraryData[this.state.currentPath].progress) this.state.rawLibraryData[this.state.currentPath].progress = {};
                 this.state.rawLibraryData[this.state.currentPath].progress[this.state.currentProfile] = globalTime;
             }
+
+            // Taken out of the unsent total *before* sending so overlapping saves can't
+            // report the same seconds twice; put back if the server didn't accept it.
+            const listened = this.takeListenedSeconds();
+            const restore = () => { this.state.listen.unsentSeconds += listened; };
+
             fetch(`/api/progress`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: this.state.currentPath, position: globalTime, profile: this.state.currentProfile }),
+                body: JSON.stringify({
+                    path: this.state.currentPath,
+                    position: globalTime,
+                    profile: this.state.currentProfile,
+                    listened_seconds: Math.round(listened * 1000) / 1000,
+                    finished: finished
+                }),
                 keepalive: true
-            }).catch(() => {});
+            }).then(async res => {
+                if (!res.ok) { restore(); console.warn(`[progress] HTTP ${res.status}`); return; }
+                const body = await res.json();
+                (body.achievements_unlocked || []).forEach(a => this.showToast(`🏆 ${a.title}`, a.desc));
+            }).catch(() => restore());
         }
     }
 
+    // --- Listening time (reported to the server as listened_seconds) ---
+    startListenSegment() {
+        if (this.state.listen.segmentStart === null) this.state.listen.segmentStart = performance.now();
+    }
+
+    endListenSegment() {
+        const listen = this.state.listen;
+        if (listen.segmentStart === null) return;
+        listen.unsentSeconds += (performance.now() - listen.segmentStart) / 1000;
+        listen.segmentStart = null;
+    }
+
+    /** Removes and returns up to MAX_LISTENED_SECONDS_PER_UPDATE of unsent listening time. */
+    takeListenedSeconds() {
+        // Checkpoint an open segment so time played up to now is included.
+        const wasPlaying = this.state.listen.segmentStart !== null;
+        this.endListenSegment();
+        if (wasPlaying) this.startListenSegment();
+
+        const amount = Math.min(this.state.listen.unsentSeconds, MAX_LISTENED_SECONDS_PER_UPDATE);
+        this.state.listen.unsentSeconds -= amount;
+        return amount;
+    }
+    // --- DRM books ---
+    async queueConversion(path, title) {
+        if (!confirm(`"${title}" is DRM-protected and can't be streamed.\n\nConvert it to M4B now?`)) return;
+        try {
+            const res = await fetch('/api/conversions/queue', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths: [path] })
+            });
+            if (res.ok) {
+                this.showToast('🔄 Conversion queued', title);
+            } else {
+                const err = await res.json().catch(() => ({}));
+                this.showToast('Conversion failed to start', err.detail || `HTTP ${res.status}`);
+            }
+        } catch (e) {
+            this.showToast('Conversion failed to start', String(e));
+        }
+    }
+    // --- Small UI helpers ---
+    showToast(title, detail = '') {
+        let host = document.getElementById('tb-toast-host');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'tb-toast-host';
+            host.className = 'tb-toast-host';
+            document.body.appendChild(host);
+        }
+        const toast = document.createElement('div');
+        toast.className = 'tb-toast';
+        const titleEl = document.createElement('div');
+        titleEl.className = 'tb-toast-title';
+        titleEl.textContent = title;
+        toast.appendChild(titleEl);
+        if (detail) {
+            const detailEl = document.createElement('div');
+            detailEl.className = 'tb-toast-detail';
+            detailEl.textContent = detail;
+            toast.appendChild(detailEl);
+        }
+        host.appendChild(toast);
+        setTimeout(() => toast.remove(), 6000);
+    }
+    loadPref(key, fallback) {
+        try {
+            const raw = localStorage.getItem(`tomebox.${key}`);
+            return raw === null ? fallback : JSON.parse(raw);
+        } catch (e) { return fallback; }
+    }
+
+    savePref(key, value) {
+        try { localStorage.setItem(`tomebox.${key}`, JSON.stringify(value)); } catch (e) { /* storage unavailable */ }
+    }
+
+    // --- Voice boost (Web Audio) ---
+    // Once an <audio> element is routed through an AudioContext it can't be un-routed,
+    // so the graph is only built the first time voice boost is needed, and turning
+    // boost off reconnects source -> destination directly.
+    ensureAudioGraph() {
+        if (this.audioGraph) return this.audioGraph;
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+
+        const ctx = new Ctx();
+        const source = ctx.createMediaElementSource(this.dom.audio);
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.value = VOICE_BOOST.thresholdDb;
+        compressor.ratio.value = VOICE_BOOST.ratio;
+        compressor.attack.value = VOICE_BOOST.attackSec;
+        compressor.release.value = VOICE_BOOST.releaseSec;
+        const makeup = ctx.createGain();
+        makeup.gain.value = Math.pow(10, VOICE_BOOST.makeupDb / 20);
+        compressor.connect(makeup);
+
+        this.audioGraph = { ctx, source, compressor, makeup };
+        return this.audioGraph;
+    }
+
+    routeAudioGraph() {
+        const g = this.audioGraph;
+        if (!g) return;
+        g.source.disconnect();
+        g.makeup.disconnect();
+        if (this.state.voiceBoost) {
+            g.source.connect(g.compressor);
+            g.makeup.connect(g.ctx.destination);
+        } else {
+            g.source.connect(g.ctx.destination);
+        }
+    }
+
+    /** Builds the graph if boost is on but not built yet. Call from user gestures only. */
+    prepareAudioGraph() {
+        if (!this.state.voiceBoost || this.audioGraph) { this.resumeAudioGraph(); return; }
+        if (!this.ensureAudioGraph()) return;
+        this.routeAudioGraph();
+        this.resumeAudioGraph();
+        this.applyOutputDevice();
+    }
+
+    resumeAudioGraph() {
+        if (this.audioGraph && this.audioGraph.ctx.state === 'suspended') {
+            this.audioGraph.ctx.resume().catch(e => console.warn('[voice boost] resume failed', e));
+        }
+    }
+
+    toggleVoiceBoost() {
+        this.state.voiceBoost = !this.state.voiceBoost;
+        if (this.state.voiceBoost && !this.ensureAudioGraph()) {
+            this.state.voiceBoost = false;
+            this.showToast('Voice boost unavailable', 'This browser does not support Web Audio.');
+        }
+        this.savePref('voiceBoost', this.state.voiceBoost);
+        this.routeAudioGraph();
+        this.resumeAudioGraph();
+        this.applyOutputDevice();
+        this.renderVoiceBoostButton();
+    }
+
+    renderVoiceBoostButton() {
+        const btn = this.dom.voiceBoostBtn;
+        if (!btn) return;
+        btn.classList.toggle('active', this.state.voiceBoost);
+        btn.title = this.state.voiceBoost ? 'Voice boost: on' : 'Voice boost: off';
+    }
+    // --- Output device ---
+    // Supported only in secure contexts (https or localhost) on browsers with setSinkId.
+    // Chromium hides device names/ids until the page has media permission; Firefox
+    // offers its own picker via selectAudioOutput(). Both cases are handled explicitly.
+    outputDeviceSupported() {
+        return window.isSecureContext
+            && 'setSinkId' in HTMLMediaElement.prototype
+            && !!navigator.mediaDevices?.enumerateDevices;
+    }
+
+    async initOutputDevices() {
+        if (!this.dom.outputSelect || !this.outputDeviceSupported()) return;
+        this.dom.outputSelect.hidden = false;
+        navigator.mediaDevices.addEventListener?.('devicechange', () => this.renderOutputDevices());
+        await this.renderOutputDevices();
+        await this.applyOutputDevice();
+    }
+
+    async renderOutputDevices() {
+        const select = this.dom.outputSelect;
+        if (!select) return;
+
+        const all = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+        // 'default'/'communications' are Chromium aliases; "System default" ('') covers them.
+        const outputs = all.filter(d => d.kind === 'audiooutput' && d.deviceId
+            && d.deviceId !== 'default' && d.deviceId !== 'communications');
+        const namesHidden = outputs.length === 0 || outputs.every(d => !d.label);
+
+        if (this.state.outputDeviceId && !outputs.some(d => d.deviceId === this.state.outputDeviceId)) {
+            if (!namesHidden) {
+                console.warn('[output device] saved device not found; using system default');
+                this.state.outputDeviceId = '';
+                this.savePref('outputDeviceId', '');
+            }
+        }
+
+        select.innerHTML = '';
+        const def = document.createElement('option');
+        def.value = '';
+        def.textContent = '🔈 System default';
+        select.appendChild(def);
+        outputs.forEach((d, i) => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = `🔈 ${d.label || `Output device ${i + 1}`}`;
+            select.appendChild(opt);
+        });
+        select.value = outputs.some(d => d.deviceId === this.state.outputDeviceId) ? this.state.outputDeviceId : '';
+
+        if (this.dom.outputAllowBtn) {
+            const hasPicker = typeof navigator.mediaDevices.selectAudioOutput === 'function';
+            const label = hasPicker ? 'Choose output device' : 'Show output device names (needs microphone permission)';
+            this.dom.outputAllowBtn.hidden = !(namesHidden || hasPicker);
+            this.dom.outputAllowBtn.textContent = 'ⓘ';
+            this.dom.outputAllowBtn.title = label;
+            this.dom.outputAllowBtn.setAttribute('aria-label', label);
+        }
+    }
+
+    async requestOutputDeviceNames() {
+        try {
+            if (typeof navigator.mediaDevices.selectAudioOutput === 'function') {
+                // Firefox: the browser's own picker; grants access to the chosen device.
+                const device = await navigator.mediaDevices.selectAudioOutput();
+                this.state.outputDeviceId = device.deviceId;
+                this.savePref('outputDeviceId', device.deviceId);
+            } else {
+                // Chromium: device names are only exposed after a media permission grant.
+                // The stream is stopped immediately; nothing is recorded.
+                if (!confirm('Your browser only shows output device names after you grant microphone access.\n\nTomeBox does not record anything; the microphone is released immediately.\n\nContinue?')) return;
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(t => t.stop());
+            }
+        } catch (e) {
+            console.warn('[output device] permission/picker declined', e);
+            return;
+        }
+        await this.renderOutputDevices();
+        await this.applyOutputDevice();
+    }
+
+    async changeOutputDevice() {
+        this.state.outputDeviceId = this.dom.outputSelect.value;
+        this.savePref('outputDeviceId', this.state.outputDeviceId);
+        await this.applyOutputDevice();
+    }
+
+    async applyOutputDevice() {
+        if (!this.outputDeviceSupported()) return;
+        const id = this.state.outputDeviceId || '';
+        try {
+            if (this.audioGraph) {
+                // Audio goes through the AudioContext once voice boost has been used.
+                if (typeof this.audioGraph.ctx.setSinkId === 'function') {
+                    await this.audioGraph.ctx.setSinkId(id);
+                } else if (id) {
+                    this.showToast('Output device not applied', 'This browser cannot route voice-boosted audio to a chosen device.');
+                }
+            } else {
+                await this.dom.audio.setSinkId(id);
+            }
+        } catch (e) {
+            console.warn('[output device] could not switch; reverting to system default', e);
+            this.state.outputDeviceId = '';
+            this.savePref('outputDeviceId', '');
+            if (this.dom.outputSelect) this.dom.outputSelect.value = '';
+            this.showToast('Output device unavailable', 'Switched back to the system default.');
+        }
+    }
     setupMediaSession(title, author, asin) {
         if ('mediaSession' in navigator) {
             const artworkUrl = asin !== "Unknown" ? [{ src: `/api/cover/${asin}`, sizes: '500x500', type: 'image/jpeg' }] : [];
@@ -508,6 +827,7 @@ class TomeBoxClient {
 
     togglePlay() {
         if (!this.dom.audio.src) return;
+        this.prepareAudioGraph();
         if (this.dom.audio.paused) { this.dom.audio.play(); this.dom.playBtn.innerText = '⏸'; } 
         else { this.dom.audio.pause(); this.dom.playBtn.innerText = '▶'; }
     }
@@ -555,9 +875,16 @@ class TomeBoxClient {
 
     changeSpeed() {
         this.state.speedIndex = (this.state.speedIndex + 1) % this.state.speeds.length;
+        this.applyPlaybackRate();
+    }
+
+    /** Sets both rates: a src change (next playlist file) resets playbackRate to
+     *  defaultPlaybackRate, so setting only playbackRate silently dropped back to 1.0x. */
+    applyPlaybackRate() {
         const spd = this.state.speeds[this.state.speedIndex];
+        this.dom.audio.defaultPlaybackRate = spd;
         this.dom.audio.playbackRate = spd;
-        if (this.dom.speedBtn) this.dom.speedBtn.innerText = spd.toFixed(1) + 'x';
+        if (this.dom.speedBtn) this.dom.speedBtn.innerText = spd.toFixed(2).replace(/0$/, '') + 'x';  // 1.0x, 1.25x, 1.5x
     }
 
     launchGame(gameId) {

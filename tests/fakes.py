@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock
 
+from core.controllers.stats_manager import StatsManager
+from core.events import EventBus
+
 
 class FakeDBManager:
     def __init__(self):
@@ -9,6 +12,8 @@ class FakeDBManager:
             "device_salt": "fake_salt_123",
             "last_played_Main": None,
         }
+        self.stats = {}
+        self.achievements = []
 
     def hash_device_token(self, raw_token):
         return f"hashed_{raw_token}"
@@ -18,6 +23,26 @@ class FakeDBManager:
 
     def save_settings(self, new_settings):
         self.settings.update(new_settings)
+
+    def save_setting(self, key, val):
+        self.settings[key] = val
+
+    # In-memory mirror of DatabaseManager's stats tables
+    def increment_stat(self, name, amount):
+        self.stats[name] = self.stats.get(name, 0.0) + float(amount)
+        return self.stats[name]
+
+    def get_stats(self):
+        return dict(self.stats)
+
+    def get_unlocked_achievements(self):
+        return list(self.achievements)
+
+    def unlock_achievement(self, ach_id):
+        if ach_id in self.achievements:
+            return False
+        self.achievements.append(ach_id)
+        return True
 
     def save_local_db(self, library_dict):
         pass
@@ -63,6 +88,9 @@ class FakeTomebox:
         self.db = FakeDBManager()
         self.settings = self.db.settings
         self.library_manager = FakeLibraryManager()
+        # Real StatsManager over the in-memory stats, on its own bus so tests
+        # never leak achievement events into the process-wide default bus.
+        self.stats_manager = StatsManager(self.db, event_bus=EventBus())
 
         # Stub the api_client expected by refresh and auth routes
         self.api_client = MagicMock()

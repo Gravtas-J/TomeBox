@@ -188,3 +188,68 @@ def test_aaxc_decryption_pass(manager, mock_downloader, monkeypatch):
     assert "/fake/book.aaxc" not in lib
     assert lib["/fake/book.m4b"]["format"] == "M4B"
     assert lib["/fake/book.m4b"]["audible_key"] == "key123"
+
+
+
+# --- Throttling and re-queueing ---
+
+
+def test_throttle_stops_the_rest_of_the_queue(manager, mock_downloader):
+    from api.audible_client import RateLimitError
+    from core.controllers.download_manager import THROTTLED_STATUS
+
+    attempted = []
+
+    def throttled(asin, title, *args, **kwargs):
+        attempted.append(asin)
+        raise RateLimitError("Audible is throttling license requests for this account.")
+
+    mock_downloader.download_item.side_effect = throttled
+    manager.event_bus.publish = MagicMock()
+
+    manager.queue_batch(
+        [{"asin": "A", "title": "First"}, {"asin": "B", "title": "Second"},
+         {"asin": "C", "title": "Third"}],
+        "/fake/dir",
+    )
+
+    assert attempted == ["A"]                 # B and C never hit Audible
+    assert manager.queue == []
+    assert manager.active_flags == {}         # all three can be queued again
+    assert manager.last_stop_reason == THROTTLED_STATUS
+
+    statuses = {
+        c.kwargs["asin"]: c.kwargs["status"]
+        for c in manager.event_bus.publish.call_args_list
+        if c.args[0] == "download.status" and c.kwargs.get("asin") in {"A", "B", "C"}
+    }
+    assert statuses == {"A": THROTTLED_STATUS, "B": THROTTLED_STATUS, "C": THROTTLED_STATUS}
+    manager.event_bus.publish.assert_any_call(
+        "download.batch_finish", stopped_reason=THROTTLED_STATUS
+    )
+
+
+def test_failed_download_can_be_queued_again(manager, mock_downloader):
+    calls = []
+
+    def fail_then_succeed(asin, title, *args, **kwargs):
+        calls.append(asin)
+        if len(calls) == 1:
+            raise Exception("network hiccup")
+        return (f"/fake/{asin}.mp3", None, None, ".mp3")
+
+    mock_downloader.download_item.side_effect = fail_then_succeed
+
+    manager.queue_download("A", "Book A", "/fake/dir")
+    manager.queue_download("A", "Book A", "/fake/dir")   # retry in the same session
+
+    assert calls == ["A", "A"]
+    assert manager.active_flags == {}
+
+
+def test_successful_batch_has_no_stop_reason(manager, mock_downloader):
+    manager.event_bus.publish = MagicMock()
+    manager.queue_batch([{"asin": "A", "title": "First"}], "/fake/dir")
+
+    assert manager.last_stop_reason is None
+    manager.event_bus.publish.assert_any_call("download.batch_finish", stopped_reason=None)

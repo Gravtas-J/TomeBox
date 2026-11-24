@@ -421,14 +421,8 @@ class AAXManagerApp:
             daemon=True,
         ).start()
 
-        if "stats" not in self.settings:
-            self.settings["stats"] = {
-                "seconds_listened": 0,
-                "books_finished": 0,
-                "books_downloaded": 0,
-                "unlocked_achievements": [],
-            }
-
+        # Stats live in the DB's stats tables (see StatsManager.get_snapshot),
+        # not in self.settings.
         self.session_listen_buffer = 0.0
 
         self.achievements = ACHIEVEMENTS

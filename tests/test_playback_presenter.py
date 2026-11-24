@@ -84,24 +84,65 @@ def test_on_playback_error(presenter, mock_app):
 
 @patch("time.time")
 def test_on_playback_tick(mock_time, presenter, mock_app):
-    """Verifies the UI updates its progress, saves stats at 60s, and saves disk at 10s."""
+    """Verifies the UI updates, and the 10s save also reports buffered listening time."""
     mock_time.return_value = 100.0
     mock_app._last_disk_save_time = 85.0  # 15 seconds ago (should trigger save)
+    mock_app.stats_manager.add_stat.return_value = []
 
-    presenter.on_playback_tick(
-        current_time=25.0, total_time=100.0, real_time_delta=60.0
-    )
+    presenter.on_playback_tick(current_time=25.0, total_time=100.0, wall_delta=8.0)
 
     # 1. UI Updates
     mock_app.ui_state.playback_progress.set.assert_called_with(25.0)
     presenter.view.time_label.config.assert_called_with(text="00:25 / 01:40")
 
-    # 2. Stats Manager trigger (buffered >= 60)
-    mock_app.stats_manager.add_stat.assert_called_with("seconds_listened", 60.0)
+    # 2. Disk Save trigger (time elapsed > 10s) ...
+    mock_app.library_manager.save_playback_state.assert_called_once()
+
+    # 3. ... which reports the buffered wall-clock time via the shared rule
+    mock_app.stats_manager.add_stat.assert_called_once_with("seconds_listened", 8.0)
     assert mock_app.session_listen_buffer == 0.0
 
-    # 3. Disk Save trigger (time elapsed > 10s)
-    mock_app.library_manager.save_playback_state.assert_called_once()
+
+@patch("time.time")
+def test_tick_between_saves_only_buffers(mock_time, presenter, mock_app):
+    mock_time.return_value = 100.0
+    mock_app._last_disk_save_time = 95.0  # 5 seconds ago (no save yet)
+
+    presenter.on_playback_tick(current_time=25.0, total_time=100.0, wall_delta=0.1)
+
+    mock_app.stats_manager.add_stat.assert_not_called()
+    assert mock_app.session_listen_buffer == pytest.approx(0.1)
+
+
+def test_stop_flushes_buffered_listening_time(presenter, mock_app):
+    """Time under the old 60s threshold used to be lost on stop/close."""
+    mock_app.stats_manager.add_stat.return_value = []
+    mock_app.session_listen_buffer = 7.5
+
+    presenter.stop_audio()
+
+    mock_app.stats_manager.add_stat.assert_called_once_with("seconds_listened", 7.5)
+    assert mock_app.session_listen_buffer == 0.0
+
+
+def test_book_finish_counts_once(presenter, mock_app):
+    """Finishing the same book twice (re-listen) counts books_finished once."""
+    from core.controllers.stats_manager import StatsManager
+    from core.events import EventBus
+    from tests.fakes import FakeDBManager
+
+    db = FakeDBManager()
+    mock_app.stats_manager = StatsManager(db, event_bus=EventBus())
+    mock_app.file_path = "/books/a.m4b"
+    mock_app.library_manager.local_library = {"/books/a.m4b": {"title": "A"}}
+    mock_app.session_listen_buffer = 0.0
+    mock_app.playback.next_chapter.return_value = False  # end of book
+
+    presenter.next_chapter()
+    presenter.next_chapter()
+
+    assert mock_app.library_manager.local_library["/books/a.m4b"]["read_status"] == "Finished"
+    assert mock_app.stats_manager.get_snapshot()["stats"]["books_finished"] == 1
 
 
 def test_sync_playhead_from_remote(presenter, mock_app):

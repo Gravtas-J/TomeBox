@@ -4,6 +4,7 @@ import os
 import secrets
 import sqlite3
 import threading
+import time
 import uuid
 
 
@@ -40,7 +41,116 @@ class DatabaseManager:
                     data TEXT
                 )
             """)
+            # Stats live in their own tables, NOT in the settings blob: the
+            # settings table is rewritten wholesale from long-lived in-memory
+            # copies, which silently rolled stats back to their startup values.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stats (
+                    name TEXT PRIMARY KEY,
+                    value REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS achievements (
+                    id TEXT PRIMARY KEY,
+                    unlocked_at REAL NOT NULL
+                )
+            """)
+            self._migrate_stats_out_of_settings(cursor)
             self.conn.commit()
+
+    def _migrate_stats_out_of_settings(self, cursor):
+        """One-time move of the legacy settings['stats'] blob into the stats tables.
+
+        Rules (explicit, no merging):
+          - If the stats and achievements tables are both empty, copy the
+            legacy numeric stats and unlocked achievement ids across.
+          - If either table already has rows, they are the source of truth and
+            the legacy blob is discarded.
+          - In both cases the legacy 'stats' settings row is deleted.
+        Caller holds db_lock and commits.
+        """
+        cursor.execute("SELECT value FROM settings WHERE key='stats'")
+        row = cursor.fetchone()
+        if row is None:
+            return
+
+        cursor.execute("SELECT COUNT(*) FROM stats")
+        stats_rows = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM achievements")
+        ach_rows = cursor.fetchone()[0]
+
+        if stats_rows == 0 and ach_rows == 0:
+            try:
+                legacy = json.loads(row[0])
+            except (TypeError, ValueError):
+                legacy = {}
+            if not isinstance(legacy, dict):
+                legacy = {}
+
+            for name, value in legacy.items():
+                if name == "unlocked_achievements":
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                cursor.execute(
+                    "INSERT INTO stats (name, value) VALUES (?, ?)", (name, float(value))
+                )
+
+            unlocked = legacy.get("unlocked_achievements", [])
+            if isinstance(unlocked, list):
+                migrated_at = time.time()
+                for ach_id in unlocked:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO achievements (id, unlocked_at) VALUES (?, ?)",
+                        (str(ach_id), migrated_at),
+                    )
+
+        cursor.execute("DELETE FROM settings WHERE key='stats'")
+
+    # --- Stats -----------------------------------------------------------------
+
+    def increment_stat(self, name, amount):
+        """Atomically adds amount to a stat and returns the new total."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO stats (name, value) VALUES (?, ?)
+                ON CONFLICT(name) DO UPDATE SET value = value + excluded.value
+                """,
+                (name, float(amount)),
+            )
+            cursor.execute("SELECT value FROM stats WHERE name = ?", (name,))
+            total = cursor.fetchone()[0]
+            self.conn.commit()
+            return total
+
+    def get_stats(self):
+        """Returns {stat_name: float_value} for every recorded stat."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT name, value FROM stats")
+            return {name: value for name, value in cursor.fetchall()}
+
+    def get_unlocked_achievements(self):
+        """Returns unlocked achievement ids, oldest unlock first."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id FROM achievements ORDER BY unlocked_at, id")
+            return [row[0] for row in cursor.fetchall()]
+
+    def unlock_achievement(self, ach_id):
+        """Records an unlock. Returns True only if it was not already unlocked."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT OR IGNORE INTO achievements (id, unlocked_at) VALUES (?, ?)",
+                (ach_id, time.time()),
+            )
+            inserted = cursor.rowcount == 1
+            self.conn.commit()
+            return inserted
 
     def load_settings(self):
         settings_dict = {}
@@ -97,6 +207,17 @@ class DatabaseManager:
                     "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
                     (key, json.dumps(val)),
                 )
+            self.conn.commit()
+
+    def save_setting(self, key, val):
+        """Writes exactly one settings key. Use this instead of save_settings()
+        when only one value changed, so stale keys in a long-lived settings
+        dict are not written back over newer values."""
+        with self.db_lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, json.dumps(val)),
+            )
             self.conn.commit()
 
     def hash_device_token(self, raw_token):

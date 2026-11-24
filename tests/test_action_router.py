@@ -165,6 +165,19 @@ def test_download_batch_finish_event(router, mock_app):
     assert "dl_123" not in mock_app.queue_ui_elements
     assert "import_456" in mock_app.queue_ui_elements
 
+def test_download_batch_finish_with_stop_reason_keeps_message(router, mock_app):
+    mock_app.root.after.reset_mock()
+
+    router.event_bus.publish(
+        "download.batch_finish", stopped_reason="Stopped: Audible is throttling this account."
+    )
+
+    mock_app.ui_state.dl_status.set.assert_called_with(
+        "Stopped: Audible is throttling this account."
+    )
+    # No delayed reset back to idle, so the reason stays visible.
+    delays = [c.args[0] for c in mock_app.root.after.call_args_list]
+    assert 3000 not in delays
 
 def test_import_status_and_progress(router, mock_app):
     # Setup the queue row

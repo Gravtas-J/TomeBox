@@ -1,4 +1,5 @@
 import os
+import re
 
 try:
     import audible
@@ -36,6 +37,64 @@ def find_url_in_response(d):
                 return res
     return None
 
+# Audible's rejectionReason when it is rate-limiting license requests for the
+# whole account (seen under validationType="Ownership").
+THROTTLED_REJECTION_REASON = "CustomerThrottled"
+
+# Audible puts the Amazon customer id in denial messages as "Customer id [A1B2C3...]".
+# Logs get shared for support, so that bracketed value is always replaced.
+_CUSTOMER_ID_PATTERN = re.compile(r"(Customer id \[)[^\]]*(\])")
+
+
+def redact_customer_ids(text):
+    """Replaces the bracketed value in 'Customer id [...]' with 'redacted'."""
+    return _CUSTOMER_ID_PATTERN.sub(r"\1redacted\2", str(text))
+
+
+def license_denial_reasons(resp):
+    """The license_denial_reasons list from a licenserequest response ([] if absent)."""
+    if not isinstance(resp, dict):
+        return []
+    lic = resp.get("content_license")
+    if not isinstance(lic, dict):
+        return []
+    reasons = lic.get("license_denial_reasons")
+    return reasons if isinstance(reasons, list) else []
+
+
+def is_throttled_license_response(resp):
+    """True if any denial reason is Audible's account-level throttle."""
+    return any(
+        isinstance(r, dict) and r.get("rejectionReason") == THROTTLED_REJECTION_REASON
+        for r in license_denial_reasons(resp)
+    )
+
+
+def describe_license_response(resp):
+    """Summarises a licenserequest response for error messages.
+
+    Includes Audible's own status and denial reasons (when present) plus the
+    top-level key names, so an unexpected response shape is visible in the log.
+    Never includes the license or voucher contents; customer ids are redacted.
+    """
+    if not isinstance(resp, dict):
+        return f"response type={type(resp).__name__}"
+    lic = resp.get("content_license")
+    lic = lic if isinstance(lic, dict) else {}
+    parts = [f"status_code={lic.get('status_code')!r}"]
+    for reason in license_denial_reasons(resp):
+        if isinstance(reason, dict):
+            fields = ("rejectionReason", "validationType", "message")
+            parts.append(
+                "denial: "
+                + ", ".join(f"{k}={reason[k]!r}" for k in fields if k in reason)
+            )
+        else:
+            parts.append(f"denial: {reason!r}")
+    if resp.get("message"):
+        parts.append(f"message={resp['message']!r}")
+    parts.append(f"response keys={sorted(resp)}")
+    return redact_customer_ids("; ".join(parts))
 
 def find_key_iv_in_voucher(d):
     """Recursively hunts for a (key, iv) pair anywhere in a decrypted voucher."""
@@ -242,8 +301,14 @@ class AudibleClient:
 
         download_url = find_url_in_response(resp)
         if not download_url:
+            if is_throttled_license_response(resp):
+                raise RateLimitError(
+                    "Audible is throttling license requests for this account. "
+                    + describe_license_response(resp)
+                )
             raise Exception(
-                "Could not find the offline download URL in the API response."
+                "Could not find the offline download URL in the API response. "
+                + describe_license_response(resp)
             )
 
         a_key, a_iv = None, None

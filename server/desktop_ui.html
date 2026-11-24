@@ -259,6 +259,10 @@
                         <div class="tools-side tools-left">
                             <button class="icon-btn" id="btn-speed">1.0x</button>
                             <button class="icon-btn tool-btn" id="btn-sleep" title="Sleep Timer">🌙</button>
+                            <button class="icon-btn tool-btn" id="btn-voice-boost" title="Voice boost: off">🗣️</button>
+                            <!-- Shown by mobile_client.js only where setSinkId is supported (https/localhost) -->
+                            <select id="output-device-select" class="output-device-select" title="Output device" hidden></select>
+                            <button class="icon-btn tool-btn output-allow-btn" id="btn-output-allow" title="Show output device names" aria-label="Show output device names" hidden>ⓘ</button>
                         </div>
 
                         <div class="tools-side tools-right">

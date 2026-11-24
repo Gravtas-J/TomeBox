@@ -24,7 +24,7 @@ class PlaybackController:
             self.event_bus.subscribe(
                 "playback.tick",
                 lambda **kw: on_tick_cb(
-                    kw.get("current_time"), kw.get("total_time"), kw.get("duration")
+                    kw.get("current_time"), kw.get("total_time"), kw["wall_duration"]
                 ),
             )
         if on_chapter_end_cb:
@@ -211,7 +211,8 @@ class PlaybackController:
         # The thread will auto-terminate if is_playing is False, OR if the session ID is no longer the active one
         while self.is_playing and getattr(self, "_tick_session", None) == session_id:
             now = time.time()
-            dt = (now - self._last_tick_time) * self.playback_speed
+            wall_dt = now - self._last_tick_time  # real seconds spent playing
+            dt = wall_dt * self.playback_speed     # seconds of book advanced
             self._last_tick_time = now
             self.current_play_time += dt
 
@@ -221,6 +222,7 @@ class PlaybackController:
                 current_time=self.current_play_time,
                 total_time=self.chapter_duration,
                 duration=dt,
+                wall_duration=wall_dt,
             )
             time.sleep(0.1)
 

@@ -3,6 +3,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog
 
+from core.controllers.library_manager import bump_library_version
+from core.playback_report import MAX_LISTENED_SECONDS_PER_UPDATE, apply_playback_report
 from core.utils.process_runner import ProcessRunner
 
 
@@ -30,7 +32,7 @@ class PlaybackPresenter:
                 message=f"An unexpected playback error occurred.\nError Code: {error_code}",
             )
 
-    def on_playback_tick(self, current_time, total_time, real_time_delta):
+    def on_playback_tick(self, current_time, total_time, wall_delta):
         def update_ui():
             percent = (current_time / total_time) * 100 if total_time > 0 else 0
             self.app.ui_state.playback_progress.set(percent)
@@ -39,7 +41,7 @@ class PlaybackPresenter:
             dur_str = self.format_time(total_time)
             self.view.time_label.config(text=f"{curr_str} / {dur_str}")
 
-            self.app.session_listen_buffer += real_time_delta
+            self.app.session_listen_buffer += wall_delta
             if self.app.session_listen_buffer >= 60.0:
                 self.app.stats_manager.add_stat(
                     "seconds_listened", self.app.session_listen_buffer
@@ -59,6 +61,22 @@ class PlaybackPresenter:
         if state:
             state["file_path"] = self.app.file_path
             self.app.library_manager.save_playback_state(state, self.app.active_profile)
+        self.flush_listening_time()
+
+    def flush_listening_time(self):
+        """Reports buffered wall-clock listening time through the shared rule
+        (core/playback_report.py), the same path /api/progress uses."""
+        seconds = self.app.session_listen_buffer
+        if seconds <= 0:
+            return
+        self.app.session_listen_buffer = 0.0
+        entry = self.app.library_manager.local_library.get(self.app.file_path)
+        # Flushed every 10s, so this is one chunk in practice; the loop just
+        # keeps the per-report cap explicit.
+        while seconds > 0:
+            chunk = min(seconds, MAX_LISTENED_SECONDS_PER_UPDATE)
+            seconds -= chunk
+            apply_playback_report(self.app.stats_manager, entry, listened_seconds=chunk)
 
     def sync_playhead_from_remote(self, abs_position):
         try:
@@ -608,11 +626,16 @@ class PlaybackPresenter:
             finished_path = self.app.file_path
             local_data = self.app.library_manager.local_library.get(finished_path)
             if local_data is not None:
-                local_data["read_status"] = "Finished"
-                self.app.library_manager.db.save_local_db(self.app.library_manager.local_library)
-            self.app.stats_manager.add_stat("books_finished", 1)
+                # Same rule as /api/progress: counts books_finished only the first time.
+                newly_finished, _ = apply_playback_report(
+                    self.app.stats_manager, local_data, finished=True
+                )
+                if newly_finished:
+                    self.app.library_manager.db.save_local_db(
+                        self.app.library_manager.local_library
+                    )
+                    bump_library_version(self.app)
             self.view.info_label.config(text="Finished Book")
-            self.app.library_presenter.refresh_library_ui()
 
     def prev_chapter(self):
         self.save_playback_state()

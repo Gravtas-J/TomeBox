@@ -1,8 +1,15 @@
 import threading
 
 from core.events import default_bus
+# Every stat TomeBox records, with the type it is reported as. add_stat()
+# rejects names not listed here, so a typo can't silently create a new stat.
+STAT_TYPES = {
+    "seconds_listened": float,
+    "books_finished": int,
+    "books_downloaded": int,
+}
 
-# -- The Achievements are intentionally falvoured for style and personality of the application --
+# -- The Achievements are intentionally flavoured for style and personality of the application --
 ACHIEVEMENTS = {
     "first_dl": {
         "title": "System Integration Complete",
@@ -64,34 +71,57 @@ class StatsManager:
         self.achievements = ACHIEVEMENTS
 
     def add_stat(self, stat_name, amount=1):
+        """Adds amount to a known stat, then checks achievements.
+
+        Returns the list of achievements newly unlocked by this call, each as
+        {"id", "title", "desc"} (empty if none). Raises ValueError for an
+        unknown stat name or a negative amount.
+        """
+        if stat_name not in STAT_TYPES:
+            raise ValueError(f"Unknown stat: {stat_name!r}")
+        if amount < 0:
+            raise ValueError(f"Stat increments must be >= 0, got {amount!r}")
+
         with self.stats_lock:
-            settings = self.db.load_settings()
-            stats = settings.get("stats", {})
-            stats[stat_name] = stats.get(stat_name, 0) + amount
-            settings["stats"] = stats
-            self.db.save_settings(settings)
+            total = self.db.increment_stat(stat_name, amount)
 
             # Announce stat change for any interested UI elements (like a profile dashboard)
             self.event_bus.publish(
-                "stats.updated", stat_name=stat_name, total=stats[stat_name]
+                "stats.updated", stat_name=stat_name, total=STAT_TYPES[stat_name](total)
             )
 
-            self.check_achievements(settings)
+            return self._check_achievements_locked()
 
-    def check_achievements(self, settings):
-        stats = settings.get("stats", {})
-        unlocked = stats.get("unlocked_achievements", [])
+    def check_achievements(self):
+        """Unlocks any achievement whose threshold is met. Returns the newly unlocked list."""
+        with self.stats_lock:
+            return self._check_achievements_locked()
+
+    def _check_achievements_locked(self):
+        stats = self.db.get_stats()
+        already = set(self.db.get_unlocked_achievements())
+        newly_unlocked = []
 
         for ach_id, data in self.achievements.items():
-            if ach_id not in unlocked:
-                current_val = stats.get(data["type"], 0)
-                if current_val >= data["threshold"]:
-                    unlocked.append(ach_id)
+            if ach_id in already:
+                continue
+            if stats.get(data["type"], 0) < data["threshold"]:
+                continue
+            # unlock_achievement is INSERT OR IGNORE: only the caller that
+            # actually inserts the row announces it, so no duplicate toasts.
+            if self.db.unlock_achievement(ach_id):
+                newly_unlocked.append(
+                    {"id": ach_id, "title": data["title"], "desc": data["desc"]}
+                )
+                self.event_bus.publish("stats.achievement_unlocked", achievement=data)
 
-                    self.event_bus.publish(
-                        "stats.achievement_unlocked", achievement=data
-                    )
+        return newly_unlocked
 
-        stats["unlocked_achievements"] = unlocked
-        settings["stats"] = stats
-        self.db.save_settings(settings)
+    def get_snapshot(self):
+        """Current stats and unlocks, typed per STAT_TYPES. Every known stat is
+        present (0 if never recorded)."""
+        raw = self.db.get_stats()
+        return {
+            "stats": {name: cast(raw.get(name, 0)) for name, cast in STAT_TYPES.items()},
+            "unlocked_achievements": self.db.get_unlocked_achievements(),
+        }
