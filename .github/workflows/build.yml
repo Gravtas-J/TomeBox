@@ -36,21 +36,30 @@ jobs:
       if: runner.os == 'Windows'
       run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." main.py
     
-    - name: Download Static FFmpeg & FFplay (macOS)
+    - name: Download Static FFmpeg, FFprobe & FFplay (macOS)
       if: runner.os == 'macOS'
+      env:
+        # evermeet.cx removed its "getrelease" redirect API; download pinned versioned files instead.
+        # Available versions: https://evermeet.cx/ffmpeg/info/ffmpeg/release
+        FFMPEG_VERSION: "9.1"
       run: |
+        set -euo pipefail
         mkdir -p bin
-        # Download static Mac builds directly from Evermeet
-        curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
-        curl -L https://evermeet.cx/ffmpeg/getrelease/ffplay/zip -o ffplay.zip
-        unzip ffmpeg.zip -d bin/
-        unzip ffplay.zip -d bin/
-        rm ffmpeg.zip ffplay.zip
-        chmod +x bin/ffmpeg bin/ffplay
+        for tool in ffmpeg ffprobe ffplay; do
+          url="https://evermeet.cx/ffmpeg/${tool}-${FFMPEG_VERSION}.zip"
+          echo "Downloading ${url}"
+          # -f: fail on HTTP errors instead of saving the error page as the zip
+          curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${tool}.zip"
+          unzip -tq "${tool}.zip"           # integrity check before extracting
+          unzip -o "${tool}.zip" -d bin/
+          rm "${tool}.zip"
+          chmod +x "bin/${tool}"
+          file "bin/${tool}"                # logs the architecture of each binary
+        done
           
     - name: Build Mac Application
       if: runner.os == 'macOS'
-      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/desktop_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." --add-binary "bin/ffmpeg:bin" --add-binary "bin/ffplay:bin" main.py
+      run: pyinstaller --name TomeBox --windowed --add-data "ui:ui" --add-data "server/mobile_ui.html:server" --add-data "server/desktop_ui.html:server" --add-data "server/static:server/static" --add-data "tomebox-splash.png:." --add-binary "bin/ffmpeg:bin" --add-binary "bin/ffprobe:bin" --add-binary "bin/ffplay:bin" main.py
     - name: Zip Mac App
       if: runner.os == 'macOS'
       run: |
